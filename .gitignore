@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Coverage
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# UV
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
