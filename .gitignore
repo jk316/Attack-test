@@ -11,9 +11,6 @@ htmlcov/
 .venv/
 venv/
 
-# UV
-uv.lock
-
 # IDE
 .vscode/
 .idea/
