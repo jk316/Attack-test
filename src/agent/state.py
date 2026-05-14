@@ -44,6 +44,12 @@ class AgentState(TypedDict, total=False):
     log_path: str
     """Path to the JSONL experiment log file."""
 
+    max_iters: int
+    """Maximum number of iterations before forced stop (default 20)."""
+
+    no_improve_limit: int
+    """Stop after this many consecutive rounds without RTT improvement (default 5)."""
+
     # ── ReAct conversation and tool-calling ─────────────────────
     messages: Annotated[list, add_messages]
     """LLM conversation history with tool call/result pairs."""

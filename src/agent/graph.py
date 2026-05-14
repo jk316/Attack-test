@@ -13,8 +13,10 @@ def should_continue(state: dict[str, Any]) -> str:
     """Route to END if stop conditions are met, otherwise loop to plan_params."""
     iteration = state.get("iteration", 0)
     consecutive_no_improve = state.get("consecutive_no_improve", 0)
+    max_iters = state.get("max_iters", 20)
+    no_improve_limit = state.get("no_improve_limit", 5)
 
-    if check_stop_condition(iteration, consecutive_no_improve):
+    if check_stop_condition(iteration, consecutive_no_improve, max_iters, no_improve_limit):
         return END
     return "plan_params"
 

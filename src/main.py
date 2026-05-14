@@ -7,9 +7,7 @@ from uuid import uuid4
 # Ensure the project root is on sys.path so `src` is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agent.state import check_stop_condition  # noqa: E402
 from src.agent.graph import build_graph  # noqa: E402
-from langgraph.errors import GraphInterrupt  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 
 
@@ -62,6 +60,8 @@ def main() -> None:
         "reward": 0.0,
         "target_ip": args.target_ip,
         "log_path": args.log_path,
+        "max_iters": args.max_iters,
+        "no_improve_limit": args.no_improve_limit,
         "messages": [],
     }
 
@@ -72,16 +72,32 @@ def main() -> None:
     print(f"Thread: {thread_id}")
     print()
 
-    while True:
-        try:
-            result = graph.invoke(state, config)
-            break
-        except GraphInterrupt:
-            response = input("[HITL] Approve traffic send? (y/n): ").strip().lower()
-            approved = response == "y"
-            graph.invoke(Command(resume=approved), config)
+    # Start the graph — runs until the first interrupt (send_traffic)
+    graph.invoke(state, config)
 
-    print()
+    # Poll for interrupts and resume with HITL approval
+    while True:
+        gs = graph.get_state(config)
+        if not gs or not gs.next:
+            break  # graph completed
+
+        print(f"[Round {gs.values.get('iteration', 0) + 1}]")
+        print(f"  Params: pps={gs.values.get('traffic_params', {}).get('pps')}, "
+              f"size={gs.values.get('traffic_params', {}).get('packet_size')}, "
+              f"flows={gs.values.get('traffic_params', {}).get('flow_count')}")
+        try:
+            response = input("  [HITL] Approve traffic send? (y/n): ").strip().lower()
+        except EOFError:
+            print("  [HITL] No input — rejecting by default")
+            response = "n"
+        approved = response == "y"
+        graph.invoke(Command(resume=approved), config)
+        print()
+
+    # Get final state
+    final_state = graph.get_state(config)
+    result = final_state.values if final_state else {}
+
     print("=== Experiment Complete ===")
     print(f"Iterations:       {result.get('iteration', 'N/A')}")
     print(f"Best RTT:         {result.get('best_rtt', 'N/A')} ms")
