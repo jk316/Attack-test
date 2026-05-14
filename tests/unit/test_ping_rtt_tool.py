@@ -96,6 +96,7 @@ class TestPingRttTool:
     def test_count_parameter_passed_to_ping(self):
         """count 参数必须传递给 ping 命令"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
+        import sys
 
         mock_output = (
             f"PING {ALLOWLISTED_IP}: 56 data bytes\n"
@@ -109,7 +110,8 @@ class TestPingRttTool:
             ping_rtt_tool(ALLOWLISTED_IP, count=5)
 
             call_args = mock_run.call_args
-            assert "-c" in call_args[0][0]
+            flag = "-n" if sys.platform == "win32" else "-c"
+            assert flag in call_args[0][0]
             assert "5" in call_args[0][0]
 
     def test_error_handling_on_ping_failure(self):

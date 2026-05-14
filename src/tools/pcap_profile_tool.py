@@ -43,7 +43,7 @@ def calculate_iat(packets: List) -> List[float]:
         # Sort by time
         pkts.sort(key=lambda p: p.time)
         for i in range(1, len(pkts)):
-            iat_ms = (pkts[i].time - pkts[i-1].time) * 1000
+            iat_ms = (float(pkts[i].time) - float(pkts[i-1].time)) * 1000
             iats.append(iat_ms)
 
     return iats

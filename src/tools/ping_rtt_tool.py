@@ -2,7 +2,8 @@
 import json
 import re
 import subprocess
-from typing import Dict, Any
+import sys
+from typing import Dict, Any, List
 from pathlib import Path
 
 # Default allowlist - should be overridden via config
@@ -71,8 +72,20 @@ def validate_target(ip: str) -> None:
         raise ValueError(f"Target {ip} not in allowlist")
 
 
+def build_ping_cmd(ip: str, count: int, timeout: int) -> List[str]:
+    """Build platform-appropriate ping command."""
+    if sys.platform == "win32":
+        # Windows: ping -n <count> -w <timeout_ms> <ip>
+        return ["ping", "-n", str(count), "-w", str(timeout * 1000), ip]
+    else:
+        # Linux/macOS: ping -c <count> -W <timeout_s> <ip>
+        return ["ping", "-c", str(count), "-W", str(timeout), ip]
+
+
 def parse_ping_output(output: str) -> Dict[str, Any]:
-    """Parse ping command output to extract RTT and loss stats"""
+    """Parse ping command output to extract RTT and loss stats.
+    Handles both Unix and Windows ping output formats.
+    """
     result = {
         "success": False,
         "avg_rtt_ms": 0.0,
@@ -82,28 +95,50 @@ def parse_ping_output(output: str) -> Dict[str, Any]:
         "raw_output": output
     }
 
-    # Parse loss percentage: "2 packets transmitted, 2 packets received, 0% packet loss"
-    loss_match = re.search(r"(\d+)%.*packet loss", output)
+    # Windows output format:
+    #   Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+    #   Minimum = 3ms, Maximum = 8ms, Average = 5ms
+    win_sent = re.search(r"Sent\s*=\s*(\d+)", output)
+    win_recv = re.search(r"Received\s*=\s*(\d+)", output)
+    win_rtt = re.search(r"Average\s*=\s*([\d.]+)\s*ms", output)
+
+    # Unix output format:
+    #   2 packets transmitted, 2 packets received, 0% packet loss
+    #   round-trip min/avg/max = 1.234/1.345/1.456 ms
+    unix_sent = re.search(r"(\d+)\s+packets transmitted", output)
+    unix_recv = re.search(r"(\d+)\s+packets received", output)
+    unix_rtt = re.search(r"round-trip.*?=\s*([\d.]+)/([\d.]+)/([\d.]+)", output)
+
+    # Loss percentage — common pattern for both: "N% loss"
+    loss_match = re.search(r"(\d+)%\s*(?:packet\s*)?loss", output)
     if loss_match:
         result["loss_pct"] = float(loss_match.group(1))
 
-    # Parse packet counts
-    transmit_match = re.search(r"(\d+)\s+packets transmitted", output)
-    received_match = re.search(r"(\d+)\s+packets received", output)
-    if transmit_match:
-        result["packets_transmitted"] = int(transmit_match.group(1))
-    if received_match:
-        result["packets_received"] = int(received_match.group(1))
+    # Packet counts (try Windows first, then Unix)
+    if win_sent:
+        result["packets_transmitted"] = int(win_sent.group(1))
+    elif unix_sent:
+        result["packets_transmitted"] = int(unix_sent.group(1))
 
-    # Parse RTT: "round-trip min/avg/max = 1.234/1.345/1.456 ms"
-    rtt_match = re.search(r"round-trip.*?=\s*([\d.]+)/([\d.]+)/([\d.]+)", output)
-    if rtt_match:
-        result["avg_rtt_ms"] = float(rtt_match.group(2))
+    if win_recv:
+        result["packets_received"] = int(win_recv.group(1))
+    elif unix_recv:
+        result["packets_received"] = int(unix_recv.group(1))
+
+    # RTT (try Windows first, then Unix)
+    if win_rtt:
+        result["avg_rtt_ms"] = float(win_rtt.group(1))
         result["success"] = True
-    elif "0 packets received" in output:
-        # All packets lost, but we still report success with inf RTT
-        result["avg_rtt_ms"] = float('inf')
+    elif unix_rtt:
+        result["avg_rtt_ms"] = float(unix_rtt.group(2))
         result["success"] = True
+    elif "0 packets received" in output or "Lost = " in output:
+        # Check if all packets were lost (may still have sent count)
+        sent = result["packets_transmitted"]
+        recv = result["packets_received"]
+        if sent > 0 and recv == 0:
+            result["avg_rtt_ms"] = float('inf')
+            result["success"] = True
 
     return result
 
@@ -124,8 +159,8 @@ def ping_rtt_tool(ip: str, count: int = 4, timeout: int = 10) -> Dict[str, Any]:
     # Security validation
     validate_target(ip)
 
-    # Build ping command
-    cmd = ["ping", "-c", str(count), "-W", str(timeout), ip]
+    # Build platform-appropriate ping command
+    cmd = build_ping_cmd(ip, count, timeout)
 
     try:
         proc = subprocess.run(
@@ -137,7 +172,7 @@ def ping_rtt_tool(ip: str, count: int = 4, timeout: int = 10) -> Dict[str, Any]:
 
         output = proc.stdout if proc.stdout else proc.stderr
 
-        if proc.returncode != 0 and "packets received" not in output:
+        if proc.returncode != 0 and "packets received" not in output and "Received" not in output:
             return {
                 "success": False,
                 "error": f"Ping failed with return code {proc.returncode}",
