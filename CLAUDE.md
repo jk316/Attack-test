@@ -63,6 +63,12 @@ All tools return a plain `dict` (not a Pydantic model). Success responses includ
 ### Allowlist
 `src/config/allowlist.json` contains `{"hosts": ["10.99.80.160"]}`. Tests that need to pass allowlist validation must use `10.99.80.160` as the target IP. Tests that verify allowlist rejection use arbitrary non-list IPs like `192.168.1.99`.
 
+## Important Engineering Constraints
+
+- **All CLI tools must support Linux and Windows**: detect platform via `sys.platform`, never hardcode OS-specific commands or flags. See [docs/debugging/cross_platform.md](docs/debugging/cross_platform.md).
+- **Always validate serialization compatibility**: mock-based tests do not catch type errors from real data (e.g. `Decimal` in JSON). See [docs/debugging/scapy_decimal.md](docs/debugging/scapy_decimal.md).
+- **Prefer real-environment verification over mocks**: after implementing any tool that calls external commands, run it against a real target to confirm end-to-end correctness.
+
 ## Development Status
 
 Tracked in `PROGRESS.md`. Currently Phase 1 is 3/4 done (ping_rtt_tool, pcap_profile_tool, traffic_send_tool complete; log_tool next). See `PLAN.md` for the full roadmap and parameter limits.
