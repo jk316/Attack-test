@@ -1,13 +1,16 @@
 """CLI entry point for the closed-loop network experiment agent."""
 import argparse
-import json
 import sys
+from pathlib import Path
 from uuid import uuid4
 
-from src.agent.state import check_stop_condition
-from src.agent.graph import build_graph
-from langgraph.errors import GraphInterrupt
-from langgraph.types import Command
+# Ensure the project root is on sys.path so `src` is importable
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.agent.state import check_stop_condition  # noqa: E402
+from src.agent.graph import build_graph  # noqa: E402
+from langgraph.errors import GraphInterrupt  # noqa: E402
+from langgraph.types import Command  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
