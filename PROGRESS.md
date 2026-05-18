@@ -1,14 +1,27 @@
 # 开发进度
 
-> 基于 PLAN.md 的 TDD 开发阶段追踪，最后更新: 2026-05-13
+> 基于 PLAN.md 的 TDD 开发阶段追踪，最后更新: 2026-05-18
 
-## 总体进度: 8/10 项完成 (100%) 🎉
+## 总体进度
 
 ```
 Phase 1 (工具层)   ████████████████████ 4/4 ✅
 Phase 2 (Agent)    ████████████████████ 3/3 ✅
 Phase 3 (集成)     ████████████████████ 1/1 ✅
+Phase 4 (LLM优化)  ████░░░░░░░░░░░░░░░░ 1/6 🔄 (4.1 完成)
 ```
+
+### Phase 4 子进度
+
+| 步骤 | 状态 | 内容 |
+|------|------|------|
+| 4.1 | ✅ | pyproject.toml 依赖 + src/llm/ + src/prompts/ + tests/unit/test_llm_client.py |
+| 4.2 | ✅ | 重写 src/agent/nodes.py plan_params()（LLM + 降级随机扰动）|
+| 4.3 | ⬜ | 更新 tests/integration/test_agent_nodes.py（已在 4.2 中完成）|
+| 4.4 | ✅ | 更新 tests/integration/test_agent_graph.py（4 个 LLM 图级测试）|
+| 4.5 | ✅ | 更新 tests/e2e/test_e2e_closed_loop.py（4 个 LLM E2E 测试）|
+| 4.6 | ✅ | 全量测试 124 passed + 真实 DeepSeek API 手动验证通过 |
+| ✅ | **Phase 4 完成** | LLM 智能参数优化上线 🎉 |
 
 ---
 
@@ -72,7 +85,7 @@ attack-test/
 ├── src/
 │   ├── __init__.py              ✅
 │   ├── tools/
-│   │   ├── __init__.py          ✅ (导出全部 4 个工具)
+│   │   ├── __init__.py          ✅
 │   │   ├── ping_rtt_tool.py     ✅
 │   │   ├── pcap_profile_tool.py ✅
 │   │   ├── traffic_send_tool.py ✅
@@ -80,27 +93,35 @@ attack-test/
 │   ├── agent/
 │   │   ├── __init__.py           ✅
 │   │   ├── state.py              ✅
-│   │   ├── nodes.py              ✅
-│   │   └── graph.py              ✅
+│   │   ├── nodes.py              ✅ (待 Phase 4.2 重构 plan_params)
+│   │   └── graph.py              ✅ (待 Phase 4.4 添加 LLM mock)
+│   ├── llm/                       🆕 Phase 4.1
+│   │   ├── __init__.py            🆕
+│   │   └── client.py              🆕 (DeepSeek API 封装)
+│   ├── prompts/                   🆕 Phase 4.1
+│   │   ├── __init__.py            🆕
+│   │   ├── plan_params.j2         🆕 (系统提示词)
+│   │   └── plan_params_context.j2 🆕 (上下文模板)
 │   ├── config/
 │   │   └── allowlist.json       ✅
-│   └── main.py                  ✅ (CLI 入口)
+│   └── main.py                  ✅
 ├── tests/
-│   ├── conftest.py                   ✅ (pytest pythonpath 配置)
+│   ├── conftest.py                   ✅
 │   ├── unit/
 │   │   ├── test_ping_rtt_tool.py    ✅
 │   │   ├── test_pcap_profile_tool.py ✅
 │   │   ├── test_traffic_send_tool.py ✅
-│   │   └── test_log_tool.py         ✅
+│   │   ├── test_log_tool.py         ✅
+│   │   └── test_llm_client.py       🆕 Phase 4.1
 │   ├── integration/
 │   │   ├── __init__.py               ✅
 │   │   ├── test_agent_loop.py        ✅
-│   │   ├── test_agent_nodes.py       ✅
-│   │   └── test_agent_graph.py       ✅
+│   │   ├── test_agent_nodes.py       ✅ (待 Phase 4.3 更新)
+│   │   └── test_agent_graph.py       ✅ (待 Phase 4.4 更新)
 │   └── e2e/
 │       ├── __init__.py                ✅
-│       └── test_e2e_closed_loop.py    ✅
-└── data/                         ❌ (目录不存在)
+│       └── test_e2e_closed_loop.py    ✅ (待 Phase 4.5 更新)
+└── data/                         ✅
 ```
 
 ## 下一步

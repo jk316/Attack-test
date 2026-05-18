@@ -42,8 +42,8 @@ class TestPlanParams:
         from src.agent.nodes import plan_params
 
         state = make_state(iteration=3)
-        with patch("random.random", return_value=0.3):  # < 0.5 so perturb
-            with patch("random.uniform", return_value=0.1):  # +10%
+        with patch("random.random", return_value=0.3):
+            with patch("random.uniform", return_value=0.1):
                 result = plan_params(state)
 
         params = result["traffic_params"]
@@ -57,7 +57,7 @@ class TestPlanParams:
                             "pps": MAX_PPS, "packet_size": 512, "flow_count": 50,
                             "iat_jitter_ms": 20})
 
-        for _ in range(50):  # run many random iterations
+        for _ in range(50):
             result = plan_params(state)
             p = result["traffic_params"]
             assert 1 <= p["pps"] <= MAX_PPS
@@ -71,6 +71,213 @@ class TestPlanParams:
         state = make_state(iteration=2)
         result = plan_params(state)
         assert set(result["traffic_params"].keys()) == set(state["traffic_params"].keys())
+
+    # ── LLM integration tests ──────────────────────────────────────
+
+    def test_llm_success_returns_params(self):
+        """plan_params should return LLM-suggested params on success."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0, 40.0],
+            loss_history=[0.0, 5.0],
+            reward=39.5,
+        )
+        llm_response = {
+            "params": {
+                "dst_port": 9090, "duration_s": 6, "pps": 100,
+                "packet_size": 256, "flow_count": 3, "iat_jitter_ms": 10,
+            },
+            "reasoning": "Increasing load to push RTT higher",
+        }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_response
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client):
+            result = plan_params(state)
+
+        assert result["traffic_params"]["pps"] == 100
+        assert result["traffic_params"]["packet_size"] == 256
+        assert result["traffic_params"]["flow_count"] == 3
+
+    def test_llm_failure_falls_back_to_random(self):
+        """plan_params should fall back to random perturbation on LLM error."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=3)
+        orig_pps = state["traffic_params"]["pps"]
+
+        mock_client = MagicMock()
+        mock_client.chat.side_effect = Exception("API error")
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client), \
+             patch("random.random", return_value=0.3), \
+             patch("random.uniform", return_value=0.1):
+            result = plan_params(state)
+
+        # Should have been perturbed by random fallback (different from original)
+        assert result["traffic_params"]["pps"] != orig_pps
+
+    def test_llm_params_clamped_to_limits(self):
+        """LLM-returned params outside bounds should be clamped."""
+        from src.agent.nodes import plan_params, MAX_PPS, MAX_DURATION_S, MAX_IAT_JITTER_MS
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0],
+            loss_history=[0.0],
+            reward=30.0,
+        )
+        llm_response = {
+            "params": {
+                "dst_port": 99999,  # > 65535
+                "duration_s": 999,  # > MAX_DURATION_S
+                "pps": -5,          # < 1
+                "packet_size": 9999, # > MAX_PACKET_SIZE
+                "flow_count": 0,    # < 1
+                "iat_jitter_ms": 999, # > MAX_IAT_JITTER_MS
+            },
+        }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_response
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client):
+            result = plan_params(state)
+
+        p = result["traffic_params"]
+        assert p["dst_port"] == 65535
+        assert p["duration_s"] == MAX_DURATION_S
+        assert p["pps"] == 1
+        assert p["packet_size"] == 512
+        assert p["flow_count"] == 1
+        assert p["iat_jitter_ms"] == MAX_IAT_JITTER_MS
+
+    def test_llm_missing_keys_filled_from_previous(self):
+        """Missing keys in LLM response should be filled from prev params."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0],
+            loss_history=[0.0],
+            reward=30.0,
+        )
+        # LLM only returns partial params
+        llm_response = {
+            "params": {
+                "pps": 120,
+                "flow_count": 5,
+            },
+        }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_response
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client):
+            result = plan_params(state)
+
+        p = result["traffic_params"]
+        # LLM-provided
+        assert p["pps"] == 120
+        assert p["flow_count"] == 5
+        # Filled from previous
+        assert p["dst_port"] == state["traffic_params"]["dst_port"]
+        assert p["duration_s"] == state["traffic_params"]["duration_s"]
+        assert p["packet_size"] == state["traffic_params"]["packet_size"]
+        assert p["iat_jitter_ms"] == state["traffic_params"]["iat_jitter_ms"]
+
+    def test_llm_non_integer_values_converted(self):
+        """Float or string param values should be converted to int."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0],
+            loss_history=[0.0],
+            reward=30.0,
+        )
+        llm_response = {
+            "params": {
+                "dst_port": 8080.7,
+                "duration_s": "6",
+                "pps": 100.2,
+                "packet_size": "256",
+                "flow_count": 3.9,
+                "iat_jitter_ms": 5,
+            },
+        }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_response
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client):
+            result = plan_params(state)
+
+        p = result["traffic_params"]
+        assert isinstance(p["dst_port"], int)
+        assert p["dst_port"] == 8080  # int(8080.7) = 8080
+        assert isinstance(p["duration_s"], int)
+        assert p["duration_s"] == 6    # int("6") = 6
+        assert isinstance(p["pps"], int)
+        assert p["pps"] == 100         # int(100.2) = 100
+        assert isinstance(p["packet_size"], int)
+        assert p["packet_size"] == 256 # int("256") = 256
+        assert isinstance(p["flow_count"], int)
+        assert p["flow_count"] == 3    # int(3.9) = 3
+
+    def test_llm_non_integer_unconvertible_falls_back(self):
+        """Unconvertible string param values should fall back to previous."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0],
+            loss_history=[0.0],
+            reward=30.0,
+        )
+        llm_response = {
+            "params": {
+                "pps": "high",  # cannot convert to int
+                "flow_count": 5,
+            },
+        }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_response
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client):
+            result = plan_params(state)
+
+        p = result["traffic_params"]
+        # "high" is unconvertible → fall back to previous
+        assert p["pps"] == state["traffic_params"]["pps"]
+        assert p["flow_count"] == 5
+
+    def test_llm_client_unavailable_falls_back(self):
+        """When _get_llm_client returns None, fall back to random."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2)
+        orig_pps = state["traffic_params"]["pps"]
+
+        with patch("src.agent.nodes._get_llm_client", return_value=None), \
+             patch("random.random", return_value=0.3), \
+             patch("random.uniform", return_value=0.1):
+            result = plan_params(state)
+
+        assert result["traffic_params"]["pps"] != orig_pps
+
+    def test_llm_response_missing_params_key_falls_back(self):
+        """When LLM response has no 'params' key, fall back to random."""
+        from src.agent.nodes import plan_params
+
+        state = make_state(iteration=2,
+            rtt_history=[30.0],
+            loss_history=[0.0],
+        )
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"reasoning": "I forgot the params key"}
+
+        with patch("src.agent.nodes._get_llm_client", return_value=mock_client), \
+             patch("random.random", return_value=0.3), \
+             patch("random.uniform", return_value=0.1):
+            result = plan_params(state)
+
+        # Should have fallen back to random (params differ)
+        assert result["traffic_params"]["pps"] != state["traffic_params"]["pps"]
 
 
 # ── send_traffic ───────────────────────────────────────────────────

@@ -241,6 +241,135 @@ Week 3: 集成测试 & 优化
 └── 文档 & 清理
 ```
 
+### Phase 4: LLM 智能参数优化 (plan_params 重构)
+
+当前 `plan_params` 使用随机扰动（每个参数 50% 概率 ±20%），不基于 RTT 反馈进行学习。Phase 4 将其替换为基于 DeepSeek API 的 LLM 智能决策。
+
+#### 4.1 架构设计
+
+```
+plan_params 节点
+├── 第 0 轮 → 返回 DEFAULT_PARAMS（不调用 LLM）
+└── 第 1+ 轮 →
+    ├── 1. 从 state 提取 RTT 历史、loss 历史、当前参数
+    ├── 2. 用 Jinja2 渲染上下文提示词
+    ├── 3. 调用 DeepSeek API（OpenAI 兼容接口）
+    ├── 4. 解析 JSON 响应，提取新参数
+    ├── 5. Clamp 所有值到安全边界内
+    └── 失败时 → 降级为随机扰动（原逻辑）
+```
+
+#### 4.2 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `src/llm/__init__.py` | 导出 LLMClient, LLMClientError |
+| `src/llm/client.py` | DeepSeek API 客户端封装（OpenAI SDK） |
+| `src/prompts/__init__.py` | 包初始化 |
+| `src/prompts/plan_params.j2` | 系统提示词模板（含参数边界和优化策略） |
+| `src/prompts/plan_params_context.j2` | 上下文提示词模板（含历史表格和当前状态） |
+| `tests/unit/test_llm_client.py` | LLM 客户端单元测试 |
+
+#### 4.3 修改文件
+
+| 文件 | 变更内容 |
+|------|---------|
+| `pyproject.toml` | 添加 `openai>=1.0.0`, `jinja2>=3.0.0` 依赖 |
+| `src/agent/nodes.py` | 重写 `plan_params()`，提取 `_random_perturbation()` 降级函数 |
+| `tests/integration/test_agent_nodes.py` | 更新 TestPlanParams 测试，新增 LLM mock 场景 |
+| `tests/integration/test_agent_graph.py` | 添加 `_get_llm_client` mock |
+| `tests/e2e/test_e2e_closed_loop.py` | 多轮测试添加 LLM mock |
+
+#### 4.4 LLM 客户端设计 (`src/llm/client.py`)
+
+```python
+class LLMClientError(Exception): ...
+
+class LLMClient:
+    def __init__(self, api_key=None, base_url="https://api.deepseek.com"):
+        # 从环境变量.env中读取 DEEPSEEK_API_KEY 和 LLM_MODEL, 作为调用的模型 
+        # 创建 openai.OpenAI 实例
+
+    def chat(self, messages: list[dict]) -> dict:
+        # 发送请求到 deepseek-chat 模型
+        # 解析 JSON 响应（处理 ```json 代码块）
+        # 返回解析后的 dict
+
+    @staticmethod
+    def _parse_json_response(content: str) -> dict:
+        # 正则提取 JSON（兼容 markdown 代码块）
+        # json.loads 解析
+        # 失败抛出 LLMClientError
+```
+
+#### 4.5 提示词设计
+
+**系统提示词** (`plan_params.j2`) — 模块加载时渲染一次：
+- 角色定义："网络流量参数优化智能体"
+- 参数边界注入（`{{ max_pps }}`, `{{ max_duration_s }}` 等，与代码常量同步）
+- 优化策略指导：梯度跟随、探索/利用平衡、拥塞原理
+- 严格的 JSON 输出格式要求
+
+**上下文提示词** (`plan_params_context.j2`) — 每轮渲染：
+- 当前迭代数 / 最大迭代数
+- 最佳 RTT 和无改善计数
+- 历史记录表格（最近 10 轮）：参数、RTT、loss%、reward
+- 当前参数快照
+
+LLM 返回的 JSON 格式：
+```json
+{
+  "params": {
+    "dst_port": 8080, "duration_s": 5, "pps": 50,
+    "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 5
+  },
+  "reasoning": "基于正向RTT趋势，继续增加pps和flow_count"
+}
+```
+
+#### 4.6 错误处理策略
+
+| 失败场景 | 处理方式 |
+|---------|---------|
+| `DEEPSEEK_API_KEY` 未设置 | `LLMClientError` → 降级为随机扰动 |
+| API 网络超时/错误 | `LLMClientError` → 降级为随机扰动 |
+| LLM 返回非 JSON | `_parse_json_response` 失败 → 降级 |
+| JSON 缺少参数 key | 从上轮参数填充默认值 |
+| 参数值超出边界 | `_clamp()` 强制限制 |
+| 参数值非整数 | `int()` 转换，失败则用上轮值 |
+
+#### 4.7 测试策略
+
+1. **单元测试** (`tests/unit/test_llm_client.py`): 客户端初始化、JSON 解析（普通/fenced/非法）、chat 方法消息传递 — 全部 mock OpenAI SDK
+2. **集成测试** (`tests/integration/test_agent_nodes.py`): 第0轮默认值、LLM 调用解析、边界clamp、失败降级、缺失key填充
+3. **图测试** (`tests/integration/test_agent_graph.py`): 添加 LLM mock
+4. **E2E 测试** (`tests/e2e/test_e2e_closed_loop.py`): 多轮测试添加 LLM mock
+
+#### 4.8 实施步骤
+
+```
+1. pyproject.toml 添加 openai, jinja2 依赖，uv sync
+2. 创建 src/llm/ 模块 (client.py)
+3. 创建 src/prompts/ 模板文件夹 (plan_params.j2, plan_params_context.j2)
+4. 创建 tests/unit/test_llm_client.py
+5. 重写 src/agent/nodes.py 的 plan_params()
+6. 更新 tests/integration/test_agent_nodes.py
+7. 更新 tests/integration/test_agent_graph.py
+8. 更新 tests/e2e/test_e2e_closed_loop.py
+9. 运行全量测试，确认无回归
+10. 手动验证: DEEPSEEK_API_KEY=xxx uv run python src/main.py --max-iters 5
+```
+
+#### 4.9 验证标准
+
+- [ ] `uv run pytest tests/unit/ -v` 全部通过
+- [ ] `uv run pytest tests/integration/ -v` 全部通过
+- [ ] `uv run pytest tests/e2e/ -v` 全部通过
+- [ ] `uv run pytest --cov=src --cov-report=term-missing` 覆盖率 ≥ 80%
+- [ ] 手动端到端测试：带 `DEEPSEEK_API_KEY` 运行完整闭环
+
+---
+
 ## 11. TDD 检查点 (Git Checkpoints)
 
 每个阶段完成后创建 commit:

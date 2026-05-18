@@ -37,6 +37,12 @@ class AgentState(TypedDict, total=False):
     reward: float
     """Current reward = avg_rtt_ms - penalty(loss_pct)."""
 
+    param_directions: dict[str, int]
+    """Per-parameter exploration direction: +1 (increase), -1 (decrease), 0 (unset)."""
+
+    param_step_scale: dict[str, float]
+    """Per-parameter adaptive step multiplier. Starts 1.0, grows on success, decays on failure."""
+
     # ── Configuration ───────────────────────────────────────────
     target_ip: str
     """Destination IP for traffic_send_tool and ping_rtt_tool."""
