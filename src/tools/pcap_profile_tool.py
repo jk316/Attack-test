@@ -63,7 +63,7 @@ def calculate_flow_count(packets: List, idle_timeout: int = 30) -> int:
     Returns:
         Approximate flow count
     """
-    flows = defaultdict(list)
+    flows = defaultdict[Any, list](list)
 
     for pkt in packets:
         if not pkt.haslayer(IP) or not pkt.haslayer(UDP):

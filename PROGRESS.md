@@ -8,7 +8,8 @@
 Phase 1 (工具层)   ████████████████████ 4/4 ✅
 Phase 2 (Agent)    ████████████████████ 3/3 ✅
 Phase 3 (集成)     ████████████████████ 1/1 ✅
-Phase 4 (LLM优化)  ████░░░░░░░░░░░░░░░░ 1/6 🔄 (4.1 完成)
+Phase 4 (LLM优化)  ████████████████████ 6/6 ✅
+Phase 5 (PCAP集成) ████████████████████ 1/1 ✅
 ```
 
 ### Phase 4 子进度
@@ -17,11 +18,21 @@ Phase 4 (LLM优化)  ████░░░░░░░░░░░░░░░�
 |------|------|------|
 | 4.1 | ✅ | pyproject.toml 依赖 + src/llm/ + src/prompts/ + tests/unit/test_llm_client.py |
 | 4.2 | ✅ | 重写 src/agent/nodes.py plan_params()（LLM + 降级随机扰动）|
-| 4.3 | ⬜ | 更新 tests/integration/test_agent_nodes.py（已在 4.2 中完成）|
+| 4.3 | ✅ | 更新 tests/integration/test_agent_nodes.py |
 | 4.4 | ✅ | 更新 tests/integration/test_agent_graph.py（4 个 LLM 图级测试）|
 | 4.5 | ✅ | 更新 tests/e2e/test_e2e_closed_loop.py（4 个 LLM E2E 测试）|
-| 4.6 | ✅ | 全量测试 124 passed + 真实 DeepSeek API 手动验证通过 |
-| ✅ | **Phase 4 完成** | LLM 智能参数优化上线 🎉 |
+| 4.6 | ✅ | 全量测试 + 真实 DeepSeek API 手动验证通过 |
+| ✅ | **Phase 4 完成** | LLM 智能参数优化上线 |
+
+### Phase 5: PCAP 分析集成 ✅
+
+| 文件 | 变更 |
+|------|------|
+| `src/agent/state.py` | 添加 `pcap_path`, `pcap_profile` 字段 |
+| `src/agent/nodes.py` | 新增 `pcap_profile()` 节点 + `_pcap_initial_params()` |
+| `src/agent/graph.py` | START → pcap_profile → plan_params → ... (6 nodes) |
+| `tests/integration/test_agent_nodes.py` | +12 测试 (pcap node + initial params + plan_params) |
+| `tests/integration/test_agent_graph.py` | +1 测试 (pcap in graph), 5→6 nodes |
 
 ---
 

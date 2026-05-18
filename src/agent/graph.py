@@ -6,7 +6,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from src.agent.state import AgentState, check_stop_condition
-from src.agent.nodes import plan_params, send_traffic, measure_rtt, log_result, update_state
+from src.agent.nodes import pcap_profile, plan_params, send_traffic, measure_rtt, log_result, update_state
 
 
 def should_continue(state: dict[str, Any]) -> str:
@@ -30,6 +30,7 @@ def build_graph() -> CompiledStateGraph:
     builder = StateGraph(AgentState)
 
     # ── Nodes ────────────────────────────────────────────────────
+    builder.add_node("pcap_profile", pcap_profile)
     builder.add_node("plan_params", plan_params)
     builder.add_node("send_traffic", send_traffic)
     builder.add_node("measure_rtt", measure_rtt)
@@ -37,7 +38,8 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("update_state", update_state)
 
     # ── Linear edges ─────────────────────────────────────────────
-    builder.add_edge(START, "plan_params")
+    builder.add_edge(START, "pcap_profile")
+    builder.add_edge("pcap_profile", "plan_params")
     builder.add_edge("plan_params", "send_traffic")
     builder.add_edge("send_traffic", "measure_rtt")
     builder.add_edge("measure_rtt", "log_result")

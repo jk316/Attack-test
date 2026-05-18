@@ -7,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from src.tools.ping_rtt_tool import ping_rtt_tool
 from src.tools.traffic_send_tool import traffic_send_tool, MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS
 from src.tools.log_tool import log_tool
+from src.tools.pcap_profile_tool import pcap_profile_tool
 from src.agent.state import compute_reward, update_best
 from src.llm.client import LLMClient, LLMClientError
 from langgraph.types import interrupt
@@ -160,17 +161,78 @@ def _random_perturbation(prev_params: dict[str, Any]) -> dict[str, Any]:
     return new_params
 
 
+# ── PCAP profiling node ──────────────────────────────────────────────────────
+
+def _pcap_initial_params(pcap_profile: dict[str, Any]) -> dict[str, Any]:
+    """Derive initial traffic parameters from PCAP analysis results.
+
+    Falls back to DEFAULT_PARAMS when pcap_profile is empty or lacks data.
+    """
+    params = dict(DEFAULT_PARAMS)
+    if not pcap_profile:
+        return params
+
+    iat_stats = pcap_profile.get("iat_ms_stats", {})
+    if iat_stats.get("p50", 0) > 0:
+        jitter = min(int(iat_stats["p50"]), MAX_IAT_JITTER_MS)
+        params["iat_jitter_ms"] = max(0, jitter)
+
+    top_ports = pcap_profile.get("top_dst_ports", [])
+    if top_ports:
+        params["dst_port"] = int(top_ports[0])
+
+    hist = pcap_profile.get("packet_size_hist", {})
+    if hist:
+        peak_size = max(
+            hist,
+            key=lambda k: hist.get(k, 0) if isinstance(hist.get(k), (int, float)) else 0,
+        )
+        try:
+            size = int(peak_size)
+            if 1 <= size <= MAX_PACKET_SIZE:
+                params["packet_size"] = size
+        except (ValueError, TypeError):
+            pass
+
+    flow_stats = pcap_profile.get("flow_stats", {})
+    approx_flows = flow_stats.get("approx_flow_count", 0)
+    if approx_flows > 0:
+        params["flow_count"] = _clamp(approx_flows // 2, 1, MAX_FLOW_COUNT)
+
+    return params
+
+
+def pcap_profile(state: dict[str, Any]) -> dict[str, Any]:
+    """Analyze PCAP file and store baseline traffic characteristics.
+
+    Only runs when iteration is 0 and a pcap_path is configured.
+    Subsequent calls are no-ops.
+    """
+    iteration = state.get("iteration", 0)
+    pcap_path = state.get("pcap_path", "")
+
+    if iteration != 0 or not pcap_path:
+        return {}
+
+    result = pcap_profile_tool(pcap_path=pcap_path)
+    return {"pcap_profile": result}
+
+
+# ── plan_params ─────────────────────────────────────────────────────────────
+
 def plan_params(state: dict[str, Any]) -> dict[str, Any]:
     """Generate next candidate traffic parameters.
 
-    Iteration 0 returns default params.  Subsequent iterations try the
-    DeepSeek LLM first, falling back to random perturbation on any error.
+    Iteration 0 derives initial params from PCAP profile when available,
+    falling back to DEFAULT_PARAMS.  Subsequent iterations try the DeepSeek
+    LLM first, falling back to random perturbation on any error.
     """
     iteration = state.get("iteration", 0)
     prev_params = state.get("traffic_params", {})
 
     if iteration == 0 or not prev_params:
-        return {"traffic_params": dict(DEFAULT_PARAMS)}
+        pcap = state.get("pcap_profile", {})
+        return {"traffic_params": _pcap_initial_params(pcap)}
 
     try:
         params = _llm_plan_params(state, prev_params)

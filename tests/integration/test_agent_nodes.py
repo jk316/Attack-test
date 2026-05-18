@@ -28,6 +28,140 @@ def make_state(**overrides):
     return state
 
 
+# ── pcap_profile ──────────────────────────────────────────────────
+
+class TestPcapProfile:
+    def test_analyzes_pcap_on_iteration_0(self):
+        """pcap_profile should call pcap_profile_tool and store results."""
+        from src.agent.nodes import pcap_profile
+
+        state = make_state(iteration=0, pcap_path="test.pcap")
+        mock_result = {
+            "top_dst_ips": ["10.0.0.1"],
+            "top_dst_ports": [8080],
+            "packet_size_hist": {"64": 100, "128": 50},
+            "iat_ms_stats": {"mean": 10.5, "p50": 8.0, "p90": 15.0},
+            "flow_stats": {"approx_flow_count": 10, "timeout_s": 30},
+            "payload_len_stats": {"mean": 64.0},
+            "notes": "test profile",
+        }
+
+        with patch("src.agent.nodes.pcap_profile_tool", return_value=mock_result):
+            result = pcap_profile(state)
+
+        assert result["pcap_profile"] == mock_result
+
+    def test_skips_on_iteration_gt_0(self):
+        """pcap_profile should return empty dict when iteration > 0."""
+        from src.agent.nodes import pcap_profile
+
+        state = make_state(iteration=3, pcap_path="test.pcap")
+        result = pcap_profile(state)
+        assert result == {}
+
+    def test_skips_when_pcap_path_empty(self):
+        """pcap_profile should return empty dict when pcap_path is not set."""
+        from src.agent.nodes import pcap_profile
+
+        state = make_state(iteration=0)  # no pcap_path
+        result = pcap_profile(state)
+        assert result == {}
+
+    def test_skips_when_pcap_path_blank(self):
+        """pcap_profile should return empty dict when pcap_path is ''."""
+        from src.agent.nodes import pcap_profile
+
+        state = make_state(iteration=0, pcap_path="")
+        result = pcap_profile(state)
+        assert result == {}
+
+
+class TestPcapInitialParams:
+    def test_derives_params_from_pcap_profile(self):
+        """_pcap_initial_params should map PCAP analysis to traffic params."""
+        from src.agent.nodes import _pcap_initial_params, MAX_IAT_JITTER_MS, MAX_FLOW_COUNT
+
+        pcap = {
+            "top_dst_ports": [9090],
+            "packet_size_hist": {"128": 80, "64": 20},
+            "iat_ms_stats": {"mean": 7.0, "p50": 6.0, "p90": 12.0},
+            "flow_stats": {"approx_flow_count": 8, "timeout_s": 30},
+        }
+        params = _pcap_initial_params(pcap)
+
+        assert params["dst_port"] == 9090
+        assert params["packet_size"] == 128  # peak of histogram
+        assert params["iat_jitter_ms"] == 6  # p50 clamped to MAX_IAT_JITTER_MS
+        assert params["flow_count"] == 4      # approx_flows // 2 = 4
+
+    def test_falls_back_to_defaults_on_empty_profile(self):
+        """Empty pcap_profile should yield DEFAULT_PARAMS."""
+        from src.agent.nodes import _pcap_initial_params, DEFAULT_PARAMS
+
+        params = _pcap_initial_params({})
+        assert params == DEFAULT_PARAMS
+
+    def test_clamps_jitter_to_max(self):
+        """IAT p50 > MAX_IAT_JITTER_MS should be clamped."""
+        from src.agent.nodes import _pcap_initial_params, MAX_IAT_JITTER_MS
+
+        pcap = {"iat_ms_stats": {"p50": 999}}
+        params = _pcap_initial_params(pcap)
+        assert params["iat_jitter_ms"] == MAX_IAT_JITTER_MS
+
+    def test_clamps_flow_count_to_max(self):
+        """approx_flow_count // 2 > MAX_FLOW_COUNT should be clamped."""
+        from src.agent.nodes import _pcap_initial_params, MAX_FLOW_COUNT
+
+        pcap = {"flow_stats": {"approx_flow_count": 200}}
+        params = _pcap_initial_params(pcap)
+        assert params["flow_count"] == MAX_FLOW_COUNT
+
+    def test_clamps_packet_size_to_max(self):
+        """Packet size > MAX_PACKET_SIZE should be ignored, falling back."""
+        from src.agent.nodes import _pcap_initial_params, MAX_PACKET_SIZE, DEFAULT_PARAMS
+
+        pcap = {"packet_size_hist": {"9999": 100}}
+        params = _pcap_initial_params(pcap)
+        assert params["packet_size"] == DEFAULT_PARAMS["packet_size"]
+
+    def test_skips_port_when_top_ports_empty(self):
+        """Empty top_dst_ports should keep default port."""
+        from src.agent.nodes import _pcap_initial_params, DEFAULT_PARAMS
+
+        pcap = {"top_dst_ports": []}
+        params = _pcap_initial_params(pcap)
+        assert params["dst_port"] == DEFAULT_PARAMS["dst_port"]
+
+
+class TestPlanParamsWithPcap:
+    def test_iter_0_uses_pcap_data(self):
+        """plan_params iteration 0 should use pcap_profile for initial params."""
+        from src.agent.nodes import plan_params
+
+        pcap = {
+            "top_dst_ports": [3000],
+            "packet_size_hist": {"256": 50},
+            "iat_ms_stats": {"p50": 3.0},
+            "flow_stats": {"approx_flow_count": 4},
+        }
+        state = make_state(iteration=0, traffic_params={}, pcap_profile=pcap)
+        result = plan_params(state)
+
+        assert result["traffic_params"]["dst_port"] == 3000
+        assert result["traffic_params"]["packet_size"] == 256
+        assert result["traffic_params"]["iat_jitter_ms"] == 3
+        assert result["traffic_params"]["flow_count"] == 2  # 4 // 2
+
+    def test_iter_0_falls_back_without_pcap(self):
+        """plan_params iteration 0 without pcap_profile should use defaults."""
+        from src.agent.nodes import plan_params, DEFAULT_PARAMS
+
+        state = make_state(iteration=0, traffic_params={})
+        result = plan_params(state)
+        assert result["traffic_params"] == DEFAULT_PARAMS
+
+
 # ── plan_params ───────────────────────────────────────────────────
 
 class TestPlanParams:

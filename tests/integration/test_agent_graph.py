@@ -32,21 +32,53 @@ class TestBuildGraph:
         graph = build_graph()
         assert isinstance(graph, CompiledStateGraph)
 
-    def test_all_five_nodes_registered(self):
+    def test_all_six_nodes_registered(self):
         from src.agent.graph import build_graph
         graph = build_graph()
 
-        # The builder has a 'nodes' attribute (public) or we verify via a test run
         builder = graph.builder
         assert hasattr(builder, "nodes")
         node_names = list(builder.nodes.keys())
-        expected = {"plan_params", "send_traffic", "measure_rtt", "log_result", "update_state"}
+        expected = {"pcap_profile", "plan_params", "send_traffic", "measure_rtt", "log_result", "update_state"}
         assert expected.issubset(set(node_names))
 
     def test_graph_has_checkpointer(self):
         from src.agent.graph import build_graph
         graph = build_graph()
         assert graph.checkpointer is not None
+
+
+class TestPcapInGraph:
+    """Verify pcap_profile node is wired correctly in the graph."""
+
+    def test_pcap_profile_runs_before_plan_params(self):
+        """When pcap_path is set and iteration=0, pcap_profile stores analysis."""
+        from src.agent.graph import build_graph
+
+        graph = build_graph()
+        initial = make_state(iteration=0, pcap_path="fake.pcap",
+            traffic_params={}, max_iters=1)
+
+        mock_profile = {"top_dst_ports": [9090], "iat_ms_stats": {"p50": 3.0}}
+
+        with patch("src.agent.nodes.pcap_profile_tool", return_value=mock_profile), \
+             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
+             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
+             patch("src.agent.nodes.log_tool"), \
+             patch("src.agent.nodes.interrupt", return_value=True):
+
+            mock_ping.return_value = {"success": True, "avg_rtt_ms": 30.0, "loss_pct": 0.0}
+
+            config = {"configurable": {"thread_id": "pcap-graph-001"}}
+            result = graph.invoke(initial, config)
+
+        # pcap_profile was stored in state
+        assert result.get("pcap_profile") == mock_profile
+        # plan_params used pcap data (port 9090 from pcap, not default 8080)
+        assert mock_send.call_count == 1
+        send_params = mock_send.call_args.kwargs
+        assert send_params["dst_port"] == 9090
+        assert result["iteration"] == 1
 
 
 class TestGraphTopology:

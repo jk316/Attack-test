@@ -47,6 +47,12 @@ class AgentState(TypedDict, total=False):
     target_ip: str
     """Destination IP for traffic_send_tool and ping_rtt_tool."""
 
+    pcap_path: str
+    """Optional path to a PCAP file for baseline traffic profiling."""
+
+    pcap_profile: dict[str, Any]
+    """Results from pcap_profile_tool: IAT stats, flow counts, port histograms."""
+
     log_path: str
     """Path to the JSONL experiment log file."""
 
