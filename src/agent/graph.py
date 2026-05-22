@@ -7,6 +7,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
+from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.tools.traffic_send_tool import (
@@ -15,20 +16,21 @@ from src.tools.traffic_send_tool import (
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-
+load_dotenv()
 def _build_model() -> ChatOpenAI:
     """Create ChatOpenAI instance configured for DeepSeek API."""
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    api_key = (os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError(
             "DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable not set"
         )
-    model_name = os.environ.get("LLM_MODEL", "deepseek-chat")
+    model_name = os.environ.get("LLM_MODEL", "deepseek-chat").strip()
     return ChatOpenAI(
         model=model_name,
         base_url="https://api.deepseek.com",
         api_key=api_key,
         temperature=0.7,
+        extra_body={"enable_thinking": True}
     )
 
 
