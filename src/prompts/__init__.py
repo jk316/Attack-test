@@ -1,1 +1,1 @@
-"""Jinja2 prompt templates for the LLM-powered plan_params node."""
+"""Jinja2 prompt templates for the closed-loop experiment agent."""

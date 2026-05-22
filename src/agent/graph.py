@@ -1,13 +1,19 @@
 """Agent builder using langchain.agents.create_agent for the closed-loop experiment."""
 import os
+from pathlib import Path
 
+from jinja2 import Environment, FileSystemLoader
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from src.agent.tools import EXPERIMENT_TOOLS
-from src.agent.system_prompt import build_system_prompt
+from src.tools.traffic_send_tool import (
+    MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
+)
+
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
 def _build_model() -> ChatOpenAI:
@@ -26,6 +32,19 @@ def _build_model() -> ChatOpenAI:
     )
 
 
+def _build_system_prompt() -> str:
+    """Render the system prompt from Jinja2 template."""
+    env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)))
+    template = env.get_template("system_prompt.j2")
+    return template.render(
+        max_pps=MAX_PPS,
+        max_duration_s=MAX_DURATION_S,
+        max_packet_size=MAX_PACKET_SIZE,
+        max_flow_count=MAX_FLOW_COUNT,
+        max_iat_jitter_ms=MAX_IAT_JITTER_MS,
+    )
+
+
 def build_graph() -> CompiledStateGraph:
     """Build the closed-loop experiment agent using create_agent.
 
@@ -36,7 +55,7 @@ def build_graph() -> CompiledStateGraph:
     Caller must handle resume via Command(resume=True/False).
     """
     model = _build_model()
-    system_prompt = build_system_prompt()
+    system_prompt = _build_system_prompt()
 
     return create_agent(
         model=model,
