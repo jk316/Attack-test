@@ -4,6 +4,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
@@ -16,7 +17,30 @@ from src.tools.traffic_send_tool import (
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
+
+def _patch_reasoning_content():
+    """Monkey-patch ChatOpenAI message conversion to preserve DeepSeek reasoning_content.
+
+    Without this, reasoning_content returned by the model is silently dropped
+    in multi-turn conversations, causing a 400 error from the API.
+    """
+    import langchain_openai.chat_models.base as base
+
+    _original = base._convert_message_to_dict
+
+    def _patched(message, api="chat/completions"):
+        result = _original(message, api)
+        if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
+            result["reasoning_content"] = message.additional_kwargs["reasoning_content"]
+        return result
+
+    base._convert_message_to_dict = _patched
+
+
 load_dotenv()
+_patch_reasoning_content()
+
+
 def _build_model() -> ChatOpenAI:
     """Create ChatOpenAI instance configured for DeepSeek API."""
     api_key = (os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip()
@@ -30,7 +54,8 @@ def _build_model() -> ChatOpenAI:
         base_url="https://api.deepseek.com",
         api_key=api_key,
         temperature=0.7,
-        extra_body={"enable_thinking": True}
+        reasoning_effort="high",
+        extra_body={"thinking": {"type": "enabled"}},
     )
 
 
