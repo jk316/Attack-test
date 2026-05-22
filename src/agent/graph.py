@@ -19,22 +19,38 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
 def _patch_reasoning_content():
-    """Monkey-patch ChatOpenAI message conversion to preserve DeepSeek reasoning_content.
+    """Monkey-patch ChatOpenAI to preserve DeepSeek reasoning_content across turns.
 
-    Without this, reasoning_content returned by the model is silently dropped
-    in multi-turn conversations, causing a 400 error from the API.
+    ChatOpenAI uses two module-level functions that both drop reasoning_content:
+    1. _convert_dict_to_message — API response → AIMessage (inbound)
+    2. _convert_message_to_dict — AIMessage → API request dict (outbound)
+
+    Without these patches, deepseek-v4-pro returns a 400 error on the second
+    turn because the API requires reasoning_content to be echoed back.
     """
     import langchain_openai.chat_models.base as base
 
-    _original = base._convert_message_to_dict
+    # ── Inbound: extract reasoning_content from API response ──────────
+    _orig_dict_to_msg = base._convert_dict_to_message
 
-    def _patched(message, api="chat/completions"):
-        result = _original(message, api)
+    def _patched_dict_to_msg(_dict):
+        msg = _orig_dict_to_msg(_dict)
+        if isinstance(msg, AIMessage) and "reasoning_content" in _dict:
+            msg.additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
+        return msg
+
+    base._convert_dict_to_message = _patched_dict_to_msg
+
+    # ── Outbound: include reasoning_content in API request ────────────
+    _orig_msg_to_dict = base._convert_message_to_dict
+
+    def _patched_msg_to_dict(message, api="chat/completions"):
+        result = _orig_msg_to_dict(message, api)
         if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
             result["reasoning_content"] = message.additional_kwargs["reasoning_content"]
         return result
 
-    base._convert_message_to_dict = _patched
+    base._convert_message_to_dict = _patched_msg_to_dict
 
 
 load_dotenv()
