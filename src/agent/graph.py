@@ -1,52 +1,46 @@
-"""LangGraph StateGraph builder for the closed-loop experiment agent."""
-from typing import Any
+"""Agent builder using langchain.agents.create_agent for the closed-loop experiment."""
+import os
 
-from langgraph.graph import StateGraph, START, END
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
-from src.agent.state import AgentState, check_stop_condition
-from src.agent.nodes import pcap_profile, plan_params, send_traffic, measure_rtt, log_result, update_state
+from src.agent.tools import EXPERIMENT_TOOLS
+from src.agent.system_prompt import build_system_prompt
 
 
-def should_continue(state: dict[str, Any]) -> str:
-    """Route to END if stop conditions are met, otherwise loop to plan_params."""
-    iteration = state.get("iteration", 0)
-    consecutive_no_improve = state.get("consecutive_no_improve", 0)
-    max_iters = state.get("max_iters", 20)
-    no_improve_limit = state.get("no_improve_limit", 5)
-
-    if check_stop_condition(iteration, consecutive_no_improve, max_iters, no_improve_limit):
-        return END
-    return "plan_params"
+def _build_model() -> ChatOpenAI:
+    """Create ChatOpenAI instance configured for DeepSeek API."""
+    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable not set"
+        )
+    model_name = os.environ.get("LLM_MODEL", "deepseek-chat")
+    return ChatOpenAI(
+        model=model_name,
+        base_url="https://api.deepseek.com",
+        api_key=api_key,
+        temperature=0.7,
+    )
 
 
 def build_graph() -> CompiledStateGraph:
-    """Build and compile the closed-loop experiment graph.
+    """Build the closed-loop experiment agent using create_agent.
 
-    Returns a CompiledStateGraph ready for invoke/stream with checkpointing.
-    HITL: the send_traffic node calls langgraph interrupt() internally.
+    Returns a CompiledStateGraph that follows the ReAct pattern:
+    LLM reasons → calls tools → observes results → repeats until stop.
+
+    The traffic_send tool is wrapped with a HITL gate via langgraph interrupt().
+    Caller must handle resume via Command(resume=True/False).
     """
-    builder = StateGraph(AgentState)
+    model = _build_model()
+    system_prompt = build_system_prompt()
 
-    # ── Nodes ────────────────────────────────────────────────────
-    builder.add_node("pcap_profile", pcap_profile)
-    builder.add_node("plan_params", plan_params)
-    builder.add_node("send_traffic", send_traffic)
-    builder.add_node("measure_rtt", measure_rtt)
-    builder.add_node("log_result", log_result)
-    builder.add_node("update_state", update_state)
-
-    # ── Linear edges ─────────────────────────────────────────────
-    builder.add_edge(START, "pcap_profile")
-    builder.add_edge("pcap_profile", "plan_params")
-    builder.add_edge("plan_params", "send_traffic")
-    builder.add_edge("send_traffic", "measure_rtt")
-    builder.add_edge("measure_rtt", "log_result")
-    builder.add_edge("log_result", "update_state")
-
-    # ── Conditional loop-back ────────────────────────────────────
-    builder.add_conditional_edges("update_state", should_continue)
-
-    # ── Compile with checkpointing ───────────────────────────────
-    return builder.compile(checkpointer=MemorySaver())
+    return create_agent(
+        model=model,
+        tools=EXPERIMENT_TOOLS,
+        system_prompt=system_prompt,
+        checkpointer=MemorySaver(),
+    )

@@ -21,6 +21,11 @@ def parse_args() -> argparse.Namespace:
         help="Target IP for traffic and ping (must be in allowlist)",
     )
     parser.add_argument(
+        "--pcap-path",
+        default="",
+        help="Path to PCAP/PCAPng file for baseline traffic profiling",
+    )
+    parser.add_argument(
         "--log-path",
         default="data/experiment.jsonl",
         help="Path to JSONL experiment log",
@@ -40,40 +45,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _build_user_message(args: argparse.Namespace) -> str:
+    """Build the initial user message with experiment parameters."""
+    pcap_line = (
+        f"- PCAP文件路径: {args.pcap_path}\n"
+        if args.pcap_path
+        else "- PCAP文件路径: 无（使用默认初始参数）\n"
+    )
+    return (
+        "请开始闭环网络实验：\n"
+        f"- 目标IP: {args.target_ip}\n"
+        f"- 最大迭代次数: {args.max_iters}\n"
+        f"- 无改善停止轮数: {args.no_improve_limit}\n"
+        f"- 日志文件路径: {args.log_path}\n"
+        + pcap_line +
+        "\n请严格按照系统提示中的实验协议执行。"
+        "如果提供了PCAP文件，先用 pcap_profile 工具分析流量特征。"
+    )
+
+
 def main() -> None:
     args = parse_args()
 
     print(f"=== Closed-Loop Experiment ===")
-    print(f"Target: {args.target_ip}")
-    print(f"Log:    {args.log_path}")
-    print(f"Max iterations: {args.max_iters}")
-    print(f"No-improve limit: {args.no_improve_limit}")
+    print(f"Target:     {args.target_ip}")
+    print(f"PCAP:       {args.pcap_path or '(none)'}")
+    print(f"Log:        {args.log_path}")
+    print(f"Max iters:  {args.max_iters}")
+    print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     print()
-
-    state = {
-        "iteration": 0,
-        "traffic_params": {},
-        "rtt_history": [],
-        "loss_history": [],
-        "best_rtt": 0.0,
-        "consecutive_no_improve": 0,
-        "reward": 0.0,
-        "target_ip": args.target_ip,
-        "log_path": args.log_path,
-        "max_iters": args.max_iters,
-        "no_improve_limit": args.no_improve_limit,
-        "messages": [],
-    }
 
     graph = build_graph()
     thread_id = str(uuid4())[:8]
     config = {"configurable": {"thread_id": thread_id}}
 
+    initial_state = {"messages": [{"role": "user", "content": _build_user_message(args)}]}
+
     print(f"Thread: {thread_id}")
     print()
 
-    # Start the graph — runs until the first interrupt (send_traffic)
-    graph.invoke(state, config)
+    # Start the agent — runs until first interrupt (HITL on traffic_send)
+    graph.invoke(initial_state, config)
 
     # Poll for interrupts and resume with HITL approval
     while True:
@@ -81,16 +93,15 @@ def main() -> None:
         if not gs or not gs.next:
             break  # graph completed
 
-        print(f"[Round {gs.values.get('iteration', 0) + 1}]")
-        print(f"  Params: pps={gs.values.get('traffic_params', {}).get('pps')}, "
-              f"size={gs.values.get('traffic_params', {}).get('packet_size')}, "
-              f"flows={gs.values.get('traffic_params', {}).get('flow_count')}")
+        # Display context for the human operator
+        print(f"[HITL] Traffic send requested")
         try:
-            response = input("  [HITL] Approve traffic send? (y/n): ").strip().lower()
+            response = input("  Approve traffic send? (y/n): ").strip().lower()
         except EOFError:
-            print("  [HITL] No input — rejecting by default")
+            print("  No input — rejecting by default")
             response = "n"
         approved = response == "y"
+        print(f"  {'Approved' if approved else 'Rejected'}")
         graph.invoke(Command(resume=approved), config)
         print()
 
@@ -99,16 +110,19 @@ def main() -> None:
     result = final_state.values if final_state else {}
 
     print("=== Experiment Complete ===")
-    print(f"Iterations:       {result.get('iteration', 'N/A')}")
-    print(f"Best RTT:         {result.get('best_rtt', 'N/A')} ms")
-    print(f"No-improve count: {result.get('consecutive_no_improve', 'N/A')}")
-    print(f"Final reward:     {result.get('reward', 'N/A')}")
 
-    rtt_history = result.get("rtt_history", [])
-    if rtt_history:
-        print(f"RTT history ({len(rtt_history)} rounds): {[round(v, 2) for v in rtt_history]}")
+    # Extract final AI message for summary
+    messages = result.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        content = getattr(last_msg, "content", str(last_msg))
+        if content:
+            # Print the last meaningful content (excluding tool results)
+            print("\n" + str(content))
+        else:
+            print("(no summary output)")
 
-    print(f"Results logged to: {args.log_path}")
+    print(f"\nResults logged to: {args.log_path}")
 
 
 if __name__ == "__main__":

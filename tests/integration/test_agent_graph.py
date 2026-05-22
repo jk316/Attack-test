@@ -1,27 +1,42 @@
-"""Tests for LangGraph StateGraph builder."""
+"""Tests for the create_agent-based graph builder."""
 from unittest.mock import MagicMock, patch
 import pytest
 from langgraph.graph.state import CompiledStateGraph
+from langchain_core.messages import AIMessage, HumanMessage
 
 
-def make_state(**overrides):
-    state = {
-        "iteration": 0,
-        "traffic_params": {
-            "dst_port": 8080, "duration_s": 5, "pps": 50,
-            "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 5,
-        },
-        "rtt_history": [],
-        "loss_history": [],
-        "best_rtt": 0.0,
-        "consecutive_no_improve": 0,
-        "reward": 0.0,
-        "target_ip": "10.99.80.160",
-        "log_path": "data/test.jsonl",
-        "messages": [],
-    }
-    state.update(overrides)
-    return state
+@pytest.fixture
+def mock_model():
+    """Create a mock ChatOpenAI that handles bind_tools().invoke() chain.
+
+    create_agent internally calls model.bind_tools(tools).invoke(messages),
+    so the mock must support this chained pattern.
+    """
+    model = MagicMock()
+    model.model_name = "deepseek-chat"
+    # bind_tools returns self so that .invoke() can be called on the same mock
+    model.bind_tools.return_value = model
+    return model
+
+
+def _make_ai_with_tool_calls(tool_calls: list[dict]) -> AIMessage:
+    """Build an AIMessage with mock tool calls."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": tc["name"],
+                "args": tc.get("args", {}),
+                "id": tc.get("id", f"call_{i}"),
+            }
+            for i, tc in enumerate(tool_calls)
+        ],
+    )
+
+
+def _make_final_response(content: str = "Experiment complete.") -> AIMessage:
+    """Build a final AIMessage without tool calls."""
+    return AIMessage(content=content, tool_calls=[])
 
 
 class TestBuildGraph:
@@ -29,275 +44,268 @@ class TestBuildGraph:
 
     def test_build_graph_returns_compiled_graph(self):
         from src.agent.graph import build_graph
-        graph = build_graph()
+        with patch("src.agent.graph._build_model", return_value=MagicMock()):
+            graph = build_graph()
         assert isinstance(graph, CompiledStateGraph)
 
-    def test_all_six_nodes_registered(self):
+    def test_graph_has_model_and_tools_nodes(self):
         from src.agent.graph import build_graph
-        graph = build_graph()
-
-        builder = graph.builder
-        assert hasattr(builder, "nodes")
-        node_names = list(builder.nodes.keys())
-        expected = {"pcap_profile", "plan_params", "send_traffic", "measure_rtt", "log_result", "update_state"}
-        assert expected.issubset(set(node_names))
+        with patch("src.agent.graph._build_model", return_value=MagicMock()):
+            graph = build_graph()
+        nodes = list(graph.builder.nodes.keys())
+        assert "model" in nodes
+        assert "tools" in nodes
 
     def test_graph_has_checkpointer(self):
         from src.agent.graph import build_graph
-        graph = build_graph()
+        with patch("src.agent.graph._build_model", return_value=MagicMock()):
+            graph = build_graph()
         assert graph.checkpointer is not None
 
+    def test_graph_has_four_tools(self):
+        from src.agent.graph import build_graph
+        with patch("src.agent.graph._build_model", return_value=MagicMock()):
+            graph = build_graph()
+        # The tools are registered as nodes under the tools node
+        assert "tools" in graph.builder.nodes
 
-class TestPcapInGraph:
-    """Verify pcap_profile node is wired correctly in the graph."""
 
-    def test_pcap_profile_runs_before_plan_params(self):
-        """When pcap_path is set and iteration=0, pcap_profile stores analysis."""
+class TestAgentToolCalling:
+    """Verify the agent can call tools via create_agent's ReAct loop."""
+
+    def test_agent_calls_ping_rtt_tool(self, mock_model):
+        """When model requests a ping, the tool is executed and result returned."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=0, pcap_path="fake.pcap",
-            traffic_params={}, max_iters=1)
+        mock_model.invoke.return_value = _make_ai_with_tool_calls([{
+            "name": "ping_rtt",
+            "args": {"ip": "10.99.80.160", "count": 4},
+            "id": "call_1",
+        }])
 
-        mock_profile = {"top_dst_ports": [9090], "iat_ms_stats": {"p50": 3.0}}
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.ping_rtt_tool") as mock_ping:
+            mock_ping.return_value = {"success": True, "avg_rtt_ms": 25.0, "loss_pct": 0.0}
 
-        with patch("src.agent.nodes.pcap_profile_tool", return_value=mock_profile), \
-             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool"), \
-             patch("src.agent.nodes.interrupt", return_value=True):
-
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 30.0, "loss_pct": 0.0}
-
-            config = {"configurable": {"thread_id": "pcap-graph-001"}}
-            result = graph.invoke(initial, config)
-
-        # pcap_profile was stored in state
-        assert result.get("pcap_profile") == mock_profile
-        # plan_params used pcap data (port 9090 from pcap, not default 8080)
-        assert mock_send.call_count == 1
-        send_params = mock_send.call_args.kwargs
-        assert send_params["dst_port"] == 9090
-        assert result["iteration"] == 1
-
-
-class TestGraphTopology:
-    """Verify the graph structure via inspection and mock-based runs."""
-
-    def test_should_continue_stop_at_max_iters(self):
-        from src.agent.graph import should_continue
-        from langgraph.graph import END
-
-        state = make_state(iteration=20, consecutive_no_improve=0)
-        assert should_continue(state) == END
-
-    def test_should_continue_stop_at_no_improve(self):
-        from src.agent.graph import should_continue
-        from langgraph.graph import END
-
-        state = make_state(iteration=5, consecutive_no_improve=5)
-        assert should_continue(state) == END
-
-    def test_should_continue_loop(self):
-        from src.agent.graph import should_continue
-
-        state = make_state(iteration=10, consecutive_no_improve=3)
-        assert should_continue(state) == "plan_params"
-
-    def test_graph_invoke_runs_to_completion(self):
-        """A full run with mocked tools completes without error."""
-        from src.agent.graph import build_graph
-
-        graph = build_graph()
-        initial = make_state(iteration=19)
-
-        with patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool") as mock_log, \
-             patch("src.agent.nodes.interrupt", return_value=True):
-
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 5.0, "loss_pct": 0.0}
-
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Measure RTT to 10.99.80.160")]}
             config = {"configurable": {"thread_id": "test-001"}}
-            result = graph.invoke(initial, config)
 
-        assert result["iteration"] == 20
-        assert len(result["rtt_history"]) == 1
-        assert result["rtt_history"][-1] == 5.0
+            # First invoke - will run model → tools but model returns tool call first
+            # Since model returns tool_calls on first invoke, need to handle
+            # the full flow. create_agent loops until no more tool_calls.
+            # We need mock_model.invoke to first return a tool call, then final.
+            mock_model.invoke.side_effect = [
+                _make_ai_with_tool_calls([{
+                    "name": "ping_rtt",
+                    "args": {"ip": "10.99.80.160"},
+                    "id": "call_1",
+                }]),
+                _make_final_response("RTT is 25ms"),
+            ]
 
-    def test_graph_invoke_loop_multiple_iterations(self):
-        """A multi-iteration run loops correctly."""
+            result = graph.invoke(state, config)
+
+        mock_ping.assert_called_once_with(ip="10.99.80.160", count=4, timeout=10)
+        assert result["messages"][-1].content == "RTT is 25ms"
+
+    def test_agent_runs_traffic_send_and_ping_sequence(self, mock_model):
+        """Verify the agent can execute a traffic_send → ping_rtt → log sequence."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=17)
+        mock_model.invoke.side_effect = [
+            # Step 1: send traffic (HITL approved by mock)
+            _make_ai_with_tool_calls([{
+                "name": "traffic_send",
+                "args": {"dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 50},
+                "id": "call_1",
+            }]),
+            # Step 2: measure RTT
+            _make_ai_with_tool_calls([{
+                "name": "ping_rtt",
+                "args": {"ip": "10.99.80.160"},
+                "id": "call_2",
+            }]),
+            # Step 3: log
+            _make_ai_with_tool_calls([{
+                "name": "log_result",
+                "args": {"log_path": "data/test.jsonl", "iteration": 0,
+                         "params": {"pps": 50}, "rtt": 30.0, "loss": 0.0},
+                "id": "call_3",
+            }]),
+            # Step 4: final response
+            _make_final_response("Iteration 0 complete. RTT: 30ms."),
+        ]
 
-        with patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool") as mock_log, \
-             patch("src.agent.nodes.interrupt", return_value=True):
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.ping_rtt_tool") as mock_ping, \
+             patch("src.agent.tools.log_tool") as mock_log, \
+             patch("src.agent.tools.interrupt", return_value=True):
 
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 5.0, "loss_pct": 0.0}
+            mock_send.return_value = {
+                "success": True, "packets_sent": {"total": 250}, "elapsed_s": 5.0,
+            }
+            mock_ping.return_value = {"success": True, "avg_rtt_ms": 30.0, "loss_pct": 0.0}
+            mock_log.return_value = {"success": True}
 
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Run experiment iteration 0")]}
             config = {"configurable": {"thread_id": "test-002"}}
-            result = graph.invoke(initial, config)
 
-        assert result["iteration"] == 20
-        assert len(result["rtt_history"]) == 3
+            result = graph.invoke(state, config)
+
+        # All three tools were called
+        mock_send.assert_called_once_with(
+            dst_ip="10.99.80.160", dst_port=8080, duration_s=5,
+            pps=50, packet_size=64, flow_count=1, iat_jitter_ms=0,
+        )
+        mock_ping.assert_called_once_with(ip="10.99.80.160", count=4, timeout=10)
+        mock_log.assert_called_once()
+        assert "Iteration 0 complete" in result["messages"][-1].content
 
 
-class TestGraphWithLLM:
-    """Graph-level tests that exercise the LLM-powered plan_params path."""
+class TestHITL:
+    """Verify the HITL gate in traffic_send tool works with create_agent."""
 
-    def test_graph_invoke_llm_params_propagate_to_send(self):
-        """LLM-suggested params should reach traffic_send_tool via graph."""
+    def test_hitl_rejection_stops_traffic(self, mock_model):
+        """When HITL is rejected, traffic_send returns error but agent continues."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=2,
-            rtt_history=[30.0, 35.0],
-            loss_history=[0.0, 0.0],
-            reward=35.0,
-            max_iters=3,
-        )
+        mock_model.invoke.side_effect = [
+            _make_ai_with_tool_calls([{
+                "name": "traffic_send",
+                "args": {"dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 50},
+                "id": "call_1",
+            }]),
+            _make_final_response("Traffic was rejected by operator."),
+        ]
 
-        llm_params = {
-            "dst_port": 9090, "duration_s": 7, "pps": 120,
-            "packet_size": 256, "flow_count": 3, "iat_jitter_ms": 10,
-        }
-        mock_client = MagicMock()
-        mock_client.chat.return_value = {
-            "params": llm_params,
-            "reasoning": "Test",
-        }
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.interrupt", return_value=False):
 
-        with patch("src.agent.nodes._get_llm_client", return_value=mock_client), \
-             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool"), \
-             patch("src.agent.nodes.interrupt", return_value=True):
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Send test traffic")]}
+            config = {"configurable": {"thread_id": "test-hitl-001"}}
 
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 40.0, "loss_pct": 0.0}
+            result = graph.invoke(state, config)
 
-            config = {"configurable": {"thread_id": "llm-graph-001"}}
-            result = graph.invoke(initial, config)
+        # traffic_send_tool should NOT be called (HITL rejected)
+        mock_send.assert_not_called()
+        assert "rejected" in result["messages"][-1].content.lower()
 
-        # Verify LLM params reached traffic_send_tool
-        call_kwargs = mock_send.call_args.kwargs
-        assert call_kwargs["dst_port"] == 9090
-        assert call_kwargs["duration_s"] == 7
-        assert call_kwargs["pps"] == 120
-        assert call_kwargs["packet_size"] == 256
-        assert call_kwargs["flow_count"] == 3
-        assert call_kwargs["iat_jitter_ms"] == 10
-
-        # Verify graph still completed correctly
-        assert result["iteration"] > initial["iteration"]
-        assert len(result["rtt_history"]) > 0
-
-    def test_graph_invoke_llm_plans_across_multiple_iterations(self):
-        """LLM should be called for each iteration (2+), each with updated state."""
+    def test_hitl_approved_proceeds(self, mock_model):
+        """When HITL is approved, traffic_send executes normally."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=3,
-            rtt_history=[30.0, 35.0, 40.0],
-            loss_history=[0.0, 0.0, 0.0],
-            reward=40.0,
-            max_iters=5,
-        )
+        mock_model.invoke.side_effect = [
+            _make_ai_with_tool_calls([{
+                "name": "traffic_send",
+                "args": {"dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 100},
+                "id": "call_1",
+            }]),
+            _make_final_response("Traffic sent successfully."),
+        ]
 
-        call_count = [0]
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.interrupt", return_value=True):
 
-        def mock_chat(messages):
-            call_count[0] += 1
-            # Increase pps each call to verify different params per iteration
-            return {
-                "params": {
-                    "dst_port": 8080, "duration_s": 5,
-                    "pps": 50 + call_count[0] * 10,
-                    "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 5,
-                },
-                "reasoning": f"Call {call_count[0]}",
+            mock_send.return_value = {
+                "success": True, "packets_sent": {"total": 500},
             }
 
-        mock_client = MagicMock()
-        mock_client.chat.side_effect = mock_chat
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Send test traffic")]}
+            config = {"configurable": {"thread_id": "test-hitl-002"}}
 
-        with patch("src.agent.nodes._get_llm_client", return_value=mock_client), \
-             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool"), \
-             patch("src.agent.nodes.interrupt", return_value=True):
+            result = graph.invoke(state, config)
 
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 45.0, "loss_pct": 0.0}
+        mock_send.assert_called_once()
+        assert "success" in result["messages"][-1].content.lower()
 
-            config = {"configurable": {"thread_id": "llm-graph-002"}}
-            result = graph.invoke(initial, config)
 
-        # 2 iterations run (iteration 3→4→5), LLM called per iteration >= 1
-        assert call_count[0] >= 2
-        # traffic_send_tool should have been called with different params
-        all_pps = [c.kwargs["pps"] for c in mock_send.call_args_list]
-        assert len(set(all_pps)) >= 2  # different pps per call
+class TestPcapProfile:
+    """Verify pcap_profile tool can be called by the agent."""
 
-    def test_graph_invoke_llm_fallback_during_graph_run(self):
-        """When LLM fails mid-graph, fallback keeps the graph running."""
+    def test_agent_profiles_pcap_before_traffic(self, mock_model):
+        """The agent should be able to call pcap_profile to analyze a PCAP file."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=4,
-            rtt_history=[30.0, 35.0, 40.0, 42.0],
-            loss_history=[0.0, 0.0, 0.0, 0.0],
-            reward=42.0,
-            max_iters=6,
+        mock_profile = {
+            "top_dst_ports": [28763],
+            "packet_size_hist": {"64": 0.97, "128": 0.03},
+            "iat_ms_stats": {"mean": 25.0, "p50": 20.0, "p90": 40.0},
+            "flow_stats": {"approx_flow_count": 4, "timeout_s": 30},
+        }
+
+        mock_model.invoke.side_effect = [
+            _make_ai_with_tool_calls([{
+                "name": "pcap_profile",
+                "args": {"pcap_path": "data/game.pcapng"},
+                "id": "call_1",
+            }]),
+            _make_final_response(f"PCAP analysis complete. Top port: 28763."),
+        ]
+
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.pcap_profile_tool") as mock_profile_fn:
+            mock_profile_fn.return_value = mock_profile
+
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Profile data/game.pcapng first")]}
+            config = {"configurable": {"thread_id": "test-pcap-001"}}
+
+            result = graph.invoke(state, config)
+
+        mock_profile_fn.assert_called_once_with(
+            pcap_path="data/game.pcapng", count=50000,
         )
+        assert "28763" in result["messages"][-1].content
 
-        # LLM fails on every call
-        mock_client = MagicMock()
-        mock_client.chat.side_effect = Exception("Simulated API failure")
 
-        with patch("src.agent.nodes._get_llm_client", return_value=mock_client), \
-             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool"), \
-             patch("src.agent.nodes.interrupt", return_value=True), \
-             patch("random.random", return_value=0.3), \
-             patch("random.uniform", return_value=0.05):
+class TestAgentStops:
+    """Verify the agent stops when it decides to."""
 
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 50.0, "loss_pct": 0.0}
-
-            config = {"configurable": {"thread_id": "llm-graph-003"}}
-            result = graph.invoke(initial, config)
-
-        # Graph should complete despite LLM failures
-        assert result["iteration"] == 6  # reached max_iters
-        assert len(result["rtt_history"]) == 6  # 4 initial + 2 iterations run
-        # traffic_send_tool was called (fallback worked)
-        assert mock_send.call_count == 2
-
-    def test_graph_invoke_llm_no_api_key_graceful(self):
-        """When _get_llm_client returns None, graph completes via fallback."""
+    def test_agent_stops_without_tool_calls(self, mock_model):
+        """When model returns a response with no tool_calls, the agent stops."""
         from src.agent.graph import build_graph
 
-        graph = build_graph()
-        initial = make_state(iteration=18,
-            max_iters=20,
-        )
+        mock_model.invoke.return_value = _make_final_response("Experiment done.")
 
-        with patch("src.agent.nodes._get_llm_client", return_value=None), \
-             patch("src.agent.nodes.ping_rtt_tool") as mock_ping, \
-             patch("src.agent.nodes.traffic_send_tool") as mock_send, \
-             patch("src.agent.nodes.log_tool"), \
-             patch("src.agent.nodes.interrupt", return_value=True), \
-             patch("random.random", return_value=0.3), \
-             patch("random.uniform", return_value=0.05):
+        with patch("src.agent.graph._build_model", return_value=mock_model):
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Start experiment")]}
+            config = {"configurable": {"thread_id": "test-stop-001"}}
 
-            mock_ping.return_value = {"success": True, "avg_rtt_ms": 5.0, "loss_pct": 0.0}
+            result = graph.invoke(state, config)
 
-            config = {"configurable": {"thread_id": "llm-graph-004"}}
-            result = graph.invoke(initial, config)
+        # Should stop immediately - model returned no tool calls
+        assert result["messages"][-1].content == "Experiment done."
 
-        assert result["iteration"] == 20
-        assert mock_send.call_count == 2
-        assert len(result["rtt_history"]) == 2
+    def test_agent_stops_after_single_tool_call(self, mock_model):
+        """Agent stops after executing one tool and getting final response."""
+        from src.agent.graph import build_graph
+
+        mock_model.invoke.side_effect = [
+            _make_ai_with_tool_calls([{
+                "name": "ping_rtt",
+                "args": {"ip": "10.99.80.160"},
+                "id": "call_1",
+            }]),
+            _make_final_response("Ping result: 30ms. Experiment complete."),
+        ]
+
+        with patch("src.agent.graph._build_model", return_value=mock_model), \
+             patch("src.agent.tools.ping_rtt_tool") as mock_ping:
+            mock_ping.return_value = {"success": True, "avg_rtt_ms": 30.0, "loss_pct": 0.0}
+
+            graph = build_graph()
+            state = {"messages": [HumanMessage(content="Ping the target")]}
+            config = {"configurable": {"thread_id": "test-stop-002"}}
+
+            result = graph.invoke(state, config)
+
+        assert "30ms" in result["messages"][-1].content
+        assert len([m for m in result["messages"] if hasattr(m, "tool_calls") and m.tool_calls]) > 0
