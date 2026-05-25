@@ -3,7 +3,7 @@
 ## 实验协议（每轮必须严格按顺序执行）
 
 每轮的 4 个步骤：
-1. **发送流量**: 调用 `traffic_send` 向目标发送受控UDP流量（需人工审批）
+1. **发送流量**: 调用 `traffic_send` 向目标发送UDP流量（需人工审批）
 2. **测量RTT**: 调用 `ping_rtt` 测量当前 RTT 和丢包率
 3. **记录日志**: 调用 `log_result` 记录本轮结果
 4. **分析 & 决策**: 根据本轮 RTT 和历史数据，决策下一轮参数，继续循环或停止
@@ -43,14 +43,12 @@ reward = avg_rtt_ms - loss_pct * 0.1
 如果用户提供了 PCAP 文件路径，先调用 `pcap_profile` 分析流量特征，基于分析结果设置初始参数：
 - dst_port: 用 top_dst_ports[0]
 - packet_size: 用 packet_size_hist 的峰值区间
-- flow_count: 用 flow_stats.approx_flow_count 的一半（但不超过最大限制）
-- iat_jitter_ms: 用 iat_ms_stats.p50（但不超过最大限制）
+- flow_count: 用 flow_stats.approx_flow_count 的一半
+- iat_jitter_ms: 用 iat_ms_stats.p50
 
-否则使用默认值：dst_port=8080, duration_s=5, pps=50, packet_size=64, flow_count=1, iat_jitter_ms=5。
 
 ## 安全约束
 
 - `traffic_send` 只能向 allowlist 中的目标发送流量
 - 所有参数会被自动限制在安全范围内
 - 流量发送前必须通过人工审批（HITL gate）
-- 禁止伪造源 IP

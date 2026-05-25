@@ -1,5 +1,6 @@
 """CLI entry point for the closed-loop network experiment agent."""
 import argparse
+import json
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -9,37 +10,113 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
 from langgraph.types import Command  # noqa: E402
+from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
+from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
+
+# ── Callback: log full LLM I/O ──────────────────────────────────────
+class VerboseCallback(BaseCallbackHandler):
+    """Print every LLM prompt (messages) and response for debugging."""
+
+    def on_chat_model_start(self, serialized, messages, **kwargs):
+        print("\n" + "=" * 70)
+        print("[LLM INPUT] Messages sent to model:")
+        print("-" * 40)
+        for i, msg in enumerate(messages[0]):
+            role = getattr(msg, "type", "unknown")
+            content = getattr(msg, "content", str(msg))
+            # Truncate very long content
+            if isinstance(content, str) and len(content) > 2000:
+                content = content[:2000] + "\n... [truncated]"
+            print(f"  [{i}] {role}: {content}")
+            # Show tool_call_id for tool messages
+            tool_call_id = getattr(msg, "tool_call_id", None)
+            if tool_call_id:
+                print(f"       tool_call_id={tool_call_id}")
+            # Show additional_kwargs (e.g. reasoning_content, tool_calls)
+            extra = getattr(msg, "additional_kwargs", None)
+            if extra:
+                print(f"       additional_kwargs={json.dumps(extra, ensure_ascii=False, default=str)[:500]}")
+        print("-" * 40)
+
+    def on_chat_model_end(self, response, **kwargs):
+        print("[LLM OUTPUT] Model response:")
+        print("-" * 40)
+        msg = response.generations[0][0].message
+        content = getattr(msg, "content", "")
+        if content:
+            if isinstance(content, str) and len(content) > 2000:
+                content = content[:2000] + "\n... [truncated]"
+            print(f"  content: {content}")
+        extra = getattr(msg, "additional_kwargs", None)
+        if extra:
+            print(f"  additional_kwargs={json.dumps(extra, ensure_ascii=False, default=str)[:500]}")
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls:
+            for tc in tool_calls:
+                print(f"  tool_call: name={tc.get('name')} id={tc.get('id','?')[:8]}.. args={json.dumps(tc.get('args',{}), ensure_ascii=False)[:300]}")
+        print("=" * 70 + "\n")
+
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        print(f"[TOOL START] {serialized.get('name', '?')} input={str(input_str)[:300]}")
+
+    def on_tool_end(self, output, **kwargs):
+        out = json.dumps(output, ensure_ascii=False, default=str)
+        print(f"[TOOL END]   output={out[:500]}")
+
+
+CONFIG_PATH = Path(__file__).resolve().parent / "config" / "experiment.json"
+
+DEFAULTS: dict = {
+    "target_ip": "10.99.80.160",
+    "pcap_path": "",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 20,
+    "no_improve_limit": 5,
+}
+
+
+def _load_config_defaults() -> dict:
+    """Load experiment defaults from config file, falling back to hardcoded values."""
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+            return {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return dict(DEFAULTS)
 
 
 def parse_args() -> argparse.Namespace:
+    cfg = _load_config_defaults()
     parser = argparse.ArgumentParser(
         description="Closed-Loop Network Experiment Agent"
     )
     parser.add_argument(
         "--target-ip",
-        default="10.99.80.160",
+        default=cfg["target_ip"],
         help="Target IP for traffic and ping (must be in allowlist)",
     )
     parser.add_argument(
         "--pcap-path",
-        default="",
+        default=cfg["pcap_path"],
         help="Path to PCAP/PCAPng file for baseline traffic profiling",
     )
     parser.add_argument(
         "--log-path",
-        default="data/experiment.jsonl",
+        default=cfg["log_path"],
         help="Path to JSONL experiment log",
     )
     parser.add_argument(
         "--max-iters",
         type=int,
-        default=20,
+        default=cfg["max_iters"],
         help="Maximum iterations (default 20)",
     )
     parser.add_argument(
         "--no-improve-limit",
         type=int,
-        default=5,
+        default=cfg["no_improve_limit"],
         help="Stop after N consecutive rounds without improvement (default 5)",
     )
     return parser.parse_args()
@@ -75,9 +152,10 @@ def main() -> None:
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     print()
 
+    verbose = VerboseCallback()
     graph = build_graph()
     thread_id = str(uuid4())[:8]
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": [verbose]}
 
     initial_state = {"messages": [{"role": "user", "content": _build_user_message(args)}]}
 

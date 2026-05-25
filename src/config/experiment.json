@@ -1,0 +1,7 @@
+{
+    "target_ip": "10.99.80.160",
+    "pcap_path": "data/game.pcapng",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 20,
+    "no_improve_limit": 5
+}

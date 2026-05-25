@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Closed-Loop Network Experiment Agent — a LangGraph agent that autonomously explores traffic parameters to maximize ping RTT, operating under strict safety constraints (allowlist, rate limits, HITL approval). Built with Python 3.11+ and Scapy.
+Closed-Loop Network Experiment Agent — a LangChain ReAct agent that autonomously explores traffic parameters to maximize ping RTT, operating under strict safety constraints (allowlist, rate limits, HITL approval). Built with Python 3.11+, Scapy, LangChain, and DeepSeek API.
 
 ## Commands
 
@@ -12,41 +12,64 @@ Closed-Loop Network Experiment Agent — a LangGraph agent that autonomously exp
 # Run all unit tests
 uv run pytest tests/unit/ -v
 
+# Run all integration tests
+uv run pytest tests/integration/ -v
+
+# Run all E2E tests
+uv run pytest tests/e2e/ -v
+
+# Run full test suite with coverage (80% minimum required)
+uv run pytest --cov=src --cov-report=term-missing
+
 # Run a single test file
 uv run pytest tests/unit/test_traffic_send_tool.py -v
 
-# Run with coverage (80% minimum required)
-uv run pytest tests/unit/ --cov=src/tools --cov-report=term-missing
+# Run the agent (requires DEEPSEEK_API_KEY or OPENAI_API_KEY)
+uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5
 
-# Run a specific test
-uv run pytest tests/unit/test_traffic_send_tool.py::TestTrafficSendTool::test_pps_exceeds_max_rejected -v
+# Run with PCAP baseline profiling
+uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapng --max-iters 5
 ```
 
 ## Architecture
 
-The agent follows a closed-loop pipeline:
+The agent uses `langchain.agents.create_agent` with the ReAct pattern:
 
 ```
-Plan Action → Send Traffic → Measure RTT → Log Result → (loop)
+LLM reasons → calls tools → observes results → repeats until stop
 ```
 
-Implemented in phases:
-- **Phase 1 (Tools)**: Standalone Python functions that the agent will call. Each is a discrete operation with strict input validation.
-- **Phase 2 (Agent)**: LangGraph state machine with ReAct tool-calling. Nodes handle param exploration, HITL approval, and reward optimization (`reward = avg_rtt_ms - penalty(loss_pct)`).
-- **Phase 3 (Integration)**: E2E tests covering the full closed loop.
+### Key Files
 
-## Git Workflow
+| File | Role |
+|------|------|
+| `src/agent/graph.py` | Builds the agent via `create_agent()`, model config, system prompt rendering, DeepSeek reasoning_content monkey-patch |
+| `src/agent/tools.py` | Wraps tool functions as `@tool`-decorated LangChain tools; `traffic_send` includes HITL gate via `interrupt()` |
+| `src/agent/state.py` | `AgentState` TypedDict + helpers (`compute_reward`, `check_stop_condition`, `update_best`) |
+| `src/llm/client.py` | DeepSeek API client wrapper (OpenAI-compatible) with JSON response parsing |
+| `src/prompts/system_prompt.j2` | Jinja2 system prompt template with parameter bounds and optimization strategy |
+| `src/main.py` | CLI entry point — parses args, runs agent loop with HITL polling |
 
-After completing each phase (e.g., a full tool implementation with tests passing and 80%+ coverage), you MUST:
-1. Stage all changed files and create a commit following the PLAN.md checkpoint naming: `test: add <feature> tests (RED)` / `fix: implement <feature> (GREEN)`
-2. Push to the remote repository: `git push origin main`
+### Agent Tools
 
-Do NOT skip committing after a phase is complete.
+| Tool | Underlying Function | HITL? |
+|------|-------------------|-------|
+| `pcap_profile` | `src/tools/pcap_profile_tool.py` | No |
+| `traffic_send` | `src/tools/traffic_send_tool.py` | Yes (`interrupt()`) |
+| `ping_rtt` | `src/tools/ping_rtt_tool.py` | No |
+| `log_result` | `src/tools/log_tool.py` | No |
+
+### Experiment Protocol (per iteration)
+
+1. **Send Traffic** → `traffic_send` (HITL approval required)
+2. **Measure RTT** → `ping_rtt`
+3. **Log Result** → `log_result`
+4. **Analyze & Decide** → LLM decides next params or stop
 
 ## Key Conventions
 
 ### TDD Workflow
-Every tool follows strict TDD: write tests first (RED) → implement (GREEN) → verify 80%+ coverage. Tests use `from src.tools.xxx import xxx` imports. `tests/conftest.py` adds the project root to `sys.path` so `src` is importable.
+Every feature follows strict TDD: write tests first (RED) → implement (GREEN) → verify 80%+ coverage. Tests use `from src.tools.xxx import xxx` imports. `tests/conftest.py` adds the project root to `sys.path` so `src` is importable.
 
 ### Security Validation
 All tools that target network destinations must enforce:
@@ -63,6 +86,24 @@ All tools return a plain `dict` (not a Pydantic model). Success responses includ
 ### Allowlist
 `src/config/allowlist.json` contains `{"hosts": ["10.99.80.160"]}`. Tests that need to pass allowlist validation must use `10.99.80.160` as the target IP. Tests that verify allowlist rejection use arbitrary non-list IPs like `192.168.1.99`.
 
+### LLM / DeepSeek Integration
+- Uses `langchain_openai.ChatOpenAI` pointed at `https://api.deepseek.com`
+- Model controlled by `LLM_MODEL` env var (default `deepseek-chat`)
+- API key from `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` env var
+- **reasoning_content monkey-patch** in `graph.py`: ChatOpenAI drops DeepSeek's `reasoning_content` field by default — the patch preserves it across inbound (API→AIMessage) and outbound (AIMessage→API) conversions to avoid 400 errors on multi-turn conversations
+
+### Parameter Limits
+
+| Parameter | Max | Constant |
+|-----------|-----|----------|
+| pps | 200 | `MAX_PPS` |
+| duration_s | 10 | `MAX_DURATION_S` |
+| packet_size | 512 | `MAX_PACKET_SIZE` |
+| flow_count | 50 | `MAX_FLOW_COUNT` |
+| iat_jitter_ms | 20 | `MAX_IAT_JITTER_MS` |
+| max_iters | 20 | default in state |
+| no_improve_limit | 5 | default in state |
+
 ## Important Engineering Constraints
 
 - **All CLI tools must support Linux and Windows**: detect platform via `sys.platform`, never hardcode OS-specific commands or flags. See [docs/debugging/cross_platform.md](docs/debugging/cross_platform.md).
@@ -71,4 +112,4 @@ All tools return a plain `dict` (not a Pydantic model). Success responses includ
 
 ## Development Status
 
-Tracked in `PROGRESS.md`. Currently Phase 1 is 3/4 done (ping_rtt_tool, pcap_profile_tool, traffic_send_tool complete; log_tool next). See `PLAN.md` for the full roadmap and parameter limits.
+All 5 phases are complete. Tracked in `PROGRESS.md`. See `PLAN.md` for the full roadmap.
