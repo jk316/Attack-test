@@ -1,9 +1,12 @@
 """CLI entry point for the closed-loop network experiment agent."""
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from uuid import uuid4
+
+logger = logging.getLogger("agent")
 
 # Ensure the project root is on sys.path so `src` is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,55 +16,48 @@ from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 
-# ── Callback: log full LLM I/O ──────────────────────────────────────
+# ── Callback: log LLM I/O via logging module ────────────────────────
 class VerboseCallback(BaseCallbackHandler):
-    """Print every LLM prompt (messages) and response for debugging."""
+    """Log LLM prompts and responses. Level: INFO=tool calls/structure, DEBUG=full content."""
+
+    @staticmethod
+    def _flat_tool_calls(msg) -> list[str]:
+        tc_list = getattr(msg, "tool_calls", None) or []
+        return [tc.get("name", "?") for tc in tc_list]
 
     def on_chat_model_start(self, serialized, messages, **kwargs):
-        print("\n" + "=" * 70)
-        print("[LLM INPUT] Messages sent to model:")
-        print("-" * 40)
+        logger.info("=" * 60)
+        logger.info("[LLM INPUT] %d messages", len(messages[0]))
         for i, msg in enumerate(messages[0]):
             role = getattr(msg, "type", "unknown")
-            content = getattr(msg, "content", str(msg))
-            # Truncate very long content
-            if isinstance(content, str) and len(content) > 2000:
-                content = content[:2000] + "\n... [truncated]"
-            print(f"  [{i}] {role}: {content}")
-            # Show tool_call_id for tool messages
-            tool_call_id = getattr(msg, "tool_call_id", None)
-            if tool_call_id:
-                print(f"       tool_call_id={tool_call_id}")
-            # Show additional_kwargs (e.g. reasoning_content, tool_calls)
-            extra = getattr(msg, "additional_kwargs", None)
+            logger.debug("  [%d] %s", i, role)
+            logger.debug("    content: %s", getattr(msg, "content", "")[:300])
+            tc = self._flat_tool_calls(msg)
+            if tc:
+                logger.info("  [%d] %s tool_calls=%s", i, role, tc)
+            extra = getattr(msg, "additional_kwargs", None) or {}
             if extra:
-                print(f"       additional_kwargs={json.dumps(extra, ensure_ascii=False, default=str)[:500]}")
-        print("-" * 40)
+                logger.debug("    kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
 
     def on_chat_model_end(self, response, **kwargs):
-        print("[LLM OUTPUT] Model response:")
-        print("-" * 40)
         msg = response.generations[0][0].message
+        tc = self._flat_tool_calls(msg)
+        logger.info("[LLM OUTPUT] tool_calls=%s", tc)
+        for t in getattr(msg, "tool_calls", None) or []:
+            logger.debug("  args: %s", json.dumps(t.get("args", {}), ensure_ascii=False)[:300])
         content = getattr(msg, "content", "")
         if content:
-            if isinstance(content, str) and len(content) > 2000:
-                content = content[:2000] + "\n... [truncated]"
-            print(f"  content: {content}")
-        extra = getattr(msg, "additional_kwargs", None)
+            logger.debug("  content: %s", content[:300])
+        extra = getattr(msg, "additional_kwargs", None) or {}
         if extra:
-            print(f"  additional_kwargs={json.dumps(extra, ensure_ascii=False, default=str)[:500]}")
-        tool_calls = getattr(msg, "tool_calls", None)
-        if tool_calls:
-            for tc in tool_calls:
-                print(f"  tool_call: name={tc.get('name')} id={tc.get('id','?')[:8]}.. args={json.dumps(tc.get('args',{}), ensure_ascii=False)[:300]}")
-        print("=" * 70 + "\n")
+            logger.debug("  kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
+        logger.info("=" * 60)
 
     def on_tool_start(self, serialized, input_str, **kwargs):
-        print(f"[TOOL START] {serialized.get('name', '?')} input={str(input_str)[:300]}")
+        logger.info("[TOOL] %s — start", serialized.get("name", "?"))
 
     def on_tool_end(self, output, **kwargs):
-        out = json.dumps(output, ensure_ascii=False, default=str)
-        print(f"[TOOL END]   output={out[:500]}")
+        logger.info("[TOOL] done")
 
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "experiment.json"
@@ -151,6 +147,20 @@ def main() -> None:
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     print()
+
+    # ── Logging: info → console; debug → file (agent logger only) ──
+    log_fh = logging.FileHandler("data/agent.log", encoding="utf-8")
+    log_fh.setLevel(logging.DEBUG)
+    log_fh.setFormatter(logging.Formatter("%(message)s"))
+    log_ch = logging.StreamHandler()
+    log_ch.setLevel(logging.INFO)
+    log_ch.setFormatter(logging.Formatter("%(message)s"))
+
+    agent_logger = logging.getLogger("agent")
+    agent_logger.setLevel(logging.DEBUG)
+    agent_logger.addHandler(log_ch)
+    agent_logger.addHandler(log_fh)
+    agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
 
     verbose = VerboseCallback()
     graph = build_graph()
