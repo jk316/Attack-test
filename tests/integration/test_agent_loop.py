@@ -11,9 +11,7 @@ class TestAgentState:
 
         state: AgentState = dict(
             iteration=0,
-            traffic_params={},
-            rtt_history=[],
-            loss_history=[],
+                rtt_history=[],
             best_rtt=0.0,
             consecutive_no_improve=0,
             reward=0.0,
@@ -32,9 +30,7 @@ class TestAgentState:
 
         state: AgentState = dict(
             iteration=1,
-            traffic_params={},
-            rtt_history=[],
-            loss_history=[],
+                rtt_history=[],
             best_rtt=0.0,
             consecutive_no_improve=0,
             reward=0.0,

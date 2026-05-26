@@ -15,17 +15,9 @@ class AgentState(TypedDict, total=False):
     iteration: int
     """Current iteration number, 0-indexed."""
 
-    # ── Traffic parameters ──────────────────────────────────────
-    traffic_params: dict[str, Any]
-    """Current candidate: {pps, duration_s, packet_size, flow_count,
-       iat_jitter_ms, dst_port}. Populated by the param-planning node."""
-
     # ── Accumulated history (reducer: operator.add) ─────────────
     rtt_history: Annotated[list[float], operator.add]
     """Per-iteration avg_rtt_ms values. Nodes return {rtt_history: [val]}."""
-
-    loss_history: Annotated[list[float], operator.add]
-    """Per-iteration loss_pct values. Nodes return {loss_history: [val]}."""
 
     # ── Optimization state ──────────────────────────────────────
     best_rtt: float
@@ -36,12 +28,6 @@ class AgentState(TypedDict, total=False):
 
     reward: float
     """Current reward = avg_rtt_ms - penalty(loss_pct)."""
-
-    param_directions: dict[str, int]
-    """Per-parameter exploration direction: +1 (increase), -1 (decrease), 0 (unset)."""
-
-    param_step_scale: dict[str, float]
-    """Per-parameter adaptive step multiplier. Starts 1.0, grows on success, decays on failure."""
 
     # ── Configuration ───────────────────────────────────────────
     target_ip: str
