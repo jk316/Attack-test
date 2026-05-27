@@ -46,9 +46,13 @@ LLM reasons → calls tools → observes results → repeats until stop
 | `src/agent/graph.py` | Builds the agent via `create_agent()`, model config, system prompt rendering, DeepSeek reasoning_content monkey-patch |
 | `src/agent/tools.py` | Wraps tool functions as `@tool`-decorated LangChain tools; `traffic_send` includes HITL gate via `interrupt()` |
 | `src/agent/state.py` | `AgentState` TypedDict + helpers (`compute_reward`, `check_stop_condition`, `update_best`) |
-| `src/llm/client.py` | DeepSeek API client wrapper (OpenAI-compatible) with JSON response parsing |
+| `src/main.py` | CLI entry point — parses args, runs agent loop with HITL polling, configures logging |
 | `src/prompts/system_prompt.j2` | Jinja2 system prompt template with parameter bounds and optimization strategy |
-| `src/main.py` | CLI entry point — parses args, runs agent loop with HITL polling |
+| `src/config/experiment.json` | Default experiment parameters (target_ip, pcap_path, log_path, max_iters, no_improve_limit) |
+| `src/config/allowlist.json` | Allowlisted target IPs: `10.99.80.160`, `100.1.11.4` |
+| `src/llm/client.py` | Legacy `LLMClient` wrapper — NOT used by the agent (graph.py uses `ChatOpenAI` directly). Kept for standalone/script use |
+| `test.py` | Standalone LangGraph ReAct demo (Planner + Compiler + Tool Executor). Independent from the main agent — a learning/reference file |
+| `pyproject.toml` | Project metadata, dependencies, pytest config (`pythonpath = ["src"]`) |
 
 ### Agent Tools
 
@@ -65,6 +69,17 @@ LLM reasons → calls tools → observes results → repeats until stop
 2. **Measure RTT** → `ping_rtt`
 3. **Log Result** → `log_result`
 4. **Analyze & Decide** → LLM decides next params or stop
+
+### Data Flow at Runtime
+
+```
+main.py parses CLI args → loads experiment.json defaults
+  → build_graph() renders system_prompt.j2 → creates agent with EXPERIMENT_TOOLS
+  → invoke with user message → agent enters ReAct loop
+  → on traffic_send: interrupt() pauses → HITL poll in main.py → Command(resume=...) → continues
+  → agent stops when LLM returns no tool_calls
+  → results written to data/experiment.jsonl, detailed logs to data/agent.log
+```
 
 ## Key Conventions
 
@@ -83,14 +98,15 @@ Validation functions (`validate_target`, `is_broadcast`, `is_multicast`, `is_all
 ### Tool Output Format
 All tools return a plain `dict` (not a Pydantic model). Success responses include `"success": True`; errors raise `ValueError` for parameter violations and `ImportError` for missing dependencies.
 
-### Allowlist
-`src/config/allowlist.json` contains `{"hosts": ["10.99.80.160"]}`. Tests that need to pass allowlist validation must use `10.99.80.160` as the target IP. Tests that verify allowlist rejection use arbitrary non-list IPs like `192.168.1.99`.
+### Test Target IPs
+Tests that need to pass allowlist validation must use `10.99.80.160`. Tests that verify allowlist rejection use arbitrary non-list IPs like `192.168.1.99`.
 
 ### LLM / DeepSeek Integration
 - Uses `langchain_openai.ChatOpenAI` pointed at `https://api.deepseek.com`
 - Model controlled by `LLM_MODEL` env var (default `deepseek-chat`)
 - API key from `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` env var
 - **reasoning_content monkey-patch** in `graph.py`: ChatOpenAI drops DeepSeek's `reasoning_content` field by default — the patch preserves it across inbound (API→AIMessage) and outbound (AIMessage→API) conversions to avoid 400 errors on multi-turn conversations
+- Model config uses `reasoning_effort="high"` and `extra_body={"thinking": {"type": "enabled"}}` for DeepSeek's thinking mode
 
 ### Parameter Limits
 
@@ -106,8 +122,8 @@ All tools return a plain `dict` (not a Pydantic model). Success responses includ
 
 ## Important Engineering Constraints
 
-- **All CLI tools must support Linux and Windows**: detect platform via `sys.platform`, never hardcode OS-specific commands or flags. See [docs/debugging/cross_platform.md](docs/debugging/cross_platform.md).
-- **Always validate serialization compatibility**: mock-based tests do not catch type errors from real data (e.g. `Decimal` in JSON). See [docs/debugging/scapy_decimal.md](docs/debugging/scapy_decimal.md).
+- **All CLI tools must support Linux and Windows**: detect platform via `sys.platform`, never hardcode OS-specific commands or flags. See `docs/debugging/cross_platform.md`.
+- **Always validate serialization compatibility**: mock-based tests do not catch type errors from real data (e.g. `Decimal` in JSON). See `docs/debugging/scapy_decimal.md`.
 - **Prefer real-environment verification over mocks**: after implementing any tool that calls external commands, run it against a real target to confirm end-to-end correctness.
 
 ## Development Status

@@ -20,24 +20,33 @@ from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 class VerboseCallback(BaseCallbackHandler):
     """Log LLM prompts and responses. Level: INFO=tool calls/structure, DEBUG=full content."""
 
+    def __init__(self):
+        super().__init__()
+        self._last_msg_count = 0
+
     @staticmethod
     def _flat_tool_calls(msg) -> list[str]:
         tc_list = getattr(msg, "tool_calls", None) or []
         return [tc.get("name", "?") for tc in tc_list]
 
     def on_chat_model_start(self, serialized, messages, **kwargs):
+        msgs = messages[0]
+        last = self._last_msg_count
+        new_msgs = msgs[last:]
         logger.info("=" * 60)
-        logger.info("[LLM INPUT] %d messages", len(messages[0]))
-        for i, msg in enumerate(messages[0]):
+        logger.info("[LLM INPUT] 总消息: %d, 本轮新增: %d", len(msgs), len(new_msgs))
+        for i, msg in enumerate(new_msgs):
+            idx = last + i
             role = getattr(msg, "type", "unknown")
-            logger.debug("  [%d] %s", i, role)
-            logger.debug("    content: %s", getattr(msg, "content", "")[:300])
+            content_preview = str(getattr(msg, "content", ""))[:80].replace("\n", "\\n")
             tc = self._flat_tool_calls(msg)
-            if tc:
-                logger.info("  [%d] %s tool_calls=%s", i, role, tc)
+            extra_info = f" tool_calls={tc}" if tc else ""
+            logger.info("  [%d] %s: %s%s", idx, role, content_preview, extra_info)
+            logger.debug("    content: %s", str(getattr(msg, "content", ""))[:300])
             extra = getattr(msg, "additional_kwargs", None) or {}
             if extra:
                 logger.debug("    kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
+        self._last_msg_count = len(msgs)
 
     def on_chat_model_end(self, response, **kwargs):
         msg = response.generations[0][0].message
