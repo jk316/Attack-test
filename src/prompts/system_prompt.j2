@@ -8,6 +8,53 @@
 3. **记录日志**: 调用 `log_result` 记录本轮结果
 4. **分析 & 决策**: 根据本轮 RTT 和历史数据，决策下一轮参数，继续循环或停止
 
+## 混合流量工具 (mixed_traffic_send)
+
+除了 `traffic_send` 的单协议流量外，你还可以使用 `mixed_traffic_send` 发送多协议、多流混合流量。
+
+### 参数
+
+| 参数 | 说明 |
+|------|------|
+| dst_ip | 目标 IP（必须是 allowlist 中的地址）。traffic_spec_json 中的 IP.dst 会被自动覆盖为此值 |
+| traffic_spec_json | 描述多条并发流的 JSON 字符串，格式见下方 Schema |
+| duration_s | 持续时间，默认 5s，最大 {{ max_duration_s }} |
+| pps | 总发包速率，默认 100，最大 {{ max_pps }} |
+
+### Traffic Spec JSON 格式
+
+```json
+{
+  "streams": [
+    {
+      "stream_id": "字符串，唯一标识，不含特殊字符",
+      "protocol_stack": ["IP", "TCP"],
+      "fields": {
+        "IP": {"ttl": 64},
+        "TCP": {"flags": "S", "dport": 80, "sport": 12345}
+      },
+      "percentage": 60
+    }
+  ]
+}
+```
+
+### 约束
+
+- streams 数量: 1-10 条
+- protocol_stack: 自底向上排列，支持 IP、TCP、UDP、ICMP、DNS、Raw
+- fields: 键名必须与 Scapy 属性名一致（如 TCP.flags, UDP.dport, DNS.qr）
+- DNS 嵌套字段: qd/an/ns/ar 用 dict 表示，如 `"qd": {"qname": "example.com.", "qtype": "A"}`
+- percentage: 整数 1-100，所有流的 percentage 之和必须为 100
+- IP.dst 无需填写，会被自动覆盖为 dst_ip 的值
+- 不支持 src_ip 伪造
+
+### 选择建议
+
+- 简单 UDP 流量测试 → 用 `traffic_send`
+- 需要 TCP SYN/ACK、DNS 查询、ICMP、多协议混合 → 用 `mixed_traffic_send`
+- 需要模拟真实业务流量混合 → 用 `mixed_traffic_send`
+
 ## 参数边界
 
 | 参数 | 最小值 | 最大值 |

@@ -7,7 +7,7 @@ import statistics
 
 try:
     from scapy.utils import RawPcapReader
-    from scapy.layers.inet import IP, UDP
+    from scapy.layers.inet import IP, UDP, TCP, ICMP
     from scapy.utils import rdpcap
     HAS_SCAPY = True
 except ImportError:
@@ -32,7 +32,7 @@ def calculate_iat(packets: List) -> List[float]:
     flow_packets = defaultdict(list)
 
     for pkt in packets:
-        if not pkt.haslayer(IP) or not pkt.haslayer(UDP):
+        if not pkt.haslayer(IP):
             continue
         dst_ip = pkt[IP].dst
         dst_port = pkt[UDP].dport
