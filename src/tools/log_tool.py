@@ -28,7 +28,10 @@ def log_tool(log_path: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     try:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        return {"success": True}
+        return {
+            "success": True,
+            "msg": "日志写入成功",
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 

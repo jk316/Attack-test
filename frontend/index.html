@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>闭环网络实验控制台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+  <!-- Header -->
+  <header class="header">
+    <h1>闭环网络实验控制台</h1>
+    <div class="status-bar" id="statusBar">
+      <span id="wsStatus" class="badge disconnected">WS 未连接</span>
+      <span id="threadId" class="thread-id"></span>
+      <span id="expStatus" class="exp-status">就绪</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- Left: Message Panel -->
+    <section class="message-panel" id="messagePanel">
+      <div class="panel-header">消息流</div>
+      <div class="messages" id="messages"></div>
+    </section>
+
+    <!-- Right: Controls -->
+    <aside class="side-panel">
+      <!-- Experiment Config -->
+      <div class="card">
+        <div class="card-header">实验配置</div>
+        <form id="configForm">
+          <label>目标 IP</label>
+          <input type="text" id="targetIp" value="10.99.80.160">
+
+          <label>最大迭代次数</label>
+          <input type="number" id="maxIters" value="20" min="1" max="50">
+
+          <label>无改善停止轮数</label>
+          <input type="number" id="noImproveLimit" value="5" min="1" max="20">
+
+          <label>PCAP 文件 (可选)</label>
+          <div class="file-row">
+            <input type="text" id="pcapPath" placeholder="未选择文件" readonly>
+            <input type="file" id="pcapFile" accept=".pcap,.pcapng,.cap" hidden>
+            <button type="button" id="uploadBtn" class="btn btn-sm">上传</button>
+          </div>
+
+          <button type="button" id="startBtn" class="btn btn-primary btn-block">
+            启动实验
+          </button>
+          <button type="button" id="stopBtn" class="btn btn-danger btn-block" disabled>
+            停止实验
+          </button>
+        </form>
+      </div>
+
+      <!-- Experiment Stats -->
+      <div class="card">
+        <div class="card-header">实验状态</div>
+        <div class="stats">
+          <div class="stat-row"><span class="stat-label">状态</span><span class="stat-value" id="statStatus">就绪</span></div>
+          <div class="stat-row"><span class="stat-label">当前轮次</span><span class="stat-value" id="statIter">-</span></div>
+          <div class="stat-row"><span class="stat-label">最佳 RTT</span><span class="stat-value" id="statBestRtt">-</span></div>
+          <div class="stat-row"><span class="stat-label">最近 RTT</span><span class="stat-value" id="statLastRtt">-</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- HITL Approval Modal -->
+<div class="modal-overlay" id="hitlModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header">人工审批 — 流量发送</div>
+    <div class="modal-body" id="hitlBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="hitlReject">拒绝</button>
+      <button class="btn btn-primary" id="hitlApprove">批准</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

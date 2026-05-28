@@ -41,11 +41,11 @@ class VerboseCallback(BaseCallbackHandler):
             content_preview = str(getattr(msg, "content", ""))[:80].replace("\n", "\\n")
             tc = self._flat_tool_calls(msg)
             extra_info = f" tool_calls={tc}" if tc else ""
-            logger.info("  [%d] %s: %s%s", idx, role, content_preview, extra_info)
-            logger.debug("    content: %s", str(getattr(msg, "content", ""))[:300])
+            logger.info("  [%d] %s: %s %s", idx, role, content_preview, extra_info)
+            logger.debug("    content: %s", str(getattr(msg, "content", "")))
             extra = getattr(msg, "additional_kwargs", None) or {}
             if extra:
-                logger.debug("    kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
+                logger.debug("    kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str))
         self._last_msg_count = len(msgs)
 
     def on_chat_model_end(self, response, **kwargs):
@@ -62,11 +62,11 @@ class VerboseCallback(BaseCallbackHandler):
             logger.debug("  kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
         logger.info("=" * 60)
 
-    def on_tool_start(self, serialized, input_str, **kwargs):
-        logger.info("[TOOL] %s — start", serialized.get("name", "?"))
+    # def on_tool_start(self, serialized, input_str, **kwargs):
+    #     logger.info("[TOOL] %s — start", serialized.get("name", "?"))
 
-    def on_tool_end(self, output, **kwargs):
-        logger.info("[TOOL] done")
+    # def on_tool_end(self, output, **kwargs):
+    #     logger.info("[TOOL] done")
 
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "experiment.json"
