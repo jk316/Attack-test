@@ -19,11 +19,11 @@ except ImportError:
     HAS_SCAPY = False
 
 # ── Parameter limits ──────────────────────────────────────────
-MAX_PPS = 200
-MAX_DURATION_S = 10
+MAX_PPS = 20000
+MAX_DURATION_S = 20
 MAX_IAT_JITTER_MS = 20
 MIN_STREAMS = 1
-MAX_STREAMS = 10
+MAX_STREAMS = 100
 MAX_JSON_LENGTH = 10000
 
 # ── Protocol whitelist (NO eval, NO getattr on user input) ────
@@ -205,8 +205,8 @@ def mixed_traffic_send_tool(
         dst_ip: Target IP address (must be in allowlist). IP.dst in the JSON
                 is ignored — this value overwrites it for safety.
         traffic_spec_json: JSON string describing traffic streams.
-        duration_s: Send duration in seconds (max 10).
-        pps: Total packets per second across all streams (max 200).
+        duration_s: Send duration in seconds (max 20).
+        pps: Total packets per second across all streams (max 20000).
         iface: Optional network interface for send().
         verbose: Enable Scapy verbose output.
 
