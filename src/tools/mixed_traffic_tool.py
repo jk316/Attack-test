@@ -82,12 +82,15 @@ def _resolve_nested_fields(proto_name: str, fields: dict) -> dict[str, Any]:
         nested_key = (proto_name, key)
         if nested_key in NESTED_FIELD_MAP:
             nested_cls = NESTED_FIELD_MAP[nested_key]
-            if not isinstance(value, dict):
+            if isinstance(value, dict):
+                result[key] = nested_cls(**value)
+            elif isinstance(value, list):
+                result[key] = [nested_cls(**item) for item in value]
+            else:
                 raise ValueError(
-                    f"stream field '{proto_name}.{key}' requires a dict value, "
+                    f"stream field '{proto_name}.{key}' requires a dict or list[dict] value, "
                     f"got {type(value).__name__}"
                 )
-            result[key] = nested_cls(**value)
         elif isinstance(value, dict):
             raise ValueError(
                 f"stream field '{proto_name}.{key}': nested dict not allowed — "
