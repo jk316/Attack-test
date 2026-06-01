@@ -112,10 +112,10 @@ Tests that need to pass allowlist validation must use `10.99.80.160`. Tests that
 
 | Parameter | Max | Constant |
 |-----------|-----|----------|
-| pps | 200 | `MAX_PPS` |
-| duration_s | 10 | `MAX_DURATION_S` |
-| packet_size | 512 | `MAX_PACKET_SIZE` |
-| flow_count | 50 | `MAX_FLOW_COUNT` |
+| pps | 20000 | `MAX_PPS` |
+| duration_s | 20 | `MAX_DURATION_S` |
+| packet_size | 1024 | `MAX_PACKET_SIZE` |
+| flow_count | 100 | `MAX_FLOW_COUNT` |
 | iat_jitter_ms | 20 | `MAX_IAT_JITTER_MS` |
 | max_iters | 20 | default in state |
 | no_improve_limit | 5 | default in state |

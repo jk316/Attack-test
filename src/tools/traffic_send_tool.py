@@ -12,10 +12,10 @@ except ImportError:
     HAS_SCAPY = False
 
 # Parameter upper limits
-MAX_PPS = 200
-MAX_DURATION_S = 10
-MAX_PACKET_SIZE = 512
-MAX_FLOW_COUNT = 50
+MAX_PPS = 20000
+MAX_DURATION_S = 20
+MAX_PACKET_SIZE = 1024
+MAX_FLOW_COUNT = 100
 MAX_IAT_JITTER_MS = 20
 
 
@@ -83,10 +83,10 @@ def traffic_send_tool(
     Args:
         dst_ip: Target IP address (must be in allowlist).
         dst_port: Target UDP port.
-        duration_s: Send duration in seconds (max 10).
-        pps: Packets per second across all flows (max 200).
-        packet_size: Payload size in bytes (max 512).
-        flow_count: Number of concurrent flows, each with unique sport (max 50).
+        duration_s: Send duration in seconds (max 20).
+        pps: Packets per second across all flows (max 20000).
+        packet_size: Payload size in bytes (max 1024).
+        flow_count: Number of concurrent flows, each with unique sport (max 100).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
         src_ip: Must be None — source IP forgery is forbidden.
         iface: Optional network interface for send().
