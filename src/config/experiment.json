@@ -1,5 +1,5 @@
 {
-    "target_ip": "10.99.80.160",
+    "target_ip": "100.1.11.20",
     "pcap_path": "data/game.pcapng",
     "log_path": "data/experiment.jsonl",
     "max_iters": 20,
