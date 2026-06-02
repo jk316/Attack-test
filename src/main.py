@@ -125,6 +125,12 @@ def parse_args() -> argparse.Namespace:
         default=cfg["no_improve_limit"],
         help="Stop after N consecutive rounds without improvement (default 5)",
     )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        default=False,
+        help="Auto-approve all HITL traffic send requests (skip interactive prompts)",
+    )
     return parser.parse_args()
 
 
@@ -194,13 +200,17 @@ def main() -> None:
 
             # Display context for the human operator
             print(f"[HITL] Traffic send requested")
-            try:
-                response = input("  Approve traffic send? (y/n): ").strip().lower()
-            except EOFError:
-                print("  No input — rejecting by default")
-                response = "n"
-            approved = response == "y"
-            print(f"  {'Approved' if approved else 'Rejected'}")
+            if args.auto_approve:
+                approved = True
+                print("  Auto-approved (--auto-approve)")
+            else:
+                try:
+                    response = input("  Approve traffic send? (y/n): ").strip().lower()
+                except EOFError:
+                    print("  No input — rejecting by default")
+                    response = "n"
+                approved = response == "y"
+                print(f"  {'Approved' if approved else 'Rejected'}")
             graph.invoke(Command(resume=approved), config)
             print()
 
