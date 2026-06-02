@@ -323,3 +323,220 @@ class TestPCAPIntegration:
         # Verify traffic_send was called with port from PCAP profile
         assert mock_send.call_args.kwargs["dst_port"] == 28763
         assert "PCAP" in result["messages"][-1].content
+
+
+class TestContinuousPingWorkflow:
+    """E2E tests for the continuous ping monitoring workflow."""
+
+    @staticmethod
+    def _make_mock_monitor():
+        """Create a mock PingMonitor with realistic stats."""
+        monitor = MagicMock()
+        monitor.is_running.return_value = True
+        monitor.target_ip = "10.99.80.160"
+        monitor.get_stats.return_value = {
+            "monitor_active": True,
+            "target_ip": "10.99.80.160",
+            "latest_rtt_ms": 12.5,
+            "avg_rtt_ms": 12.3,
+            "min_rtt_ms": 10.1,
+            "max_rtt_ms": 15.2,
+            "sample_count": 5,
+            "loss_pct": 0.0,
+            "window_s": 5.0,
+        }
+        # RTT samples during attack: baseline → spike → recovery
+        monitor.get_samples_since.return_value = [
+            {"ts": 1000.0, "rtt_ms": 12.0},
+            {"ts": 1001.0, "rtt_ms": 35.0},
+            {"ts": 1002.0, "rtt_ms": 80.0},
+            {"ts": 1003.0, "rtt_ms": 55.0},
+            {"ts": 1004.0, "rtt_ms": 20.0},
+        ]
+        return monitor
+
+    def test_traffic_send_returns_rtt_during(self):
+        """traffic_send result should include rtt_during when monitor is active."""
+        from src.agent.graph import build_graph
+
+        monitor = self._make_mock_monitor()
+        model = _build_mock_model([
+            _make_ai_with_tool_calls(
+                {"name": "traffic_send", "args": {
+                    "dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 100,
+                    "duration_s": 5,
+                }, "id": "c1"},
+            ),
+            _make_final("Traffic sent. Attack RTT spiked to 80ms."),
+        ])
+
+        with patch("src.agent.graph._build_model", return_value=model), \
+             patch("src.agent.tools.get_ping_monitor", return_value=monitor), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.interrupt", return_value=True):
+            mock_send.return_value = {
+                "success": True, "packets_sent": {"total": 500}, "elapsed_s": 5.0,
+            }
+
+            graph = build_graph()
+            config = {"configurable": {"thread_id": "e2e-rtt-during"}}
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Send traffic to 10.99.80.160:8080")]},
+                config,
+            )
+
+        mock_send.assert_called_once()
+        # The agent got the RTT spike info in the response
+        assert "80ms" in result["messages"][-1].content
+
+    def test_full_continuous_ping_experiment(self):
+        """Full experiment with start → baseline → attack → after → stop cycle."""
+        from src.agent.graph import build_graph
+
+        monitor = self._make_mock_monitor()
+        model = _build_mock_model([
+            # Iteration 0: start monitor
+            _make_ai_with_tool_calls(
+                {"name": "start_ping_monitor",
+                 "args": {"ip": "10.99.80.160", "interval_s": 1.0},
+                 "id": "start"},
+            ),
+            # read baseline
+            _make_ai_with_tool_calls(
+                {"name": "read_ping_stats", "args": {"window_s": 5.0}, "id": "baseline"},
+            ),
+            # send traffic
+            _make_ai_with_tool_calls(
+                {"name": "traffic_send", "args": {
+                    "dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 50,
+                }, "id": "send_0"},
+            ),
+            # read after
+            _make_ai_with_tool_calls(
+                {"name": "read_ping_stats", "args": {"window_s": 5.0}, "id": "after_0"},
+            ),
+            # log
+            _make_ai_with_tool_calls(
+                {"name": "log_result", "args": {
+                    "log_path": "data/e2e_test.jsonl", "iteration": 0,
+                    "params": {"pps": 50}, "rtt": 30.0, "loss": 0.0,
+                }, "id": "log_0"},
+            ),
+            # Iteration 1
+            _make_ai_with_tool_calls(
+                {"name": "read_ping_stats", "args": {"window_s": 5.0}, "id": "baseline_1"},
+            ),
+            _make_ai_with_tool_calls(
+                {"name": "traffic_send", "args": {
+                    "dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 100,
+                }, "id": "send_1"},
+            ),
+            _make_ai_with_tool_calls(
+                {"name": "read_ping_stats", "args": {"window_s": 5.0}, "id": "after_1"},
+            ),
+            _make_ai_with_tool_calls(
+                {"name": "log_result", "args": {
+                    "log_path": "data/e2e_test.jsonl", "iteration": 1,
+                    "params": {"pps": 100}, "rtt": 80.0, "loss": 5.0,
+                }, "id": "log_1"},
+            ),
+            # stop monitor and finish
+            _make_ai_with_tool_calls(
+                {"name": "stop_ping_monitor", "args": {}, "id": "stop"},
+            ),
+            _make_final(
+                "Experiment complete over 2 iterations with continuous ping monitoring. "
+                "Best RTT: 80ms at pps=100."
+            ),
+        ])
+
+        with patch("src.agent.graph._build_model", return_value=model), \
+             patch("src.agent.tools.get_ping_monitor", return_value=monitor), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.log_tool") as mock_log, \
+             patch("src.agent.tools.interrupt", return_value=True):
+            mock_send.return_value = {
+                "success": True, "packets_sent": {"total": 500}, "elapsed_s": 5.0,
+            }
+            mock_log.return_value = {"success": True}
+
+            graph = build_graph()
+            config = {"configurable": {"thread_id": "e2e-continuous"}}
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Run full experiment with continuous ping monitoring")]},
+                config,
+            )
+
+        # Verify the full workflow was executed
+        monitor.start.assert_called_once_with("10.99.80.160", interval_s=1.0)
+        assert monitor.get_stats.call_count >= 1  # called for each read_ping_stats
+        assert mock_send.call_count == 2
+        assert mock_log.call_count == 2
+        monitor.stop.assert_called_once()
+        assert "continuous ping" in result["messages"][-1].content.lower()
+        assert "80ms" in result["messages"][-1].content
+
+    def test_agent_handles_monitor_not_started(self):
+        """Agent gracefully handles reading stats when monitor was never started."""
+        from src.agent.graph import build_graph
+
+        monitor = MagicMock()
+        monitor.is_running.return_value = False
+        monitor.get_stats.return_value = {
+            "monitor_active": False,
+            "target_ip": None,
+            "latest_rtt_ms": None,
+            "avg_rtt_ms": 0.0,
+        }
+
+        model = _build_mock_model([
+            _make_ai_with_tool_calls(
+                {"name": "read_ping_stats", "args": {}, "id": "c1"},
+            ),
+            _make_final("Monitor not running. Need to start ping monitor first."),
+        ])
+
+        with patch("src.agent.graph._build_model", return_value=model), \
+             patch("src.agent.tools.get_ping_monitor", return_value=monitor):
+            graph = build_graph()
+            config = {"configurable": {"thread_id": "e2e-no-monitor"}}
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Check RTT status")]},
+                config,
+            )
+
+        assert "not running" in result["messages"][-1].content.lower()
+
+    def test_traffic_send_without_monitor_no_rtt_during(self):
+        """traffic_send should handle missing monitor gracefully (no rtt_during)."""
+        from src.agent.graph import build_graph
+
+        monitor = MagicMock()
+        monitor.is_running.return_value = False  # monitor not running
+
+        model = _build_mock_model([
+            _make_ai_with_tool_calls(
+                {"name": "traffic_send", "args": {
+                    "dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 100,
+                }, "id": "c1"},
+            ),
+            _make_final("Traffic sent. No RTT monitoring data available."),
+        ])
+
+        with patch("src.agent.graph._build_model", return_value=model), \
+             patch("src.agent.tools.get_ping_monitor", return_value=monitor), \
+             patch("src.agent.tools.traffic_send_tool") as mock_send, \
+             patch("src.agent.tools.interrupt", return_value=True):
+            mock_send.return_value = {
+                "success": True, "packets_sent": {"total": 500}, "elapsed_s": 5.0,
+            }
+
+            graph = build_graph()
+            config = {"configurable": {"thread_id": "e2e-no-rtt-during"}}
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Send traffic")]},
+                config,
+            )
+
+        mock_send.assert_called_once()
+        assert "Traffic sent" in result["messages"][-1].content

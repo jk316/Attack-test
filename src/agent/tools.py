@@ -3,6 +3,7 @@
 Each tool is decorated with @tool so the LLM can call it via ReAct tool-calling.
 The traffic_send tool includes a HITL gate via langgraph interrupt().
 """
+import time
 from typing import Any
 
 from langchain.tools import tool
@@ -13,6 +14,7 @@ from src.tools.traffic_send_tool import traffic_send_tool
 from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
 from src.tools.pcap_profile_tool import pcap_profile_tool, DEFAULT_COUNT_LIMIT
 from src.tools.log_tool import log_tool
+from src.tools.ping_monitor import get_ping_monitor
 
 
 @tool
@@ -73,7 +75,9 @@ def traffic_send(
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}
 
-    return traffic_send_tool(
+    # Record timestamp before traffic to capture RTT during the attack window
+    t0 = time.time()
+    result = traffic_send_tool(
         dst_ip=dst_ip,
         dst_port=dst_port,
         duration_s=duration_s,
@@ -82,6 +86,26 @@ def traffic_send(
         flow_count=flow_count,
         iat_jitter_ms=iat_jitter_ms,
     )
+
+    # Collect RTT samples during the attack window (if monitor is running)
+    try:
+        monitor = get_ping_monitor()
+        if monitor.is_running():
+            rtt_samples = monitor.get_samples_since(t0)
+            if rtt_samples:
+                rtt_values = [s["rtt_ms"] for s in rtt_samples]
+                result["rtt_during"] = {
+                    "samples": rtt_samples,
+                    "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
+                    "min_rtt_ms": round(min(rtt_values), 3),
+                    "max_rtt_ms": round(max(rtt_values), 3),
+                }
+            else:
+                result["rtt_during"] = None
+    except Exception:
+        result["rtt_during"] = None
+
+    return result
 
 
 @tool
@@ -161,13 +185,112 @@ def mixed_traffic_send(
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}
 
-    return mixed_traffic_send_tool(
+    t0 = time.time()
+    result = mixed_traffic_send_tool(
         dst_ip=dst_ip,
         traffic_spec_json=traffic_spec_json,
         duration_s=duration_s,
         pps=pps,
     )
 
+    # Collect RTT samples during the attack window (if monitor is running)
+    try:
+        monitor = get_ping_monitor()
+        if monitor.is_running():
+            rtt_samples = monitor.get_samples_since(t0)
+            if rtt_samples:
+                rtt_values = [s["rtt_ms"] for s in rtt_samples]
+                result["rtt_during"] = {
+                    "samples": rtt_samples,
+                    "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
+                    "min_rtt_ms": round(min(rtt_values), 3),
+                    "max_rtt_ms": round(max(rtt_values), 3),
+                }
+            else:
+                result["rtt_during"] = None
+    except Exception:
+        result["rtt_during"] = None
+
+    return result
+
+
+# ── Continuous ping monitor tools ──────────────────────────────────
+
+@tool
+def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
+    """Start a continuous background ping to monitor RTT in real-time.
+
+    Call this ONCE at the beginning of the experiment. A background ping
+    subprocess will run continuously, collecting per-second RTT samples.
+    Use read_ping_stats to query the latest stats at any time.
+
+    Args:
+        ip: Target IP address (must be in allowlist).
+        interval_s: Interval between pings in seconds (default 1.0).
+                    Windows ignores this and pings as fast as possible.
+
+    Returns:
+        Dict with success, message, target_ip.
+    """
+    try:
+        monitor = get_ping_monitor()
+        monitor.start(ip, interval_s=interval_s)
+        return {
+            "success": True,
+            "message": f"Ping monitor started for {ip}",
+            "target_ip": ip,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@tool
+def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
+    """Read the latest RTT statistics from the background ping monitor.
+
+    Call this before and after traffic_send to observe RTT changes caused
+    by the attack. The returned stats are computed over the last window_s
+    seconds.
+
+    Args:
+        window_s: Time window in seconds for stats computation (default 5.0).
+
+    Returns:
+        Dict with monitor_active, latest_rtt_ms, avg_rtt_ms, min_rtt_ms,
+        max_rtt_ms, sample_count, window_s.
+    """
+    try:
+        monitor = get_ping_monitor()
+        return monitor.get_stats(window_s=window_s)
+    except Exception as e:
+        return {"monitor_active": False, "error": str(e)}
+
+
+@tool
+def stop_ping_monitor() -> dict[str, Any]:
+    """Stop the background ping monitor.
+
+    Call this at the end of the experiment to clean up resources.
+
+    Returns:
+        Dict with success, message.
+    """
+    try:
+        monitor = get_ping_monitor()
+        monitor.stop()
+        return {"success": True, "message": "Ping monitor stopped"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 
 # Tool list for create_agent
-EXPERIMENT_TOOLS = [pcap_profile, traffic_send, mixed_traffic_send, ping_rtt, log_result]
+EXPERIMENT_TOOLS = [
+    pcap_profile,
+    start_ping_monitor,
+    read_ping_stats,
+    stop_ping_monitor,
+    traffic_send,
+    mixed_traffic_send,
+    ping_rtt,
+    log_result,
+]

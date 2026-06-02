@@ -48,6 +48,16 @@ class AgentState(TypedDict, total=False):
     no_improve_limit: int
     """Stop after this many consecutive rounds without RTT improvement (default 5)."""
 
+    # ── Continuous ping monitoring state ───────────────────────
+    ping_monitor_active: bool
+    """Whether the background ping monitor has been started."""
+
+    baseline_rtt: float
+    """Pre-attack RTT measured by read_ping_stats before traffic_send."""
+
+    rtt_during_attack: list[dict]
+    """RTT time-series samples collected during the most recent traffic_send."""
+
     # ── ReAct conversation and tool-calling ─────────────────────
     messages: Annotated[list, add_messages]
     """LLM conversation history with tool call/result pairs."""

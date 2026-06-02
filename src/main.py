@@ -12,6 +12,7 @@ logger = logging.getLogger("agent")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
+from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
@@ -181,45 +182,55 @@ def main() -> None:
     print(f"Thread: {thread_id}")
     print()
 
-    # Start the agent — runs until first interrupt (HITL on traffic_send)
-    graph.invoke(initial_state, config)
+    try:
+        # Start the agent — runs until first interrupt (HITL on traffic_send)
+        graph.invoke(initial_state, config)
 
-    # Poll for interrupts and resume with HITL approval
-    while True:
-        gs = graph.get_state(config)
-        if not gs or not gs.next:
-            break  # graph completed
+        # Poll for interrupts and resume with HITL approval
+        while True:
+            gs = graph.get_state(config)
+            if not gs or not gs.next:
+                break  # graph completed
 
-        # Display context for the human operator
-        print(f"[HITL] Traffic send requested")
+            # Display context for the human operator
+            print(f"[HITL] Traffic send requested")
+            try:
+                response = input("  Approve traffic send? (y/n): ").strip().lower()
+            except EOFError:
+                print("  No input — rejecting by default")
+                response = "n"
+            approved = response == "y"
+            print(f"  {'Approved' if approved else 'Rejected'}")
+            graph.invoke(Command(resume=approved), config)
+            print()
+
+        # Get final state
+        final_state = graph.get_state(config)
+        result = final_state.values if final_state else {}
+
+        print("=== Experiment Complete ===")
+
+        # Extract final AI message for summary
+        messages = result.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            content = getattr(last_msg, "content", str(last_msg))
+            if content:
+                # Print the last meaningful content (excluding tool results)
+                print("\n" + str(content))
+            else:
+                print("(no summary output)")
+
+        print(f"\nResults logged to: {args.log_path}")
+    finally:
+        # Ensure ping monitor is always cleaned up
         try:
-            response = input("  Approve traffic send? (y/n): ").strip().lower()
-        except EOFError:
-            print("  No input — rejecting by default")
-            response = "n"
-        approved = response == "y"
-        print(f"  {'Approved' if approved else 'Rejected'}")
-        graph.invoke(Command(resume=approved), config)
-        print()
-
-    # Get final state
-    final_state = graph.get_state(config)
-    result = final_state.values if final_state else {}
-
-    print("=== Experiment Complete ===")
-
-    # Extract final AI message for summary
-    messages = result.get("messages", [])
-    if messages:
-        last_msg = messages[-1]
-        content = getattr(last_msg, "content", str(last_msg))
-        if content:
-            # Print the last meaningful content (excluding tool results)
-            print("\n" + str(content))
-        else:
-            print("(no summary output)")
-
-    print(f"\nResults logged to: {args.log_path}")
+            monitor = get_ping_monitor()
+            if monitor.is_running():
+                logger.info("Cleaning up ping monitor...")
+                monitor.stop()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

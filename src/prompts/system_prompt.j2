@@ -2,11 +2,51 @@
 
 ## 实验协议（每轮必须严格按顺序执行）
 
-每轮的 4 个步骤：
-1. **发送流量**: 调用 `traffic_send` 向目标发送流量（需人工审批）
-2. **测量RTT**: 调用 `ping_rtt` 测量当前 RTT 和丢包率
-3. **记录日志**: 调用 `log_result` 记录本轮结果
-4. **分析 & 决策**: 根据本轮 RTT 和历史数据，决策下一轮参数，继续循环或停止
+### 初始化阶段（实验开始前，仅一次）
+
+0. **启动持续 Ping 监控**: 调用 `start_ping_monitor` 启动后台持续 ping，参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒。
+   如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
+
+### 每轮迭代（5 步）
+
+1. **读取攻击前基线 RTT**: 调用 `read_ping_stats`（window_s=5），获取攻击前的基线 RTT（baseline_rtt_ms）。
+2. **发送流量**: 调用 `traffic_send` 或 `mixed_traffic_send`（需人工审批）。流量发送期间，后台 ping 会持续运行，返回值中包含 `rtt_during` 字段（攻击期间 RTT 时间序列：avg、min、max、样本列表）。
+3. **读取攻击后 RTT**: 调用 `read_ping_stats`（window_s=5），获取攻击后的 RTT 变化和恢复情况。
+4. **记录日志**: 调用 `log_result` 记录本轮结果。
+5. **分析 & 决策**: 对比基线 RTT、攻击期间 RTT、攻击后 RTT，分析攻击效果，决策下一轮参数，继续循环或停止。
+
+### 实验结束
+
+- 调用 `stop_ping_monitor` 停止后台 ping，然后输出实验总结。
+
+## 持续 Ping 监控工具
+
+| 工具 | 说明 |
+|------|------|
+| `start_ping_monitor` | 启动后台持续 ping（实验开始时调用一次） |
+| `read_ping_stats` | 读取最近 window_s 秒的 RTT 统计 |
+| `stop_ping_monitor` | 停止后台 ping（实验结束时调用） |
+
+`read_ping_stats` 返回的字段：monitor_active, target_ip, latest_rtt_ms, avg_rtt_ms, min_rtt_ms, max_rtt_ms, sample_count, window_s。
+
+`traffic_send` 和 `mixed_traffic_send` 返回值中新增 `rtt_during` 字段（仅在 ping monitor 运行时出现）：
+```json
+{
+  "rtt_during": {
+    "samples": [{"ts": 1717200000.123, "rtt_ms": 12.5}, ...],
+    "avg_rtt_ms": 25.3,
+    "min_rtt_ms": 5.1,
+    "max_rtt_ms": 80.2
+  }
+}
+```
+当 `rtt_during` 为 null 时，说明 ping monitor 未运行，需要先调用 `start_ping_monitor`。
+
+## RTT 分析策略
+
+- **基线对比**: 攻击前基线 RTT vs 攻击期间 RTT vs 攻击后 RTT，判断攻击是否有显著效果
+- **趋势判断**: RTT 在攻击期间是否持续上升？攻击结束后是否回落？回落速度如何？
+- **参数效果**: 不同参数组合对 RTT 的影响程度，找出最有效的参数组合
 
 ## 混合流量工具 (mixed_traffic_send)
 
@@ -93,8 +133,10 @@ reward = avg_rtt_ms - loss_pct * 0.1
 - flow_count: 用 flow_stats.approx_flow_count 的一半
 - iat_jitter_ms: 用 iat_ms_stats.p50
 
+然后调用 `start_ping_monitor` 启动持续 ping 监控。
 
 ## 安全约束
 
 - `traffic_send` 只能向 allowlist 中的目标发送流量
 - 流量发送前必须通过人工审批（HITL gate）
+- `start_ping_monitor` 也只能 ping allowlist 中的目标
