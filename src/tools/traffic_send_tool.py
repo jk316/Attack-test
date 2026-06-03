@@ -1,5 +1,6 @@
 """Traffic Send Tool - Sends compliant UDP traffic to allowlist targets"""
 import random
+import socket
 import time
 from typing import Dict, Any, Optional
 
@@ -17,6 +18,39 @@ MAX_DURATION_S = 20
 MAX_PACKET_SIZE = 1024
 MAX_FLOW_COUNT = 100
 MAX_IAT_JITTER_MS = 20
+
+
+def _create_raw_socket() -> socket.socket | None:
+    """Create a raw IP socket with IP_HDRINCL for pre-built packet sending.
+
+    Returns None if permission is denied (caller should fall back to UDP socket
+    or Scapy).
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+        return sock
+    except (PermissionError, OSError):
+        return None
+
+
+def _create_udp_sockets(flow_count: int) -> list[socket.socket] | None:
+    """Create regular UDP sockets (one per flow), no admin needed.
+
+    Returns None if binding fails.
+    """
+    socks: list[socket.socket] = []
+    try:
+        for f in range(flow_count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.bind(("", 1024 + f))
+            sock.setblocking(False)
+            socks.append(sock)
+        return socks
+    except (PermissionError, OSError):
+        for s in socks:
+            s.close()
+        return None
 
 
 def validate_params(
@@ -118,6 +152,34 @@ def traffic_send_tool(
     payload = b"\x00" * packet_size
     base_inter = 1.0 / pps  # seconds between consecutive packets
 
+    # ── Pre-build packet bytes for raw socket path ───────────────
+    prebuilt: list[bytes] = []
+    for f in range(flow_count):
+        sport = 1024 + f
+        pkt = IP(dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
+        prebuilt.append(bytes(pkt))
+
+    # ── 3-tier send: raw socket → UDP sockets → Scapy ────────────
+    raw_sock = _create_raw_socket()
+    udp_socks: list[socket.socket] | None = None
+    send_mode: str  # "raw" | "udp" | "scapy"
+
+    if raw_sock is not None:
+        send_mode = "raw"
+    else:
+        udp_socks = _create_udp_sockets(flow_count)
+        if udp_socks is not None:
+            send_mode = "udp"
+        else:
+            send_mode = "scapy"
+
+    # For UDP socket mode, just send payload (OS adds IP+UDP headers)
+    if send_mode == "udp":
+        # prebuilt[0] contains full IP packet bytes — extract just the Raw payload
+        # IP header = 20 bytes, UDP header = 8 bytes
+        payload_only = prebuilt[0][28:]  # strip IP+UDP headers
+        prebuilt_payloads = [payload_only] * flow_count
+
     # Per-flow counters
     per_flow = {flow_id: 0 for flow_id in range(flow_count)}
     total_sent = 0
@@ -131,16 +193,21 @@ def traffic_send_tool(
         while time.time() < deadline:
             now = time.time()
             if now >= next_send:
-                # Round-robin across flows
-                sport = 1024 + (flow_idx % flow_count)
-                pkt = IP(dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
-
-                send(pkt, verbose=verbose, iface=iface)
-
                 flow_id = flow_idx % flow_count
                 per_flow[flow_id] += 1
                 total_sent += 1
                 flow_idx += 1
+
+                if send_mode == "raw":
+                    raw_sock.sendto(prebuilt[flow_id], (dst_ip, 0))  # type: ignore[union-attr]
+                elif send_mode == "udp":
+                    udp_socks[flow_id].sendto(  # type: ignore[index]
+                        prebuilt_payloads[flow_id], (dst_ip, dst_port)
+                    )
+                else:
+                    sport = 1024 + flow_id
+                    pkt = IP(dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
+                    send(pkt, verbose=verbose, iface=iface)
 
                 # Schedule next packet with jitter
                 jitter_s = random.uniform(-iat_jitter_ms, iat_jitter_ms) / 1000.0
@@ -151,6 +218,12 @@ def traffic_send_tool(
 
     except KeyboardInterrupt:
         pass
+    finally:
+        if raw_sock is not None:
+            raw_sock.close()
+        if udp_socks is not None:
+            for s in udp_socks:
+                s.close()
 
     elapsed = time.time() - start_time
     effective_pps = round(total_sent / elapsed, 2) if elapsed > 0 else 0.0
@@ -164,6 +237,7 @@ def traffic_send_tool(
         },
         "elapsed_s": round(elapsed, 4),
         "effective_pps": effective_pps,
+        "send_mode": send_mode,
         "errors": [],
     }
 

@@ -6,10 +6,12 @@ strict security: IP.dst overwrite, protocol whitelist, no eval injection.
 """
 import json
 import random
+import socket
 import time
 from typing import Any
 
 from .ping_rtt_tool import validate_target
+from .traffic_send_tool import _create_raw_socket
 
 try:
     from scapy.all import IP, TCP, UDP, ICMP, DNS, Raw, send
@@ -239,12 +241,14 @@ def mixed_traffic_send_tool(
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in traffic_spec_json: {e}")
 
-    # 5. Validate spec and build packet templates
+    # 5. Validate spec and build packet templates → serialize to bytes
     streams = validate_traffic_spec(spec)
-    templates: list[tuple[str, Any, int]] = []
+    templates: list[tuple[str, bytes, int]] = []
+    scapy_templates: list[tuple[str, Any, int]] = []  # for fallback
     for stream in streams:
         pkt = build_packet_template(stream, dst_ip)
-        templates.append((stream["stream_id"], pkt, stream["percentage"]))
+        templates.append((stream["stream_id"], bytes(pkt), stream["percentage"]))
+        scapy_templates.append((stream["stream_id"], pkt, stream["percentage"]))
 
     # 6. Build CDF for weighted random sampling
     cumulative: list[int] = []
@@ -253,7 +257,11 @@ def mixed_traffic_send_tool(
         running += pct
         cumulative.append(running)
 
-    # 7. Send loop
+    # 7. Create raw socket (fall back to Scapy if permission denied)
+    raw_sock = _create_raw_socket()
+    use_raw = raw_sock is not None
+
+    # 8. Send loop
     per_stream_counts: dict[str, int] = {sid: 0 for sid, _, _ in templates}
     total_sent = 0
     base_inter = 1.0 / pps
@@ -268,12 +276,18 @@ def mixed_traffic_send_tool(
                 r = random.randint(1, 100)
                 for idx, c in enumerate(cumulative):
                     if r <= c:
-                        sid, pkt, _ = templates[idx]
+                        sid, data, _ = templates[idx]
+                        fallback_pkt = scapy_templates[idx][1]
                         break
                 else:
-                    sid, pkt, _ = templates[-1]
+                    sid, data, _ = templates[-1]
+                    fallback_pkt = scapy_templates[-1][1]
 
-                send(pkt, verbose=verbose, iface=iface)
+                if use_raw:
+                    raw_sock.sendto(data, (dst_ip, 0))  # type: ignore[union-attr]
+                else:
+                    send(fallback_pkt, verbose=verbose, iface=iface)
+
                 per_stream_counts[sid] += 1
                 total_sent += 1
 
@@ -283,6 +297,9 @@ def mixed_traffic_send_tool(
                 time.sleep(0.0001)
     except KeyboardInterrupt:
         pass
+    finally:
+        if raw_sock is not None:
+            raw_sock.close()
 
     elapsed = time.time() - start_time
     effective_pps = round(total_sent / elapsed, 2) if elapsed > 0 else 0.0
@@ -304,6 +321,7 @@ def mixed_traffic_send_tool(
         },
         "elapsed_s": round(elapsed, 4),
         "effective_pps": effective_pps,
+        "raw_socket": use_raw,
         "errors": [],
     }
 

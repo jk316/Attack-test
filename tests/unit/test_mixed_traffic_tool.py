@@ -5,7 +5,7 @@ HAS_SCAPY flag to test validation, construction, and output structure.
 """
 import json
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ALLOWLISTED_IP = "10.99.80.160"
 
@@ -434,3 +434,94 @@ class TestMixedTrafficTool:
 
         with pytest.raises(ValueError, match="streams"):
             validate_traffic_spec({})
+
+
+class TestMixedTrafficRawSocket:
+    """Tests for the raw socket fast path in mixed_traffic_send_tool."""
+
+    def test_raw_socket_path_used_when_available(self):
+        """裸 socket 可用时应走快速路径，不调用 Scapy send()。"""
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        spec_json = json.dumps({
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {"IP": {}, "UDP": {"dport": 80}},
+                 "percentage": 100},
+            ]
+        })
+
+        mock_sock = MagicMock()
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket", return_value=mock_sock), \
+             patch("src.tools.mixed_traffic_tool.send") as mock_send, \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True), \
+             patch("src.tools.mixed_traffic_tool.validate_target"):
+            result = mixed_traffic_send_tool(
+                ALLOWLISTED_IP, spec_json, duration_s=1, pps=20
+            )
+
+        assert mock_sock.sendto.called
+        mock_send.assert_not_called()
+        assert result["raw_socket"] is True  # mixed_traffic still uses "raw_socket" key
+        mock_sock.close.assert_called_once()
+
+    def test_fallback_to_scapy_when_raw_socket_fails(self):
+        """裸 socket 不可用时应回退到 Scapy send()。"""
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        spec_json = json.dumps({
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {"IP": {}, "UDP": {"dport": 80}},
+                 "percentage": 100},
+            ]
+        })
+
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket", return_value=None), \
+             patch("src.tools.mixed_traffic_tool.send") as mock_send, \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True), \
+             patch("src.tools.mixed_traffic_tool.validate_target"):
+            result = mixed_traffic_send_tool(
+                ALLOWLISTED_IP, spec_json, duration_s=1, pps=20
+            )
+
+        assert mock_send.called
+        assert result["raw_socket"] is False
+
+    def test_prebuilt_bytes_are_valid_ip_packets(self):
+        """预构建的 bytes 应为有效 IP 包（以 IP 版本号 0x4 开头）。"""
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        spec_json = json.dumps({
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {"IP": {}, "UDP": {"dport": 80}},
+                 "percentage": 50},
+                {"stream_id": "s2", "protocol_stack": ["IP", "TCP"],
+                 "fields": {"IP": {}, "TCP": {"flags": "S", "dport": 443}},
+                 "percentage": 50},
+            ]
+        })
+
+        sent_packets: list[bytes] = []
+        mock_sock = MagicMock()
+
+        def _capture(data, addr):
+            sent_packets.append(data)
+
+        mock_sock.sendto.side_effect = _capture
+
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket", return_value=mock_sock), \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True), \
+             patch("src.tools.mixed_traffic_tool.validate_target"):
+            mixed_traffic_send_tool(
+                ALLOWLISTED_IP, spec_json, duration_s=1, pps=50
+            )
+
+        assert len(sent_packets) > 0
+        for data in sent_packets[:5]:
+            # IP version (first nibble) should be 4
+            assert (data[0] >> 4) == 4
+            # IP total length field (bytes 2-3) should match actual length
+            declared_len = int.from_bytes(data[2:4], "big")
+            assert declared_len == len(data)
