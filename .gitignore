@@ -23,3 +23,5 @@ test.py
 .env
 
 .claude/
+
+data/
