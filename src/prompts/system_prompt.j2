@@ -85,6 +85,8 @@
 - protocol_stack: 自底向上排列，支持 IP、TCP、UDP、ICMP、DNS、Raw
 - fields: 键名必须与 Scapy 属性名一致（如 TCP.flags, UDP.dport, DNS.qr）
 - DNS 嵌套字段: qd/an/ns/ar 用 dict 表示，如 `"qd": {"qname": "example.com.", "qtype": "A"}`
+  - DNS qtype 仅支持: A, NS, MD, MF, CNAME, SOA, MB, MG, MR, NULL, WKS, PTR, HINFO, MINFO, MX, TXT, AAAA, SRV
+  - 不要使用 ANY 或其他未列出的 qtype 值
 - percentage: 整数 1-100，所有流的 percentage 之和必须为 100
 - IP.dst 无需填写，会被自动覆盖为 dst_ip 的值
 - 不支持 src_ip 伪造
