@@ -85,7 +85,13 @@ def _resolve_nested_fields(proto_name: str, fields: dict) -> dict[str, Any]:
         if nested_key in NESTED_FIELD_MAP:
             nested_cls = NESTED_FIELD_MAP[nested_key]
             if isinstance(value, dict):
-                result[key] = nested_cls(**value)
+                try:
+                    result[key] = nested_cls(**value)
+                except (KeyError, TypeError, ValueError) as e:
+                    raise ValueError(
+                        f"stream field '{proto_name}.{key}': invalid value for "
+                        f"{nested_cls.__name__}: {e}"
+                    ) from e
             elif isinstance(value, list):
                 result[key] = [nested_cls(**item) for item in value]
             else:
