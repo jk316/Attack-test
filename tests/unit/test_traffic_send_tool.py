@@ -54,57 +54,84 @@ class TestTrafficSendTool:
             with pytest.raises(ValueError, match="allowlist is empty"):
                 traffic_send_tool("192.168.1.1", dst_port=8080, pps=10)
 
-    # ── Parameter Upper Limits ─────────────────────────────────
+    # ── Parameter Clamping (not rejection) ──────────────────────
 
-    def test_pps_exceeds_max_rejected(self):
-        """pps > 200 必须拒绝"""
+    def test_pps_exceeding_max_is_clamped(self):
+        """pps 超过 MAX 应被 clamp 到上限，不报错"""
         from src.tools.traffic_send_tool import traffic_send_tool, MAX_PPS
 
-        with pytest.raises(ValueError, match="(?i)pps.*exceeds"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                pps=MAX_PPS + 1
+                pps=MAX_PPS + 5000, duration_s=1
             )
+        assert result["params"]["pps"] == MAX_PPS
 
-    def test_duration_exceeds_max_rejected(self):
-        """duration_s > 10 必须拒绝"""
+    def test_duration_exceeding_max_is_clamped(self):
+        """duration_s 超过 MAX 应被 clamp 到上限"""
         from src.tools.traffic_send_tool import traffic_send_tool, MAX_DURATION_S
 
-        with pytest.raises(ValueError, match="(?i)duration.*exceeds"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                duration_s=MAX_DURATION_S + 1, pps=10
+                duration_s=MAX_DURATION_S + 10, pps=10
             )
+        assert result["params"]["duration_s"] == MAX_DURATION_S
 
-    def test_packet_size_exceeds_max_rejected(self):
-        """packet_size > 512 必须拒绝"""
+    def test_packet_size_exceeding_max_is_clamped(self):
+        """packet_size 超过 MAX 应被 clamp 到上限"""
         from src.tools.traffic_send_tool import traffic_send_tool, MAX_PACKET_SIZE
 
-        with pytest.raises(ValueError, match="(?i)packet_size.*exceeds"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                packet_size=MAX_PACKET_SIZE + 1, pps=10
+                packet_size=MAX_PACKET_SIZE + 512, pps=10, duration_s=1
             )
+        assert result["params"]["packet_size"] == MAX_PACKET_SIZE
 
-    def test_flow_count_exceeds_max_rejected(self):
-        """flow_count > 50 必须拒绝"""
+    def test_flow_count_exceeding_max_is_clamped(self):
+        """flow_count 超过 MAX 应被 clamp 到上限"""
         from src.tools.traffic_send_tool import traffic_send_tool, MAX_FLOW_COUNT
 
-        with pytest.raises(ValueError, match="(?i)flow_count.*exceeds"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                flow_count=MAX_FLOW_COUNT + 1, pps=10
+                flow_count=MAX_FLOW_COUNT + 50, pps=10, duration_s=1
             )
+        assert result["params"]["flow_count"] == MAX_FLOW_COUNT
 
-    def test_iat_jitter_exceeds_max_rejected(self):
-        """iat_jitter_ms > 20 必须拒绝"""
+    def test_iat_jitter_exceeding_max_is_clamped(self):
+        """iat_jitter_ms 超过 MAX 应被 clamp 到上限——修复 LLM 请求 40 导致崩溃"""
         from src.tools.traffic_send_tool import traffic_send_tool, MAX_IAT_JITTER_MS
 
-        with pytest.raises(ValueError, match="(?i)iat_jitter_ms.*exceeds"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                iat_jitter_ms=MAX_IAT_JITTER_MS + 1, pps=10
+                iat_jitter_ms=MAX_IAT_JITTER_MS + 20,  # 40, simulating the actual LLM bug
+                pps=10, duration_s=1
             )
+        assert result["params"]["iat_jitter_ms"] == MAX_IAT_JITTER_MS
+
+    def test_negative_params_still_rejected(self):
+        """负数/零值参数仍应报错"""
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="pps must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=0, duration_s=1)
+
+        with pytest.raises(ValueError, match="pps must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=-5, duration_s=1)
+
+        with pytest.raises(ValueError, match="duration_s must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=10, duration_s=0)
+
+        with pytest.raises(ValueError, match="iat_jitter_ms must be >= 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=10, duration_s=1, iat_jitter_ms=-1)
 
     # ── Security Hard Constraints ──────────────────────────────
 
@@ -148,13 +175,13 @@ class TestTrafficSendTool:
         assert "errors" in result
 
     def test_output_structure_on_validation_failure(self):
-        """校验失败时应抛出 ValueError"""
+        """安全违规时（src_ip 伪造）应抛出 ValueError"""
         from src.tools.traffic_send_tool import traffic_send_tool
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="(?i)src_ip.*not allowed"):
             traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                pps=201
+                pps=10, src_ip="1.2.3.4"
             )
 
     def test_params_echoed_in_output(self):

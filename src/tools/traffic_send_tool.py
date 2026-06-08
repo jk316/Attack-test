@@ -62,8 +62,12 @@ def validate_params(
     flow_count: int,
     iat_jitter_ms: int,
     src_ip: Optional[str]
-) -> None:
-    """Validate all parameters meet security constraints. Raises ValueError on violation."""
+) -> tuple[int, int, int, int, int]:
+    """Validate and clamp parameters to safe limits.
+
+    Security-critical violations (target, port, src_ip) raise ValueError.
+    Numeric parameters are clamped to their allowed ranges.
+    """
     # Target validation (reuses allowlist / broadcast / multicast checks)
     validate_target(dst_ip)
 
@@ -72,31 +76,34 @@ def validate_params(
 
     if pps <= 0:
         raise ValueError(f"pps must be > 0, got {pps}")
-    if pps > MAX_PPS:
-        raise ValueError(f"pps ({pps}) exceeds maximum ({MAX_PPS})")
+    clamped_pps = min(pps, MAX_PPS)
 
     if duration_s <= 0:
         raise ValueError(f"duration_s must be > 0, got {duration_s}")
-    if duration_s > MAX_DURATION_S:
-        raise ValueError(f"duration_s ({duration_s}) exceeds maximum ({MAX_DURATION_S})")
+    clamped_duration_s = min(duration_s, MAX_DURATION_S)
 
     if packet_size <= 0:
         raise ValueError(f"packet_size must be > 0, got {packet_size}")
-    if packet_size > MAX_PACKET_SIZE:
-        raise ValueError(f"packet_size ({packet_size}) exceeds maximum ({MAX_PACKET_SIZE})")
+    clamped_packet_size = min(packet_size, MAX_PACKET_SIZE)
 
     if flow_count <= 0:
         raise ValueError(f"flow_count must be > 0, got {flow_count}")
-    if flow_count > MAX_FLOW_COUNT:
-        raise ValueError(f"flow_count ({flow_count}) exceeds maximum ({MAX_FLOW_COUNT})")
+    clamped_flow_count = min(flow_count, MAX_FLOW_COUNT)
 
     if iat_jitter_ms < 0:
         raise ValueError(f"iat_jitter_ms must be >= 0, got {iat_jitter_ms}")
-    if iat_jitter_ms > MAX_IAT_JITTER_MS:
-        raise ValueError(f"iat_jitter_ms ({iat_jitter_ms}) exceeds maximum ({MAX_IAT_JITTER_MS})")
+    clamped_iat_jitter_ms = min(iat_jitter_ms, MAX_IAT_JITTER_MS)
 
     if src_ip is not None:
         raise ValueError("src_ip forgery is not allowed")
+
+    return (
+        clamped_duration_s,
+        clamped_pps,
+        clamped_packet_size,
+        clamped_flow_count,
+        clamped_iat_jitter_ms,
+    )
 
 
 def traffic_send_tool(
@@ -132,8 +139,8 @@ def traffic_send_tool(
     if not HAS_SCAPY:
         raise ImportError("Scapy is required for traffic_send_tool")
 
-    # Validate all parameters (raises ValueError on violation)
-    validate_params(
+    # Validate and clamp parameters (raises ValueError on security violation)
+    duration_s, pps, packet_size, flow_count, iat_jitter_ms = validate_params(
         dst_ip, dst_port, duration_s, pps, packet_size,
         flow_count, iat_jitter_ms, src_ip
     )

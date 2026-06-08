@@ -228,11 +228,14 @@ def mixed_traffic_send_tool(
     # 1. Validate target IP
     validate_target(dst_ip)
 
-    # 2. Clamp pps and duration
-    if not (1 <= pps <= MAX_PPS):
-        raise ValueError(f"pps ({pps}) must be in [1, {MAX_PPS}]")
-    if not (1 <= duration_s <= MAX_DURATION_S):
-        raise ValueError(f"duration_s ({duration_s}) must be in [1, {MAX_DURATION_S}]")
+    # 2. Clamp pps and duration to safe limits
+    if pps <= 0:
+        raise ValueError(f"pps must be > 0, got {pps}")
+    pps = min(pps, MAX_PPS)
+
+    if duration_s <= 0:
+        raise ValueError(f"duration_s must be > 0, got {duration_s}")
+    duration_s = min(duration_s, MAX_DURATION_S)
 
     # 3. Check JSON length
     if len(traffic_spec_json) > MAX_JSON_LENGTH:
