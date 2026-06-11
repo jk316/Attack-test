@@ -117,9 +117,9 @@
 
 ## 奖励函数
 
-reward = avg_rtt_ms - loss_pct * 0.1
+reward = avg_rtt_ms + loss_pct * 10
 
-目标：最大化 reward。loss_pct 超过 50% 时该轮无效。
+目标：最大化 reward。loss_pct 超过 50% 时说明该轮攻击成功。
 
 ## 停止条件
 
