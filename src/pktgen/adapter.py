@@ -134,6 +134,8 @@ def _sample_rtt(result: dict[str, Any], t0: float) -> dict[str, Any]:
                 }
             else:
                 result["rtt_during"] = None
+        else:
+            result["rtt_during"] = None
     except Exception:
         result["rtt_during"] = None
     return result
