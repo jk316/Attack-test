@@ -15,6 +15,7 @@ from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
 from src.tools.pcap_profile_tool import pcap_profile_tool, DEFAULT_COUNT_LIMIT
 from src.tools.log_tool import log_tool
 from src.tools.ping_monitor import get_ping_monitor
+from src.pktgen.adapter import PKTGEN_TOOLS
 
 
 @tool
@@ -293,4 +294,5 @@ EXPERIMENT_TOOLS = [
     mixed_traffic_send,
     ping_rtt,
     log_result,
+    *PKTGEN_TOOLS,  # Pktgen-DPDK hardware line-rate tools (9 skills)
 ]

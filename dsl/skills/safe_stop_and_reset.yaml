@@ -1,0 +1,91 @@
+# Skill: safe_stop_and_reset
+# Intent: Gracefully stop all traffic and reset configuration to defaults
+# Grounded in: knowledge/lua_api.yaml, knowledge/commands.yaml
+
+skill:
+  name: "safe_stop_and_reset"
+  intent: "control"
+  description: "Safely stop all traffic on all ports, clear statistics, and reset port configuration to defaults. This skill is idempotent and can be used as a cleanup step between other skills or as a standalone recovery operation."
+
+  params:
+    - name: "save_config"
+      type: "boolean"
+      description: "Whether to save current configuration before reset"
+      required: false
+      default: false
+
+    - name: "config_file"
+      type: "string"
+      description: "Filename for saving configuration (only used if save_config is true)"
+      required: false
+      default: "backup.cmd"
+
+    - name: "clear_stats"
+      type: "boolean"
+      description: "Whether to clear port statistics after stopping"
+      required: false
+      default: true
+
+    - name: "reset_ports"
+      type: "boolean"
+      description: "Whether to reset port configuration to defaults"
+      required: false
+      default: true
+
+    - name: "return_to_main"
+      type: "boolean"
+      description: "Whether to return display to main page"
+      required: false
+      default: true
+
+  topology:
+    target_port:
+      portlist: "all"
+      description: "Ports to stop and reset (default: all)"
+
+  setup:
+    - comment: "Disable screen updates during cleanup"
+      api: "pktgen.screen"
+      args: ['"off"']
+
+  plan:
+    - comment: "Stop all traffic"
+      api: "pktgen.stop"
+      args: ["$topology.target_port"]
+
+    - comment: "Brief delay to flush in-flight packets"
+      api: "pktgen.delay"
+      args: [500]
+
+    - comment: "Save configuration if requested"
+      condition: "$params.save_config"
+      api: "pktgen.save"
+      args: ["$params.config_file"]
+
+    - comment: "Clear port statistics"
+      condition: "$params.clear_stats"
+      api: "pktgen.clear"
+      args: ["$topology.target_port"]
+
+    - comment: "Also clear screen-level stats"
+      condition: "$params.clear_stats"
+      api: "pktgen.cls"
+      args: []
+
+    - comment: "Reset port configuration to defaults"
+      condition: "$params.reset_ports"
+      api: "pktgen.reset"
+      args: ["$topology.target_port"]
+
+    - comment: "Return to main page"
+      condition: "$params.return_to_main"
+      api: "pktgen.page"
+      args: ['"0"']
+
+  teardown:
+    - comment: "Re-enable screen updates"
+      api: "pktgen.screen"
+      args: ['"on"']
+
+  constraints:
+    mutually_exclusive: []

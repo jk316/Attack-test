@@ -1,0 +1,103 @@
+skill:
+  name: stats_monitoring
+  intent: monitoring
+  description: Poll and display port statistics (link state, sending status, packet
+    stats, rate stats) at a configurable interval. Does not generate any traffic.
+  params:
+  - name: interval_ms
+    type: integer
+    description: Polling interval in milliseconds
+    required: false
+    default: 1000
+  - name: iterations
+    type: integer
+    description: Number of polling iterations (0 = run until interrupted)
+    required: false
+    default: 10
+  - name: mode
+    type: enum
+    description: What stats to collect
+    required: false
+    default: all
+    enum:
+    - all
+    - link
+    - sending
+    - rates
+    - packets
+    - port
+  topology:
+    monitor_port:
+      portlist: all
+      description: Port(s) to monitor
+  setup:
+  - comment: Disable screen updates for clean output
+    api: pktgen.screen
+    args:
+    - '"off"'
+  - comment: Print header
+    api: printf
+    args:
+    - '"=== Pktgen Stats Monitor ===\n"'
+  plan:
+    repeat:
+      count: $params.iterations
+      interval_ms: $params.interval_ms
+    steps:
+    - comment: Print port count
+      api: printf
+      args:
+      - '"Port Count: %d\n"'
+      - pktgen.portCount()
+    - comment: Print total port count
+      api: printf
+      args:
+      - '"Total Ports: %d\n"'
+      - pktgen.totalPorts()
+    - comment: Poll link state
+      api: prints
+      args:
+      - '"linkState"'
+      - pktgen.linkState("$topology.monitor_port")
+      condition: $params.mode == "all" or $params.mode == "link"
+    - comment: Poll sending status
+      api: prints
+      args:
+      - '"isSending"'
+      - pktgen.isSending("$topology.monitor_port")
+      condition: $params.mode == "all" or $params.mode == "sending"
+    - comment: Poll port sizes
+      api: prints
+      args:
+      - '"portSizes"'
+      - pktgen.portSizes("$topology.monitor_port")
+      condition: $params.mode == "all"
+    - comment: Poll packet statistics
+      api: prints
+      args:
+      - '"pktStats"'
+      - pktgen.pktStats("$topology.monitor_port")
+      condition: $params.mode == "all" or $params.mode == "packets"
+    - comment: Poll rate statistics
+      api: prints
+      args:
+      - '"portRates"'
+      - pktgen.portStats("$topology.monitor_port", "rate")
+      condition: $params.mode == "all" or $params.mode == "rates"
+    - comment: Poll port statistics
+      api: prints
+      args:
+      - '"portStats"'
+      - pktgen.portStats("$topology.monitor_port", "port")
+      condition: $params.mode == "all" or $params.mode == "port"
+  teardown:
+  - comment: Print footer
+    api: printf
+    args:
+    - '"=== Monitoring Complete ===\n"'
+  - comment: Re-enable screen
+    api: pktgen.screen
+    args:
+    - '"on"'
+  constraints:
+    mutually_exclusive: []

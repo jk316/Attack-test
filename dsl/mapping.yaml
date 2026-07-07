@@ -1,0 +1,262 @@
+# Pktgen Skill DSL → Lua Mapping Rules
+# Version: 1.0
+# Purpose: Deterministic rules to compile a DSL skill file into executable Lua code
+
+# ── Top-Level Compilation Phases ──
+compilation:
+  phases:
+    - { phase: 1, name: "resolve_topology", description: "Replace $topology.<name> references with physical portlist strings" }
+    - { phase: 2, name: "resolve_params", description: "Replace $params.<name> references with user-supplied values or defaults" }
+    - { phase: 3, name: "emit_lua_prologue", description: "Emit package.path, require 'Pktgen'" }
+    - { phase: 4, name: "emit_setup", description: "Compile setup steps to Lua" }
+    - { phase: 5, name: "emit_plan", description: "Compile plan steps to Lua" }
+    - { phase: 6, name: "emit_teardown", description: "Compile teardown steps to Lua" }
+
+# ── Lua Prologue (emitted at top of every generated script) ──
+prologue: |
+  package.path = package.path ..";?.lua;test/?.lua;app/?.lua;"
+
+  require "Pktgen"
+
+# ── Step → Lua Mapping Rules ──
+step_rules:
+
+  # ── Direct function call ──
+  - pattern:
+      step_type: "function_call"
+      has: [api, args]
+      lacks: [table_data, kw_args]
+    rule_name: "direct_call"
+    description: "Simple positional API call: step.api(step.args...)"
+    emit: |
+      <api>(<args_joined>);
+    example:
+      dsl:
+        api: "pktgen.set"
+        args: ["all", "rate", 100]
+      lua: |
+        pktgen.set("all", "rate", 100);
+
+  # ── Function call with no args ──
+  - pattern:
+      step_type: "function_call_no_args"
+      has: [api]
+      lacks: [args, table_data, kw_args]
+    rule_name: "no_args_call"
+    description: "API call with no arguments: step.api()"
+    emit: |
+      <api>();
+    example:
+      dsl:
+        api: "pktgen.cls"
+      lua: |
+        pktgen.cls();
+
+  # ── seqTable call (special: inline Lua table) ──
+  - pattern:
+      step_type: "seqTable_call"
+      has: [api, table_data]
+      api: "pktgen.seqTable"
+    rule_name: "seqTable_emit"
+    description: "Emit seqTable with a Lua table literal"
+    emit: |
+      local <table_name> = {
+      <table_entries>
+      };
+      pktgen.seqTable(<seq#>, "<portlist>", <table_name>);
+    example:
+      dsl:
+        api: "pktgen.seqTable"
+        args: [0, "all"]
+        table_name: "seq_table"
+        table_data:
+          eth_dst_addr: "0011:4455:6677"
+          eth_src_addr: "0011:1234:5678"
+          ip_dst_addr: "10.12.0.1"
+          ip_src_addr: "10.12.0.1/16"
+          sport: 9
+          dport: 10
+          ethType: "ipv4"
+          ipProto: "udp"
+          vlanid: 1
+          pktSize: 128
+      lua: |
+        local seq_table = {
+            ["eth_dst_addr"] = "0011:4455:6677",
+            ["eth_src_addr"] = "0011:1234:5678",
+            ["ip_dst_addr"] = "10.12.0.1",
+            ["ip_src_addr"] = "10.12.0.1/16",
+            ["sport"] = 9,
+            ["dport"] = 10,
+            ["ethType"] = "ipv4",
+            ["ipProto"] = "udp",
+            ["vlanid"] = 1,
+            ["pktSize"] = 128,
+        };
+        pktgen.seqTable(0, "all", seq_table);
+
+  # ── printf / prints call ──
+  - pattern:
+      step_type: "printf_call"
+      api_in: ["printf", "prints"]
+    rule_name: "printf_emit"
+    description: "Emit printf/prints with format string and args"
+    emit: |
+      <api>(<args_joined>);
+    example:
+      dsl:
+        api: "printf"
+        args: ['"Port Count %d\n"', "pktgen.portCount()"]
+      lua: |
+        printf("Port Count %d\n", pktgen.portCount());
+
+  # ── Variable assignment from API call ──
+  - pattern:
+      step_type: "assignment_call"
+      has: [api, args, assign_to]
+    rule_name: "assignment"
+    description: "Capture return value: local <var> = api(...)"
+    emit: |
+      local <assign_to> = <api>(<args_joined>);
+    example:
+      dsl:
+        assign_to: "key"
+        api: "pktgen.continue"
+        args: ['"\nPress any key: "']
+      lua: |
+        local key = pktgen.continue("\nPress any key: ");
+
+  # ── Conditional (if statement) ──
+  - pattern:
+      step_type: "conditional"
+      has: [condition, then_steps]
+    rule_name: "if_then"
+    emit: |
+      if ( <condition> ) then
+      <then_steps_indented>
+      end
+    example:
+      dsl:
+        condition: 'key == "s"'
+        then_steps:
+          - { api: "pktgen.save", args: ['"foobar.cmd"'] }
+      lua: |
+        if ( key == "s" ) then
+            pktgen.save("foobar.cmd");
+        end
+
+  # ── Repeat / Loop ──
+  - pattern:
+      step_type: "repeat"
+      has: [repeat]
+    rule_name: "repeat_loop"
+    description: "Repeat a step N times with optional interval"
+    emit: |
+      for i = 1, <repeat.count> do
+          <inner_step>
+          <delay_if_interval>
+      end
+    example:
+      dsl:
+        repeat: { count: 5, interval_ms: 1000 }
+        api: "pktgen.portStats"
+        args: ["all", '"rate"']
+      lua: |
+        for i = 1, 5 do
+            pktgen.portStats("all", "rate");
+            pktgen.delay(1000);
+        end
+
+# ── Type Conversion Rules (YAML → Lua literal) ──
+type_conversion:
+  string:
+    rule: "Wrap in double quotes, escape internal quotes"
+    example: { yaml: "hello", lua: '"hello"' }
+  integer:
+    rule: "Emit as-is"
+    example: { yaml: 100, lua: "100" }
+  float:
+    rule: "Emit as-is"
+    example: { yaml: 50.5, lua: "50.5" }
+  boolean:
+    rule: "Convert to Lua boolean"
+    example: { yaml: true, lua: "true" }
+  table:
+    rule: "Emit as Lua table literal with quoted string keys"
+    example:
+      yaml: { eth_dst_addr: "00:11:22:33:44:55" }
+      lua: '{ ["eth_dst_addr"] = "00:11:22:33:44:55" }'
+
+# ── Parameter Binding Rules ──
+param_binding:
+  topology_ref:
+    pattern: "$topology.<name>"
+    resolves_to: "The portlist value from the topology section"
+    compile_time: true
+    example:
+      dsl: "$topology.tx_port"
+      topology: { tx_port: { portlist: "0" } }
+      resolved: '"0"'
+
+  param_ref:
+    pattern: "$params.<name>"
+    resolves_to: "User-supplied value or default from params section"
+    example:
+      dsl: "$params.rate"
+      params: [{ name: "rate", type: "integer", default: 50 }]
+      resolved: "50"
+
+  table_ref:
+    pattern: "$table.<name>"
+    resolves_to: "Inline table defined in the step's table_data field"
+
+# ── Sequence Table Key Mapping ──
+seqtable_keys:
+  required:
+    - { key: "eth_dst_addr", type: "string", format: "MAC" }
+    - { key: "eth_src_addr", type: "string", format: "MAC" }
+    - { key: "ip_dst_addr", type: "string", format: "IP" }
+    - { key: "ip_src_addr", type: "string", format: "IP/CIDR" }
+    - { key: "sport", type: "integer" }
+    - { key: "dport", type: "integer" }
+    - { key: "ethType", type: "enum", values: ["ipv4", "ipv6", "vlan"] }
+    - { key: "ipProto", type: "enum", values: ["udp", "tcp", "icmp"] }
+    - { key: "vlanid", type: "integer", range: "1-4095" }
+    - { key: "pktSize", type: "integer", range: "64-1518" }
+  optional:
+    - { key: "teid", type: "integer" }
+    - { key: "cos", type: "integer" }
+    - { key: "tos", type: "integer" }
+    - { key: "tcp_flags", type: "string" }
+
+# ── Validation Rules (Compiler Built-in) ──
+validation_rules:
+  - rule: "api_exists"
+    description: "Every api value must exist in schema.yaml valid_apis"
+    check: "step.api ∈ valid_apis"
+    on_fail: "ERROR: Unknown API function '<api>'"
+
+  - rule: "arg_count_match"
+    description: "Argument count must match API arity"
+    check: "len(step.args) == api_arity(step.api)"
+    on_fail: "ERROR: Wrong argument count for '<api>'"
+
+  - rule: "arg_type_match"
+    description: "Argument types must match API parameter types"
+    check: "typeof(arg) == expected_type"
+    on_fail: "ERROR: Type mismatch for arg <N> of '<api>'"
+
+  - rule: "enum_values_valid"
+    description: "Enum arguments must use valid values"
+    check: "arg_value ∈ valid_enums[param_name]"
+    on_fail: "ERROR: Invalid enum value '<value>' for '<param>'"
+
+  - rule: "range_valid"
+    description: "Integer args with range constraints must be within bounds"
+    check: "min ≤ value ≤ max"
+    on_fail: "ERROR: Value <N> out of range [<min>, <max>]"
+
+  - rule: "topology_refs_resolve"
+    description: "All $topology.<name> references must exist in the topology section"
+    check: "∀ ref ∈ $topology.*: ref.name ∈ topology"
+    on_fail: "ERROR: Undefined topology reference '<ref>'"

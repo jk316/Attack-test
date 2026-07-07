@@ -85,6 +85,11 @@ def _build_system_prompt() -> str:
         max_packet_size=MAX_PACKET_SIZE,
         max_flow_count=MAX_FLOW_COUNT,
         max_iat_jitter_ms=MAX_IAT_JITTER_MS,
+        # Pktgen-DPDK context
+        pktgen_available=True,
+        pktgen_dry_run=os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false",
+        pktgen_host=os.environ.get("PKTGEN_HOST", "10.99.80.222"),
+        pktgen_port=os.environ.get("PKTGEN_PORT", "22022"),
     )
 
 

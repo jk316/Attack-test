@@ -1,0 +1,153 @@
+# Skill: range_based_scan
+# Intent: Send packets with varying field values across a defined range
+# Grounded in: knowledge/range_mode.yaml, knowledge/lua_api.yaml
+
+skill:
+  name: "range_based_scan"
+  intent: "traffic_scanning"
+  description: "Enable range mode and send packets that vary across specified ranges. Each transmitted packet increments fields by 'inc', wrapping from 'min' to 'max'. Supports MAC, IP, port, VLAN, and packet size ranges."
+
+  params:
+    - name: "scan_field"
+      type: "enum"
+      description: "Which field to scan"
+      required: true
+      enum: ["dst_ip", "src_ip", "dst_port", "src_port", "dst_mac", "src_mac", "vlan_id", "pkt_size"]
+
+    - name: "start"
+      type: "any"
+      description: "Starting value for the scan field (type depends on scan_field: IP string, integer for port, MAC string, etc.)"
+      required: true
+
+    - name: "min"
+      type: "any"
+      description: "Minimum value (wrap point lower bound)"
+      required: true
+
+    - name: "max"
+      type: "any"
+      description: "Maximum value (wrap point upper bound)"
+      required: true
+
+    - name: "inc"
+      type: "any"
+      description: "Increment per packet. Set to zero to disable variation (send start value only)."
+      required: true
+
+    - name: "rate"
+      type: "float"
+      description: "Packet rate in percentage"
+      required: false
+      default: 50
+      constraints: { min: 0, max: 100 }
+
+    - name: "pktSize"
+      type: "integer"
+      description: "Packet size in bytes"
+      required: false
+      default: 128
+      constraints: { min: 64, max: 1518 }
+
+    - name: "count"
+      type: "integer"
+      description: "Number of packets (0 = forever)"
+      required: false
+      default: 0
+
+  topology:
+    tx_port:
+      portlist: "all"
+      description: "Port(s) used for range scan"
+
+  setup:
+    - comment: "Disable screen updates"
+      api: "pktgen.screen"
+      args: ['"off"']
+
+    - comment: "Set packet type to IPv4"
+      api: "pktgen.set_type"
+      args: ["$topology.tx_port", '"ipv4"']
+
+    - comment: "Set protocol to UDP"
+      api: "pktgen.set_proto"
+      args: ["$topology.tx_port", '"udp"']
+
+    - comment: "Set packet size"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"size"', "$params.pktSize"]
+
+    - comment: "Navigate to range page for visual monitoring"
+      api: "pktgen.page"
+      args: ['"range"']
+
+  plan:
+    - comment: "Configure range start value"
+      api: "$range_api"
+      args: ["$topology.tx_port", '"start"', "$params.start"]
+
+    - comment: "Configure range min value"
+      api: "$range_api"
+      args: ["$topology.tx_port", '"min"', "$params.min"]
+
+    - comment: "Configure range max value"
+      api: "$range_api"
+      args: ["$topology.tx_port", '"max"', "$params.max"]
+
+    - comment: "Configure range increment"
+      api: "$range_api"
+      args: ["$topology.tx_port", '"inc"', "$params.inc"]
+
+    - comment: "Set packet rate"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"rate"', "$params.rate"]
+
+    - comment: "Set packet count"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"count"', "$params.count"]
+
+    - comment: "Enable range mode on ports"
+      api: "pktgen.set_range"
+      args: ["$topology.tx_port", '"on"']
+
+    - comment: "Start transmitting"
+      api: "pktgen.start"
+      args: ["$topology.tx_port"]
+
+  teardown:
+    - comment: "Stop traffic"
+      api: "pktgen.stop"
+      args: ["$topology.tx_port"]
+
+    - comment: "Disable range mode"
+      api: "pktgen.set_range"
+      args: ["$topology.tx_port", '"off"']
+
+    - comment: "Return to main page"
+      api: "pktgen.page"
+      args: ['"0"']
+
+    - comment: "Re-enable screen"
+      api: "pktgen.screen"
+      args: ['"on"']
+
+  constraints:
+    note: |
+      The $range_api reference is resolved at compile time based on scan_field:
+        dst_ip   → pktgen.range.dst_ip
+        src_ip   → pktgen.range.src_ip
+        dst_port → pktgen.range.dst_port
+        src_port → pktgen.range.src_port
+        dst_mac  → pktgen.range.dst_mac
+        src_mac  → pktgen.range.src_mac
+        vlan_id  → pktgen.range.vlan_id
+        pkt_size → pktgen.range.pkt_size
+
+    range_api_mapping:
+      dst_ip: "pktgen.range.dst_ip"
+      src_ip: "pktgen.range.src_ip"
+      dst_port: "pktgen.range.dst_port"
+      src_port: "pktgen.range.src_port"
+      dst_mac: "pktgen.range.dst_mac"
+      src_mac: "pktgen.range.src_mac"
+      vlan_id: "pktgen.range.vlan_id"
+      pkt_size: "pktgen.range.pkt_size"

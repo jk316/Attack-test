@@ -1,0 +1,108 @@
+# Skill: packet_sequence_generation
+# Intent: Send a sequence of different packet configurations in order
+# Grounded in: knowledge/sequence_mode.yaml, knowledge/lua_api.yaml
+
+skill:
+  name: "packet_sequence_generation"
+  intent: "packet_crafting"
+  description: "Configure and send a sequence of up to 16 distinct packet templates. Each sequence entry defines a complete packet (MACs, IPs, ports, protocol, size)."
+
+  params:
+    - name: "sequences"
+      type: "table"
+      description: "Array of sequence table entries. Each entry is a table with keys: eth_dst_addr, eth_src_addr, ip_dst_addr, ip_src_addr, sport, dport, ethType, ipProto, vlanid, pktSize. Optional: teid, cos, tos, tcp_flags."
+      required: true
+
+    - name: "rate"
+      type: "float"
+      description: "Packet rate in percentage"
+      required: false
+      default: 100
+      constraints: { min: 0, max: 100 }
+
+    - name: "count"
+      type: "integer"
+      description: "Number of packets to send (0 = forever)"
+      required: false
+      default: 0
+
+    - name: "burst"
+      type: "integer"
+      description: "Tx burst size"
+      required: false
+      default: 128
+
+  topology:
+    tx_port:
+      portlist: "all"
+      description: "Port(s) used for sequence transmission"
+
+  setup:
+    - comment: "Disable screen updates"
+      api: "pktgen.screen"
+      args: ['"off"']
+
+    - comment: "Set packet type to IPv4"
+      api: "pktgen.set_type"
+      args: ["$topology.tx_port", '"ipv4"']
+
+    - comment: "Configure burst size"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"burst"', "$params.burst"]
+
+  plan:
+    - comment: "Define each sequence entry via seqTable"
+      # Each entry in $params.sequences is compiled to a pktgen.seqTable() call
+      # The compiler emits one seqTable call per sequence entry
+      api: "pktgen.seqTable"
+      args: ["$seq_index", "$topology.tx_port"]
+      table_name: "seq_entry"
+      table_data: "$params.sequences[$seq_index]"
+
+    - comment: "Set the number of active sequence entries"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"seq_cnt"', "$sequence_count"]
+
+    - comment: "Set packet rate"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"rate"', "$params.rate"]
+
+    - comment: "Set packet count"
+      api: "pktgen.set"
+      args: ["$topology.tx_port", '"count"', "$params.count"]
+
+    - comment: "Start sending the sequence"
+      api: "pktgen.start"
+      args: ["$topology.tx_port"]
+
+  teardown:
+    - comment: "Stop traffic"
+      api: "pktgen.stop"
+      args: ["$topology.tx_port"]
+
+    - comment: "Reset port configuration"
+      api: "pktgen.reset"
+      args: ["$topology.tx_port"]
+
+    - comment: "Re-enable screen"
+      api: "pktgen.screen"
+      args: ['"on"']
+
+  constraints:
+    requires:
+      - param: "sequences"
+        also_requires: []
+    note: "Each sequence entry must include all 10 required seqTable keys. Optional keys (teid, cos, tos, tcp_flags) are allowed. Max 16 sequences per port."
+
+  # Example sequence entry for reference
+  example_sequence:
+    eth_dst_addr: "0011:4455:6677"
+    eth_src_addr: "0011:1234:5678"
+    ip_dst_addr: "10.12.0.1"
+    ip_src_addr: "10.12.0.1/16"
+    sport: 9
+    dport: 10
+    ethType: "ipv4"
+    ipProto: "udp"
+    vlanid: 1
+    pktSize: 128

@@ -2,6 +2,7 @@
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -131,6 +132,25 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Auto-approve all HITL traffic send requests (skip interactive prompts)",
     )
+    # ── Pktgen-DPDK options ──────────────────────────────────────────
+    parser.add_argument(
+        "--pktgen-live",
+        action="store_true",
+        default=False,
+        help="Run Pktgen tools in live mode (actually send traffic to Pktgen). "
+             "Default is dry-run (compile Lua scripts only).",
+    )
+    parser.add_argument(
+        "--pktgen-host",
+        default="10.99.80.222",
+        help="Pktgen-DPDK hostname or IP (default: 10.99.80.222)",
+    )
+    parser.add_argument(
+        "--pktgen-port",
+        type=int,
+        default=22022,
+        help="Pktgen-DPDK TCP control port (default: 22022)",
+    )
     return parser.parse_args()
 
 
@@ -156,12 +176,20 @@ def _build_user_message(args: argparse.Namespace) -> str:
 def main() -> None:
     args = parse_args()
 
+    # ── Pktgen-DPDK configuration (env vars read by adapter + system prompt) ──
+    if args.pktgen_live:
+        os.environ["PKTGEN_DRY_RUN"] = "false"
+    os.environ.setdefault("PKTGEN_HOST", args.pktgen_host)
+    os.environ.setdefault("PKTGEN_PORT", str(args.pktgen_port))
+
     print(f"=== Closed-Loop Experiment ===")
     print(f"Target:     {args.target_ip}")
     print(f"PCAP:       {args.pcap_path or '(none)'}")
     print(f"Log:        {args.log_path}")
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
+    pktgen_mode = "live" if args.pktgen_live else "dry-run"
+    print(f"Pktgen:     {pktgen_mode} ({args.pktgen_host}:{args.pktgen_port})")
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──

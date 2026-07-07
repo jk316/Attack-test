@@ -1,0 +1,33 @@
+# Pktgen Topology Configuration
+# Maps logical port names to physical portlist expressions.
+# Edit this file to match your hardware setup.
+# All skills reference ports by logical name (e.g. $topology.tx_port).
+
+pktgen:
+  host: "10.99.80.222"
+  port: 22022
+
+tx_port:
+  portlist: "0"
+  description: "TX port — traffic egress"
+
+rx_port:
+  portlist: "1"
+  description: "RX port — traffic ingress"
+
+monitor_port:
+  portlist: "all"
+  description: "Port(s) for statistics monitoring"
+
+target_port:
+  portlist: "all"
+  description: "Port(s) for control operations (stop/reset)"
+
+# Add more ports as needed, e.g.:
+#  secondary_tx:
+#    portlist: "2"
+#    description: "Secondary TX port"
+#
+#  all_test_ports:
+#    portlist: "0-3"
+#    description: "All test ports"

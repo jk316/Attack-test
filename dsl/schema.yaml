@@ -1,0 +1,305 @@
+# Pktgen Skill DSL — Schema Definition
+# Version: 1.0
+# Grounded in: knowledge/ (9 reference YAML files)
+# Purpose: Define the structure of a Skill DSL that describes Pktgen Lua API tasks
+
+# ── Schema Meta ──
+meta:
+  schema_version: "1.0"
+  reference_base: "knowledge/"
+  reference_files:
+    - "knowledge/commands.yaml"
+    - "knowledge/lua_api.yaml"
+    - "knowledge/packet_fields.yaml"
+    - "knowledge/range_mode.yaml"
+    - "knowledge/sequence_mode.yaml"
+    - "knowledge/pcap.yaml"
+    - "knowledge/startup.yaml"
+    - "knowledge/examples.yaml"
+
+# ── Top-Level Skill Structure ──
+skill_schema:
+  required: [name, intent, plan]
+  optional: [description, params, topology, setup, teardown, constraints]
+
+  name:
+    type: "string"
+    pattern: "^[a-z][a-z0-9_]*$"
+    description: "Unique skill identifier, lowercase snake_case"
+
+  description:
+    type: "string"
+    description: "Human-readable description of what this skill does"
+
+  intent:
+    type: "enum"
+    description: "Task category"
+    values:
+      - "traffic_generation"   # 生成流量 (flood, replay, etc.)
+      - "packet_crafting"      # 构造特定 packet
+      - "traffic_scanning"     # Range-based 扫描
+      - "monitoring"           # 统计/观测
+      - "control"              # 启停/重置等控制操作
+
+  # ── Input Parameters ──
+  params:
+    type: "array"
+    description: "User-supplied parameters with type and constraints"
+    element:
+      type: "object"
+      required: [name, type]
+      optional: [description, required, default, constraints]
+      properties:
+        name:
+          type: "string"
+          description: "Parameter name (camelCase)"
+        type:
+          type: "enum"
+          values: [string, integer, float, boolean, mac_address, ip_address, portlist, enum, table, array]
+        description:
+          type: "string"
+        required:
+          type: "boolean"
+          default: false
+        default:
+          type: "any"
+          description: "Default value if not provided"
+        constraints:
+          type: "object"
+          properties:
+            min: { type: "number" }
+            max: { type: "number" }
+            enum: { type: "array" }
+            pattern: { type: "string" }
+
+  # ── Topology (Port Binding) ──
+  topology:
+    type: "object"
+    description: "Logical port names mapped to physical portlist expressions"
+    example:
+      tx_port:
+        portlist: "0"
+      rx_port:
+        portlist: "1"
+    property_schema:
+      type: "object"
+      required: [portlist]
+      properties:
+        portlist:
+          type: "string"
+          description: "Physical port number or portlist expression (e.g. '0', '0-3', 'all')"
+        description:
+          type: "string"
+          description: "Human-readable description of this port's role"
+
+  # ── Setup Phase ──
+  setup:
+    type: "array"
+    description: "Initialization steps executed before the main plan. Typical: screen off, set MACs/IPs, configure ARP."
+    element:
+      $ref: "#/step_schema"
+
+  # ── Plan Phase (Main Execution) ──
+  plan:
+    type: "array"
+    description: "Main execution steps. Executed in order after setup."
+    minItems: 1
+    element:
+      $ref: "#/step_schema"
+
+  # ── Teardown Phase ──
+  teardown:
+    type: "array"
+    description: "Cleanup steps executed after plan completes or on error. Typical: stop, reset, screen on."
+    element:
+      $ref: "#/step_schema"
+
+  # ── Parameter Constraints ──
+  constraints:
+    type: "object"
+    description: "Cross-parameter validation rules"
+    properties:
+      requires:
+        type: "array"
+        description: "Parameter dependencies (if param A is set, param B must also be set)"
+        element:
+          type: "object"
+          properties:
+            param: { type: "string" }
+            also_requires: { type: "array", element: { type: "string" } }
+      mutually_exclusive:
+        type: "array"
+        description: "Parameters that cannot be used together"
+        element:
+          type: "array"
+          minItems: 2
+          maxItems: 2
+          element: { type: "string" }
+
+# ── Step Schema ──
+step_schema:
+  type: "object"
+  required: [api]
+  optional: [description, args, kw_args, delay_ms, condition, repeat, comment]
+
+  api:
+    type: "string"
+    description: "Fully qualified pktgen Lua API function name. Must exist in knowledge/lua_api.yaml"
+    examples:
+      - "pktgen.set"
+      - "pktgen.start"
+      - "pktgen.seqTable"
+      - "pktgen.range.dst_ip"
+      - "pktgen.portStats"
+
+  args:
+    type: "array"
+    description: "Positional arguments passed to the API function"
+    element:
+      type: "any"
+      description: |
+        Can be:
+        - Literal value (string, integer, float, boolean)
+        - Topology reference: "$topology.<name>" resolves to the portlist
+        - Param reference: "$params.<name>" resolves to user-supplied param
+        - Lua table reference: "$table.<name>" for seqTable data
+
+  kw_args:
+    type: "object"
+    description: "Keyword arguments (for functions that accept table args like seqTable)"
+    properties:
+      table_name:
+        type: "string"
+        description: "Name of the inline table defined in this step"
+
+  table_data:
+    type: "object"
+    description: "Inline Lua table data (used with seqTable and similar APIs)"
+    exists_if: "api == 'pktgen.seqTable'"
+
+  delay_ms:
+    type: "integer"
+    description: "Delay in milliseconds after this step"
+
+  comment:
+    type: "string"
+    description: "Human-readable explanation of this step's purpose"
+
+  condition:
+    type: "string"
+    description: "Lua condition expression; step only executes if true"
+
+  repeat:
+    type: "object"
+    description: "Repeat this step"
+    properties:
+      count:
+        type: "integer"
+        description: "Number of times to repeat"
+      interval_ms:
+        type: "integer"
+        description: "Interval between repeats in milliseconds"
+
+# ── Valid API Functions (extracted from knowledge/lua_api.yaml) ──
+# This section is auto-derived from the reference DB at validation time.
+# Listed here as documentation of the ground-truth API surface.
+valid_apis:
+  configuration:
+    - "pktgen.set"           # (portlist, key, value)
+    - "pktgen.vlanid"        # (portlist, id)
+    - "pktgen.set_mac"       # (portlist, direction, mac_addr)
+    - "pktgen.set_ipaddr"    # (port, direction, ipaddr)
+    - "pktgen.set_proto"     # (portlist, proto)  — udp|tcp|icmp
+    - "pktgen.set_type"      # (portlist, type)   — ipv4|ipv6|vlan|arp
+    - "pktgen.mac_from_arp"  # (state)            — on|off
+    - "pktgen.ports_per_page" # (n)               — 1-6
+
+  packet_construction:
+    - "pktgen.seq"           # (seq#, portlist, eth_dst, eth_src, ip_dst, ip_src, sport, dport, ethType, ipProto, vlanid, pktSize)
+    - "pktgen.seqTable"      # (seq#, portlist, table) — table keys: eth_dst_addr, eth_src_addr, ip_dst_addr, ip_src_addr, sport, dport, ethType, ipProto, vlanid, pktSize, teid?, cos?, tos?, tcp_flags?
+    - "pktgen.rnd"           # (portlist, idx, off, mask)
+
+  range:
+    - "pktgen.range.dst_mac"  # (portlist, property, value)
+    - "pktgen.range.src_mac"  # (portlist, property, value)
+    - "pktgen.range.dst_ip"   # (portlist, property, value)
+    - "pktgen.range.src_ip"   # (portlist, property, value)
+    - "pktgen.range.dst_port" # (portlist, property, value)
+    - "pktgen.range.src_port" # (portlist, property, value)
+    - "pktgen.range.vlan_id"  # (portlist, property, value)
+    - "pktgen.range.pkt_size" # (portlist, property, value)
+    - "pktgen.range.proto"    # (portlist, proto)
+
+  traffic_control:
+    - "pktgen.start"         # (portlist)
+    - "pktgen.stop"          # (portlist)
+    - "pktgen.prime"         # (portlist)
+    - "pktgen.process"       # (portlist, state)
+
+  state_management:
+    - "pktgen.clear"         # (portlist)
+    - "pktgen.cls"           # ()
+    - "pktgen.reset"         # (portlist)
+    - "pktgen.save"          # (filename)
+    - "pktgen.load"          # (filename)
+
+  protocol:
+    - "pktgen.icmp_echo"     # (portlist, state)
+    - "pktgen.send_arp"      # (portlist, type)
+    - "pktgen.ping4"         # (portlist)
+    - "pktgen.ping6"         # (portlist)
+    - "pktgen.pcap"          # (portlist, state)
+    - "pktgen.set_range"     # (portlist, state)
+
+  monitoring:
+    - "pktgen.linkState"     # (portlist)
+    - "pktgen.isSending"     # (portlist)
+    - "pktgen.portSizes"     # (portlist)
+    - "pktgen.pktStats"      # (portlist)
+    - "pktgen.portStats"     # (portlist, type)  — type: rate|port
+    - "pktgen.portCount"     # ()
+    - "pktgen.totalPorts"    # ()
+    - "pktgen.portInfo"      # ()
+
+  ui_control:
+    - "pktgen.screen"        # (state)
+    - "pktgen.page"          # (name)
+    - "pktgen.port"          # (n)
+    - "pktgen.blink"         # (port, state)
+
+  flow_control:
+    - "pktgen.delay"         # (ms)
+    - "pktgen.pause"         # (message, ms)
+    - "pktgen.continue"      # (message) → returns key
+
+  utility:
+    - "printf"               # (format, ...)
+    - "prints"               # (label, table)
+
+# ── Valid pktgen.set() Keys ──
+valid_set_keys:
+  - { key: "count", type: "integer", description: "Number of packets to transmit" }
+  - { key: "rate", type: "float", description: "Packet rate in percentage" }
+  - { key: "size", type: "integer", valid_range: "64-1518", description: "Packet size in bytes" }
+  - { key: "burst", type: "integer", description: "Number of packets in a Tx burst" }
+  - { key: "sport", type: "integer", description: "Source port number" }
+  - { key: "dport", type: "integer", description: "Destination port number" }
+  - { key: "prime", type: "integer", description: "Packets to send on prime command" }
+  - { key: "seq_cnt", type: "integer", valid_range: "0-16", description: "Number of sequence entries" }
+  - { key: "seqcnt", type: "integer", valid_range: "0-16", description: "Alias for seq_cnt" }
+  - { key: "seqCnt", type: "integer", valid_range: "0-16", description: "Alias for seq_cnt" }
+  - { key: "ttl", type: "integer", description: "IP TTL value" }
+
+# ── Valid Range Properties (SMMI) ──
+valid_range_properties: ["start", "min", "max", "inc"]
+
+# ── Valid Enum Values ──
+valid_enums:
+  ethType: ["ipv4", "ipv6", "vlan"]
+  ipProto: ["udp", "tcp", "icmp"]
+  type: ["ipv4", "ipv6", "vlan", "arp"]
+  proto: ["udp", "tcp", "icmp"]
+  state: ["on", "off"]
+  direction: ["src", "dst"]
+  range_property: ["start", "min", "max", "inc"]
+  pattern_type: ["abc", "none", "zero", "user"]
