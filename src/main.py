@@ -13,6 +13,7 @@ logger = logging.getLogger("agent")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
+from src.pktgen.adapter import PKTGEN_HOST as _DEF_PKTGEN_HOST, PKTGEN_PORT as _DEF_PKTGEN_PORT  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
@@ -142,14 +143,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pktgen-host",
-        default="10.99.80.222",
-        help="Pktgen-DPDK hostname or IP (default: 10.99.80.222)",
+        default=None,
+        help="Pktgen-DPDK hostname or IP (default from topology.yaml or 10.99.80.222)",
     )
     parser.add_argument(
         "--pktgen-port",
         type=int,
-        default=22022,
-        help="Pktgen-DPDK TCP control port (default: 22022)",
+        default=None,
+        help="Pktgen-DPDK TCP control port (default from topology.yaml or 22022)",
     )
     return parser.parse_args()
 
@@ -179,8 +180,13 @@ def main() -> None:
     # ── Pktgen-DPDK configuration (env vars read by adapter + system prompt) ──
     if args.pktgen_live:
         os.environ["PKTGEN_DRY_RUN"] = "false"
-    os.environ.setdefault("PKTGEN_HOST", args.pktgen_host)
-    os.environ.setdefault("PKTGEN_PORT", str(args.pktgen_port))
+    if args.pktgen_host is not None:
+        os.environ["PKTGEN_HOST"] = args.pktgen_host
+    if args.pktgen_port is not None:
+        os.environ["PKTGEN_PORT"] = str(args.pktgen_port)
+
+    pktgen_host = args.pktgen_host or _DEF_PKTGEN_HOST
+    pktgen_port = args.pktgen_port or _DEF_PKTGEN_PORT
 
     print(f"=== Closed-Loop Experiment ===")
     print(f"Target:     {args.target_ip}")
@@ -189,7 +195,7 @@ def main() -> None:
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"
-    print(f"Pktgen:     {pktgen_mode} ({args.pktgen_host}:{args.pktgen_port})")
+    print(f"Pktgen:     {pktgen_mode} ({pktgen_host}:{pktgen_port})")
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──

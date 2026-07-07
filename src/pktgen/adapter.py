@@ -37,8 +37,30 @@ if str(_PROJECT_ROOT) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(_PROJECT_ROOT))
 
 # ── Configuration ────────────────────────────────────────────────────
-PKTGEN_HOST = os.environ.get("PKTGEN_HOST", "10.99.80.222")
-PKTGEN_PORT = int(os.environ.get("PKTGEN_PORT", "22022"))
+
+def _get_default_host() -> str:
+    """Read Pktgen host from topology.yaml, falling back to env var."""
+    try:
+        from pktgen_agent.topology import load_topology_config
+        host, _ = load_topology_config()
+        return host
+    except Exception:
+        return "10.99.80.222"
+
+
+def _get_default_port() -> int:
+    """Read Pktgen port from topology.yaml, falling back to env var."""
+    try:
+        from pktgen_agent.topology import load_topology_config
+        _, port = load_topology_config()
+        return port
+    except Exception:
+        return 22022
+
+
+# Environment overrides take priority over topology.yaml
+PKTGEN_HOST = os.environ.get("PKTGEN_HOST") or _get_default_host()
+PKTGEN_PORT = int(os.environ.get("PKTGEN_PORT", "0")) or _get_default_port()
 PKTGEN_DRY_RUN = os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false"
 
 # ── Skills that require allowlist validation (have dst_ip param) ─────
@@ -55,18 +77,26 @@ _SKILLS_WITH_HITL = {
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+_pktgen_exec_cache: tuple | None = None
+
+
 def _import_pktgen():
-    """Lazy-import Pktgen execution functions.
+    """Lazy-import Pktgen execution functions, cached after first call.
 
     Raises ImportError with actionable instructions if the vendored
     ``pktgen_agent`` package is not on ``sys.path``.
     """
+    global _pktgen_exec_cache
+    if _pktgen_exec_cache is not None:
+        return _pktgen_exec_cache
+
     try:
         from pktgen_agent.tools.execute import (  # type: ignore[import-not-found]
             execute_skill_dry_run,
             execute_skill_live,
         )
-        return execute_skill_dry_run, execute_skill_live
+        _pktgen_exec_cache = (execute_skill_dry_run, execute_skill_live)
+        return _pktgen_exec_cache
     except ImportError:
         raise ImportError(
             "Pktgen Agent not found on sys.path.  "
@@ -87,32 +117,45 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     # Strip None values so Pktgen uses its own defaults
     clean_params = {k: v for k, v in params.items() if v is not None}
 
-    if PKTGEN_DRY_RUN:
-        logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
-        return execute_dry(skill_name, clean_params)
-    else:
-        logger.info("Live: skill=%s params=%s host=%s:%s",
-                     skill_name, clean_params, PKTGEN_HOST, PKTGEN_PORT)
-        return execute_live(skill_name, clean_params,
-                            host=PKTGEN_HOST, port=PKTGEN_PORT)
+    try:
+        if PKTGEN_DRY_RUN:
+            logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
+            return execute_dry(skill_name, clean_params)
+        else:
+            logger.info("Live: skill=%s params=%s host=%s:%s",
+                         skill_name, clean_params, PKTGEN_HOST, PKTGEN_PORT)
+            return execute_live(skill_name, clean_params,
+                                host=PKTGEN_HOST, port=PKTGEN_PORT)
+    except Exception as e:
+        # Catch CompileError and any other unexpected errors
+        logger.error("Skill execution failed: skill=%s error=%s", skill_name, e)
+        return {"success": False, "skill": skill_name, "error": str(e)}
 
 
 def _apply_allowlist(dst_ip: str | None, skill_name: str) -> None:
-    """Validate *dst_ip* against Attack-Test's allowlist, if non-empty."""
-    if dst_ip:
-        validate_target(dst_ip)
+    """Validate *dst_ip* against Attack-Test's allowlist.
+
+    Raises ValueError if *dst_ip* is empty or not in the allowlist.
+    """
+    if not dst_ip:
+        raise ValueError(
+            f"Pktgen skill '{skill_name}' requires dst_ip (must be in allowlist). "
+            f"The LLM must provide a valid target IP."
+        )
+    validate_target(dst_ip)
 
 
 def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
     """Prompt for human approval before executing a traffic skill.
 
-    Skipped in dry-run mode (no traffic is actually sent).
+    Skipped in dry-run mode (no traffic is actually sent).  This function
+    is only reached when ``PKTGEN_DRY_RUN`` is False.
     """
     if PKTGEN_DRY_RUN:
         return True
     approval = interrupt({
         "message": f"[HITL] Approve Pktgen '{skill_name}' execution?",
-        "mode": "live" if not PKTGEN_DRY_RUN else "dry_run",
+        "mode": "live",
         "params": params,
     })
     return bool(approval)
@@ -153,7 +196,7 @@ def _run_traffic_tool(
     3. Execute skill
     4. RTT sampling
     """
-    if dst_ip and skill_name in _SKILLS_WITH_DST_IP:
+    if skill_name in _SKILLS_WITH_DST_IP:
         _apply_allowlist(dst_ip, skill_name)
     if skill_name in _SKILLS_WITH_HITL:
         if not _hitl_gate(skill_name, params):
@@ -211,7 +254,7 @@ def pktgen_udp_flood(
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "dport": dport, "sport": sport, "pktSize": pktSize,
         "src_ip": src_ip, "count": count, "burst": burst,
-    }, dst_ip=dst_ip or None)
+    }, dst_ip=dst_ip)
 
 
 # ── Tool: pktgen_tcp_flood ───────────────────────────────────────────
@@ -257,7 +300,12 @@ def pktgen_tcp_flood(
         "dport": dport, "sport": sport, "tcp_flags": tcp_flags,
         "pktSize": pktSize, "src_ip": src_ip,
         "count": count, "burst": burst,
-    }, dst_ip=dst_ip or None)
+    }, dst_ip=dst_ip)
+
+
+
+
+
 
 
 # ── Tool: pktgen_icmp_flood ──────────────────────────────────────────
@@ -298,7 +346,7 @@ def pktgen_icmp_flood(
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "pktSize": pktSize, "ttl": ttl, "src_ip": src_ip,
         "count": count, "burst": burst,
-    }, dst_ip=dst_ip or None)
+    }, dst_ip=dst_ip)
 
 
 # ── Tool: pktgen_arp_flood ───────────────────────────────────────────
@@ -308,6 +356,7 @@ def pktgen_arp_flood(
     rate: float = 50.0,
     duration: int = 5000,
     arp_type: str = "request",
+    dst_ip: str = "",
     count: int | None = None,
     burst: int | None = None,
 ) -> dict[str, Any]:
@@ -318,22 +367,34 @@ def pktgen_arp_flood(
     This can saturate the local broadcast domain, causing different RTT
     degradation patterns than L3/L4 floods.
 
+    The optional *dst_ip* is NOT sent to Pktgen (ARP has no IP fields);
+    it is only used for RTT sampling via the PingMonitor against that target.
+    Provide the same IP used for ``start_ping_monitor`` to correlate RTT
+    impact.
+
     Args:
         rate: Packet rate as percentage of line-rate (0–100, default 50).
         duration: Traffic duration in **milliseconds** (default 5000).
         arp_type: ARP packet type — ``request``, ``req``, ``gratuitous``,
                   ``grat``, or ``g``.  Default ``request``.
+        dst_ip: Target IP for RTT sampling only (NOT sent to Pktgen).
+                Must be in allowlist.  Leave empty to skip RTT sampling.
         count: Number of packets (0 = forever).
         burst: Tx burst size (default 128).
 
     Returns:
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
-        ``mode``, ``response`` (live).
+        ``mode``, ``response`` (live), and ``rtt_during`` if *dst_ip*
+        is provided.
     """
-    return _run_traffic_tool("arp_flood", {
+    t0 = time.time()
+    result = _run_traffic_tool("arp_flood", {
         "rate": rate, "duration": duration, "arp_type": arp_type,
         "count": count, "burst": burst,
     })
+    if dst_ip:
+        result = _sample_rtt(result, t0)
+    return result
 
 
 # ── Tool: pktgen_range_scan ──────────────────────────────────────────
@@ -382,7 +443,7 @@ def pktgen_range_scan(
         "min": min_val, "max": max_val, "inc": inc,
         "rate": rate, "pktSize": pktSize, "count": count,
         "dst_ip": dst_ip,
-    }, dst_ip=dst_ip or None)
+    }, dst_ip=dst_ip)
 
 
 # ── Tool: pktgen_packet_sequence ─────────────────────────────────────
@@ -429,7 +490,7 @@ def pktgen_packet_sequence(
     return _run_traffic_tool("packet_sequence_generation", {
         "sequences": seq_list, "rate": rate,
         "count": count, "burst": burst, "dst_ip": dst_ip,
-    }, dst_ip=dst_ip or None)
+    }, dst_ip=dst_ip)
 
 
 # ── Tool: pktgen_pcap_replay ─────────────────────────────────────────

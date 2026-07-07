@@ -104,6 +104,16 @@ class TestAllowlistEnforcement:
 
             mock_validate.assert_not_called()
 
+    def test_empty_dst_ip_rejected_for_dst_ip_skills(self):
+        """空 dst_ip 应对 _SKILLS_WITH_DST_IP 中的技能抛出 ValueError。"""
+        from src.pktgen.adapter import _apply_allowlist
+
+        with pytest.raises(ValueError, match="requires dst_ip"):
+            _apply_allowlist("", "udp_flood")
+
+        with pytest.raises(ValueError, match="requires dst_ip"):
+            _apply_allowlist(None, "tcp_flood")
+
 
 class TestHitlGate:
     """HITL 门控测试。"""

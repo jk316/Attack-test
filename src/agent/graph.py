@@ -11,11 +11,21 @@ from langgraph.graph.state import CompiledStateGraph
 from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
+from src.pktgen.adapter import PKTGEN_HOST, PKTGEN_PORT, PKTGEN_DRY_RUN
 from src.tools.traffic_send_tool import (
     MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
 )
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
+
+def _pktgen_available() -> bool:
+    """Check whether Pktgen tools are actually available (vendored code + YAMLs)."""
+    try:
+        from pktgen_agent.tools.execute import execute_skill_dry_run
+        return True
+    except ImportError:
+        return False
 
 
 def _patch_reasoning_content():
@@ -86,10 +96,10 @@ def _build_system_prompt() -> str:
         max_flow_count=MAX_FLOW_COUNT,
         max_iat_jitter_ms=MAX_IAT_JITTER_MS,
         # Pktgen-DPDK context
-        pktgen_available=True,
-        pktgen_dry_run=os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false",
-        pktgen_host=os.environ.get("PKTGEN_HOST", "10.99.80.222"),
-        pktgen_port=os.environ.get("PKTGEN_PORT", "22022"),
+        pktgen_available=_pktgen_available(),
+        pktgen_dry_run=PKTGEN_DRY_RUN,
+        pktgen_host=PKTGEN_HOST,
+        pktgen_port=str(PKTGEN_PORT),
     )
 
 

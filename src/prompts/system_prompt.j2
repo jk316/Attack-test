@@ -124,7 +124,7 @@ Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬�
 |------|----------|------|
 | `pktgen_range_scan` | dst_ip, scan_field, start/min/max/inc, rate | 硬件级参数范围扫描。Pktgen 自动在 [min,max] 区间按 inc 步进遍历 scan_field（dst_ip/dst_port/src_port/pkt_size/vlan_id/MAC 等），远快于软件逐轮调整 |
 | `pktgen_packet_sequence` | dst_ip, sequences (JSON数组), rate, count | 多包序列生成。通过 seqTable 定义最多 16 种不同包模板，Pktgen 按序循环发送。每个模板指定完整的 MAC/IP/port/proto/size/VLAN |
-| `pktgen_pcap_replay` | pcap_file, rate, count | PCAP 文件回放。从 Pktgen 主机上的 PCAP 文件直接回放流量 |
+| `pktgen_pcap_replay` | pcap_file, rate, count | PCAP 文件回放。从 Pktgen 主机上的 PCAP 文件直接回放流量。**⚠️ 不受 allowlist 约束**——PCAP 文件中内嵌的 dst_ip 直接使用，不经过 Attack-Test 的 IP 校验。操作员在 HITL 审批时必须特别关注 pcap_file 的内容 |
 
 #### 监控与控制工具
 
@@ -145,6 +145,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 | 流数量 | `flow_count` | 不适用（单协议） |
 | 数量控制 | 无 | `count` — 发包数量（0 = 永远） |
 | 批量发送 | 无 | `burst` — Tx burst size（默认 128） |
+| 目标 IP | `dst_ip` 必填（allowlist） | `dst_ip` 必填（allowlist）。Pktgen 技能内置默认值 `10.10.10.2`，**不应依赖**——始终显式传入 allowlist 中的目标 IP |
 
 **关键换算**：
 - rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远高于 Scapy 的 200 pps
