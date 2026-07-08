@@ -58,10 +58,24 @@ def _get_default_port() -> int:
         return 22022
 
 
-# Environment overrides take priority over topology.yaml
-PKTGEN_HOST = os.environ.get("PKTGEN_HOST") or _get_default_host()
-PKTGEN_PORT = int(os.environ.get("PKTGEN_PORT", "0")) or _get_default_port()
-PKTGEN_DRY_RUN = os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false"
+# Environment overrides take priority over topology.yaml.
+# These are FUNCTIONS (not constants) so that main() can set env vars
+# AFTER module import — the values are re-evaluated at each call.
+
+
+def get_pktgen_host() -> str:
+    """Return Pktgen host, re-reading env var on each call."""
+    return os.environ.get("PKTGEN_HOST") or _get_default_host()
+
+
+def get_pktgen_port() -> int:
+    """Return Pktgen port, re-reading env var on each call."""
+    return int(os.environ.get("PKTGEN_PORT", "0")) or _get_default_port()
+
+
+def is_dry_run() -> bool:
+    """Return True if Pktgen is in dry-run mode, re-reading env var on each call."""
+    return os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false"
 
 # ── Skills that require allowlist validation (have dst_ip param) ─────
 _SKILLS_WITH_DST_IP = {
@@ -118,14 +132,16 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     clean_params = {k: v for k, v in params.items() if v is not None}
 
     try:
-        if PKTGEN_DRY_RUN:
+        if is_dry_run():
             logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
             return execute_dry(skill_name, clean_params)
         else:
+            host = get_pktgen_host()
+            port = get_pktgen_port()
             logger.info("Live: skill=%s params=%s host=%s:%s",
-                         skill_name, clean_params, PKTGEN_HOST, PKTGEN_PORT)
+                         skill_name, clean_params, host, port)
             return execute_live(skill_name, clean_params,
-                                host=PKTGEN_HOST, port=PKTGEN_PORT)
+                                host=host, port=port)
     except Exception as e:
         # Catch CompileError and any other unexpected errors
         logger.error("Skill execution failed: skill=%s error=%s", skill_name, e)
@@ -149,9 +165,9 @@ def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
     """Prompt for human approval before executing a traffic skill.
 
     Skipped in dry-run mode (no traffic is actually sent).  This function
-    is only reached when ``PKTGEN_DRY_RUN`` is False.
+    is only reached when ``is_dry_run()`` returns False.
     """
-    if PKTGEN_DRY_RUN:
+    if is_dry_run():
         return True
     approval = interrupt({
         "message": f"[HITL] Approve Pktgen '{skill_name}' execution?",

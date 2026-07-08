@@ -11,7 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
-from src.pktgen.adapter import PKTGEN_HOST, PKTGEN_PORT, PKTGEN_DRY_RUN
+from src.pktgen.adapter import get_pktgen_host, get_pktgen_port, is_dry_run
 from src.tools.traffic_send_tool import (
     MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
 )
@@ -97,9 +97,9 @@ def _build_system_prompt() -> str:
         max_iat_jitter_ms=MAX_IAT_JITTER_MS,
         # Pktgen-DPDK context
         pktgen_available=_pktgen_available(),
-        pktgen_dry_run=PKTGEN_DRY_RUN,
-        pktgen_host=PKTGEN_HOST,
-        pktgen_port=str(PKTGEN_PORT),
+        pktgen_dry_run=is_dry_run(),
+        pktgen_host=get_pktgen_host(),
+        pktgen_port=str(get_pktgen_port()),
     )
 
 

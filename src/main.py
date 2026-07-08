@@ -13,7 +13,7 @@ logger = logging.getLogger("agent")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
-from src.pktgen.adapter import PKTGEN_HOST as _DEF_PKTGEN_HOST, PKTGEN_PORT as _DEF_PKTGEN_PORT  # noqa: E402
+from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
@@ -185,8 +185,8 @@ def main() -> None:
     if args.pktgen_port is not None:
         os.environ["PKTGEN_PORT"] = str(args.pktgen_port)
 
-    pktgen_host = args.pktgen_host or _DEF_PKTGEN_HOST
-    pktgen_port = args.pktgen_port or _DEF_PKTGEN_PORT
+    pktgen_host = args.pktgen_host or get_pktgen_host()
+    pktgen_port = args.pktgen_port or get_pktgen_port()
 
     print(f"=== Closed-Loop Experiment ===")
     print(f"Target:     {args.target_ip}")

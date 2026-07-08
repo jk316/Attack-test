@@ -462,31 +462,22 @@ class TestLiveModeConfiguration:
     """Verify live/dry-run mode switching via environment variable."""
 
     def test_default_is_dry_run(self):
-        """PKTGEN_DRY_RUN should default to True when env var is not set."""
-        # Simulate fresh import state
-        import importlib
-        import src.pktgen.adapter as adp
+        """is_dry_run() should default to True when env var is not set."""
+        from src.pktgen.adapter import is_dry_run
 
-        # Restore original after test
-        original = adp.PKTGEN_DRY_RUN
-        try:
-            # With env NOT set, it should be True
-            with patch.dict(os.environ, {}, clear=True):
-                # Force re-evaluation
-                val = os.environ.get("PKTGEN_DRY_RUN", "true").lower() != "false"
-                assert val is True
-        finally:
-            pass  # PKTGEN_DRY_RUN is a module-level constant, don't mutate
+        with patch.dict(os.environ, {}, clear=True):
+            assert is_dry_run() is True
 
     def test_env_false_sets_live_mode(self):
-        """PKTGEN_DRY_RUN=false should enable live mode."""
-        val = "false"
-        assert val.lower() == "false"
-        is_dry = val.lower() != "false"
-        assert is_dry is False
+        """is_dry_run() returns False when PKTGEN_DRY_RUN=false."""
+        from src.pktgen.adapter import is_dry_run
+
+        with patch.dict(os.environ, {"PKTGEN_DRY_RUN": "false"}):
+            assert is_dry_run() is False
 
     def test_env_true_sets_dry_run(self):
-        """PKTGEN_DRY_RUN=true keeps dry-run."""
-        val = "true"
-        is_dry = val.lower() != "false"
-        assert is_dry is True
+        """is_dry_run() returns True when PKTGEN_DRY_RUN=true."""
+        from src.pktgen.adapter import is_dry_run
+
+        with patch.dict(os.environ, {"PKTGEN_DRY_RUN": "true"}):
+            assert is_dry_run() is True

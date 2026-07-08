@@ -122,7 +122,7 @@ class TestHitlGate:
         """dry-run 模式下 HITL 应被跳过（直接返回 True）。"""
         from src.pktgen.adapter import _hitl_gate
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", True):
+        with patch("src.pktgen.adapter.is_dry_run", return_value=True):
             result = _hitl_gate("udp_flood", {"rate": 50})
 
         assert result is True
@@ -131,7 +131,7 @@ class TestHitlGate:
         """live 模式下 HITL 应通过 interrupt() 触发。"""
         from src.pktgen.adapter import _hitl_gate
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", False), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.interrupt", return_value=True) as mock_int:
             result = _hitl_gate("udp_flood", {"rate": 50})
 
@@ -142,7 +142,7 @@ class TestHitlGate:
         """HITL 被拒绝时应返回 False。"""
         from src.pktgen.adapter import _hitl_gate
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", False), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.interrupt", return_value=False):
             result = _hitl_gate("udp_flood", {"rate": 50})
 
@@ -191,7 +191,7 @@ class TestSkillExecution:
         """dry-run 模式应调用 execute_skill_dry_run。"""
         from src.pktgen.adapter import _execute_skill
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", True), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=True), \
              patch("src.pktgen.adapter._import_pktgen") as mock_import:
             mock_dry = MagicMock(return_value={"success": True, "mode": "dry_run"})
             mock_live = MagicMock()
@@ -207,9 +207,9 @@ class TestSkillExecution:
         """live 模式应调用 execute_skill_live。"""
         from src.pktgen.adapter import _execute_skill
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", False), \
-             patch("src.pktgen.adapter.PKTGEN_HOST", "10.0.0.1"), \
-             patch("src.pktgen.adapter.PKTGEN_PORT", 9999), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
+             patch("src.pktgen.adapter.get_pktgen_host", return_value="10.0.0.1"), \
+             patch("src.pktgen.adapter.get_pktgen_port", return_value=9999), \
              patch("src.pktgen.adapter._import_pktgen") as mock_import:
             mock_dry = MagicMock()
             mock_live = MagicMock(return_value={"success": True, "mode": "live"})
@@ -227,7 +227,7 @@ class TestSkillExecution:
         """None 值参数应被剔除，让 Pktgen 使用自己的默认值。"""
         from src.pktgen.adapter import _execute_skill
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", True), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=True), \
              patch("src.pktgen.adapter._import_pktgen") as mock_import:
             mock_dry = MagicMock(return_value={"success": True})
             mock_import.return_value = (mock_dry, MagicMock())
@@ -354,7 +354,7 @@ class TestRunTrafficToolIntegration:
         """live 模式完整流程：allowlist → HITL → execute → RTT。"""
         from src.pktgen.adapter import _run_traffic_tool
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", False), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.validate_target") as mock_val, \
              patch("src.pktgen.adapter.interrupt", return_value=True) as mock_int, \
              patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
@@ -384,7 +384,7 @@ class TestRunTrafficToolIntegration:
         """dry-run 模式跳过 HITL，但仍执行 and 附加 RTT。"""
         from src.pktgen.adapter import _run_traffic_tool
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", True), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=True), \
              patch("src.pktgen.adapter.validate_target") as mock_val, \
              patch("src.pktgen.adapter.interrupt") as mock_int, \
              patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
@@ -409,7 +409,7 @@ class TestRunTrafficToolIntegration:
         """非流量技能（如 stats_monitoring）不触发 allowlist + HITL。"""
         from src.pktgen.adapter import _run_traffic_tool
 
-        with patch("src.pktgen.adapter.PKTGEN_DRY_RUN", False), \
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.validate_target") as mock_val, \
              patch("src.pktgen.adapter.interrupt") as mock_int, \
              patch("src.pktgen.adapter._import_pktgen") as mock_imp:
