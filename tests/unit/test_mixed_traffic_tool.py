@@ -52,13 +52,23 @@ class TestMixedTrafficTool:
 
     def test_too_many_streams_rejected(self):
         """More than MAX_STREAMS should be rejected."""
-        from src.tools.mixed_traffic_tool import validate_traffic_spec
+        from src.tools.mixed_traffic_tool import validate_traffic_spec, MAX_STREAMS
 
+        # Use MAX_STREAMS+1 streams, each with 1% so percentages don't fail first
+        pct_each = 100 // (MAX_STREAMS + 1)
+        remainder = 100 - pct_each * (MAX_STREAMS)
         streams = [
             {"stream_id": f"s{i}", "protocol_stack": ["IP", "UDP"],
-             "fields": {}, "percentage": 10}
-            for i in range(11)
+             "fields": {}, "percentage": pct_each}
+            for i in range(MAX_STREAMS)
         ]
+        # Add the remainder to the last stream so total = 100
+        streams.append({
+            "stream_id": f"s{MAX_STREAMS}",
+            "protocol_stack": ["IP", "UDP"],
+            "fields": {},
+            "percentage": pct_each + remainder,
+        })
         with pytest.raises(ValueError, match="stream count"):
             validate_traffic_spec({"streams": streams})
 
