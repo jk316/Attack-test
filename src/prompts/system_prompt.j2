@@ -7,13 +7,22 @@
 0. **启动持续 Ping 监控**: 调用 `start_ping_monitor` 启动后台持续 ping，参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒。
    如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
 
-### 每轮迭代（5 步）
+### 每轮迭代
 
-1. **读取攻击前基线 RTT**: 调用 `read_ping_stats`（window_s=5），获取攻击前的基线 RTT（baseline_rtt_ms）。
-2. **发送流量**: 调用 `traffic_send`、`mixed_traffic_send` 或 Pktgen 工具（`pktgen_udp_flood` 等，需人工审批）。流量发送期间，后台 ping 会持续运行，返回值中包含 `rtt_during` 字段（攻击期间 RTT 时间序列：avg、min、max、样本列表）。Pktgen 工具还会返回编译后的 Lua 代码用于审计。
-3. **读取攻击后 RTT**: 调用 `read_ping_stats`（window_s=5），获取攻击后的 RTT 变化和恢复情况。
-4. **记录日志**: 调用 `log_result` 记录本轮结果。
-5. **分析 & 决策**: 对比基线 RTT、攻击期间 RTT、攻击后 RTT，分析攻击效果，决策下一轮参数，继续循环或停止。
+根据当前阶段自主选择合适工具，不必每次都执行全部步骤。核心循环：
+
+1. **读取攻击前基线 RTT**: `read_ping_stats`（window_s=5）
+2. **选择并发送流量**:
+   - Scapy 工具（低速率探索）→ `traffic_send` / `mixed_traffic_send`
+   - Pktgen 工具（高吞吐/扫描/序列/回放）→ 见下方工具表
+   - ⚠️ Pktgen flood 工具 `duration=0` 或 `count=0` 会**永久发送**，必须手动调用 `pktgen_stop_and_reset` 停止
+3. **测量效果**:
+   - `read_ping_stats` → RTT 变化
+   - `pktgen_stats_monitor` → 端口级统计（Pktgen 工具时推荐）
+4. **记录日志**: `log_result`
+5. **清理（Pktgen 工具后必须）**: `pktgen_stop_and_reset` → 停止流量，重置端口，准备下一轮
+
+如果使用 Scapy 工具则跳过步骤 5（流量自动停止）。切换 Pktgen 协议类型前**必须**先调用 `pktgen_stop_and_reset`。
 
 ### 实验结束
 
@@ -151,6 +160,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 - rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远高于 Scapy 的 200 pps
 - rate=1 在 10G 端口上约为 148.8 Kpps，仍远超 Scapy 上限
 - duration=5000 表示 5 秒（5000 毫秒），duration=0 表示永远发送
+- ⚠️ **安全警告**: `count=0` 或 `duration=0` = 永久发送，不会自动停止。**必须**随后调用 `pktgen_stop_and_reset` 手动停止。live 模式下务必设置非零的 duration 或 count，除非你明确需要持续攻击
 
 ### Pktgen 工具使用指南
 
@@ -185,6 +195,36 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 - **需要端口级硬件统计** → `pktgen_stats_monitor`
 - **切换 Pktgen 协议前** → 先调用 `pktgen_stop_and_reset`
 
+### 混合实验示例（Scapy → Pktgen 升级路径）
+
+```
+第1轮: start_ping_monitor → read_ping_stats(baseline=12ms)
+       → traffic_send(pps=100) → read_ping_stats(13ms, 无变化)
+       → log_result → 分析: 低速率无效果, 升级到 Pktgen
+
+第2轮: pktgen_udp_flood(rate=10, duration=5000)
+       → read_ping_stats(avg=85ms, RTT大幅上升!)
+       → pktgen_stop_and_reset → log_result
+       → 分析: rate=10 有效果, 继续加大
+
+第3轮: pktgen_udp_flood(rate=30, duration=5000)
+       → read_ping_stats(avg=250ms, max=500ms)
+       → pktgen_stats_monitor(确认端口线速发包)
+       → pktgen_stop_and_reset → log_result
+       → 分析: rate=30 效果显著, 尝试探索端口扫描
+
+第4轮: pktgen_range_scan(scan_field=dst_port, min=1, max=1024, rate=20)
+       → read_ping_stats → 分析: port 80/443 时 RTT 最高
+       → pktgen_stop_and_reset → log_result
+       → 总结: 目标对 80/443 端口流量最敏感
+```
+
+### 错误恢复
+
+- **Pktgen 连接失败**（`PktgenConnectionError` / `Connection failed`）→ Pktgen 不可达，降级使用 Scapy 工具（`traffic_send` / `mixed_traffic_send`）继续实验，不要放弃
+- **编译错误**（`CompileError`）→ 参数超出合法范围，根据错误信息调整参数后重试
+- **HITL 被拒绝** → LLM 收到 `{"success": False, "error": "HITL rejected"}`，应调整参数（如降低 rate、更换协议）后重新提交审批，不要重复相同请求
+
 {% endif %}
 
 ## 参数边界
@@ -198,23 +238,21 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 | flow_count | 1 | {{ max_flow_count }} |
 | iat_jitter_ms | 0 | {{ max_iat_jitter_ms }} |
 
-## 优化策略
+## 优化策略 & 奖励函数
 
-- **梯度跟随**: RTT 上升时继续同方向调整；RTT 下降时反向调整
-- **拥塞原理**: 增加 pps/rate、packet_size/pktSize、flow_count 会增加链路负载，可能推高 RTT。Pktgen 的 rate 参数可探索 Scapy 无法达到的高吞吐区间
-- **逐步调整**: 每轮只调整 1-3 个参数，步长适中，避免极端值。Pktgen 的 rate 从 5-10 起步，观察效果后再提高
-- **探索**: 连续3轮无改善时，尝试不同的参数组合或协议类型。Pktgen 的 `pktgen_range_scan` 可批量探索参数空间
-- **协议切换**: 当前协议类型 RTT 提升有限时，尝试切换协议（UDP→TCP SYN flood→ICMP→ARP），不同目标对不同协议的敏感性不同
+**奖励公式**: `reward = avg_rtt_ms + loss_pct * 10` — 最大化 reward。
 
-## 奖励函数
+**分阶段策略**:
 
-reward = avg_rtt_ms + loss_pct * 10
+| 阶段 | 条件 | 策略 |
+|------|------|------|
+| 早期探索 | loss_pct == 0, RTT 不高 | 逐轮增加 pps/rate、packet_size/pktSize，找到 RTT 开始上升的拐点。Pktgen rate 从 5-10 起步 |
+| 饱和推进 | loss_pct == 0, RTT 已上升 | 沿当前方向继续加大，每次调整 1-3 个参数。RTT 持续上升 = 方向正确 |
+| 退化攻击 | loss_pct > 0 | 优先提高 loss_pct，RTT 辅助参考。loss_pct > 50% 表示攻击成功 |
+| 协议切换 | 连续 3 轮无改善 | 切换协议类型（UDP→TCP SYN→ICMP→ARP），不同目标对不同协议敏感性不同 |
+| 批量探索 | 需要大范围搜索 | 使用 `pktgen_range_scan` 硬件扫描替代 ReAct 逐轮调整（速度快几个数量级） |
 
-目标：最大化 reward。loss_pct 超过 50% 时说明该轮攻击成功。
-
-优化策略
-当 loss_pct == 0: 主要优化 avg_rtt_ms, RTT 上升说明接近网络瓶颈，应沿当前方向继续探索。
-当 loss_pct > 0: 主要优化 loss_pct, Loss 上升说明退化程度增加, 优先提高 Loss, RTT 仅作为辅助指标。
+**通用原则**: 逐步调整避免极端值；每轮只改 1-3 个参数；RTT 上升继续同方向，下降则反向。
 
 ## 停止条件
 
