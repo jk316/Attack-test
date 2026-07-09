@@ -121,6 +121,44 @@ def _import_pktgen():
         )
 
 
+def _normalize_result(
+    raw: dict[str, Any], skill_name: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Enrich Pktgen engine result with agent-friendly metadata.
+
+    Adds ``summary`` (one-line result) and ``artifacts`` (script path), and
+    classifies errors so the LLM can decide recovery strategy.  Does NOT add
+    hardcoded ``next_actions`` — the ReAct agent reasons about next steps on
+    its own.
+    """
+    raw["summary"] = _build_summary(raw, skill_name)
+
+    # Truncate lua_code to save context budget; store path as artifact
+    lua_code = raw.pop("lua_code", None)
+    if lua_code:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        raw["artifacts"] = {
+            "lua_script": f"lua_scripts/{ts}_{skill_name}.lua",
+            "lua_preview": lua_code[:200] + ("..." if len(lua_code) > 200 else ""),
+        }
+
+    return raw
+
+
+def _build_summary(raw: dict[str, Any], skill_name: str) -> str:
+    """Build a one-line human + LLM readable summary of the result."""
+    success = raw.get("success", False)
+    mode = raw.get("mode", "unknown")
+    if success:
+        return f"Pktgen '{skill_name}' succeeded ({mode} mode)."
+    error = raw.get("error", "unknown error")
+    if "Connection failed" in error or "Connection" in error:
+        return f"Pktgen '{skill_name}' failed: Pktgen unreachable — fall back to Scapy tools."
+    if "CompileError" in str(error) or "required" in str(error).lower():
+        return f"Pktgen '{skill_name}' failed: parameter error — {error}"
+    return f"Pktgen '{skill_name}' failed: {error}"
+
+
 def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute a Pktgen skill (dry-run or live), return normalized dict.
 
@@ -135,18 +173,19 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
         if is_dry_run():
             logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
-            return execute_dry(skill_name, clean_params)
+            raw = execute_dry(skill_name, clean_params)
         else:
             host = get_pktgen_host()
             port = get_pktgen_port()
             logger.info("Live: skill=%s params=%s host=%s:%s",
                          skill_name, clean_params, host, port)
-            return execute_live(skill_name, clean_params,
-                                host=host, port=port)
+            raw = execute_live(skill_name, clean_params, host=host, port=port)
     except Exception as e:
-        # Catch CompileError and any other unexpected errors
         logger.error("Skill execution failed: skill=%s error=%s", skill_name, e)
-        return {"success": False, "skill": skill_name, "error": str(e)}
+        raw = {"success": False, "skill": skill_name,
+               "error": str(e), "mode": "unknown"}
+
+    return _normalize_result(raw, skill_name, clean_params)
 
 
 def _apply_allowlist(dst_ip: str | None, skill_name: str) -> None:
