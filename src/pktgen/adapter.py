@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -33,8 +34,8 @@ logger = logging.getLogger(__name__)
 # ── Ensure pktgen_agent is importable ────────────────────────────────
 # The vendored pktgen_agent/ lives at the project root, not under src/.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_PROJECT_ROOT) not in __import__("sys").path:
-    __import__("sys").path.insert(0, str(_PROJECT_ROOT))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 # ── Configuration ────────────────────────────────────────────────────
 
@@ -317,11 +318,6 @@ def pktgen_tcp_flood(
         "pktSize": pktSize, "src_ip": src_ip,
         "count": count, "burst": burst,
     }, dst_ip=dst_ip)
-
-
-
-
-
 
 
 # ── Tool: pktgen_icmp_flood ──────────────────────────────────────────
