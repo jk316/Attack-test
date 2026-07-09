@@ -96,12 +96,12 @@ skill:
     - $topology.tx_port
     - '"src"'
     - $params.src_ip
-  - comment: Set destination MAC address
+  - comment: Set destination MAC address (from topology.yaml)
     api: pktgen.set_mac
     args:
     - $topology.tx_port
     - '"dst"'
-    - $params.dst_mac
+    - $topology.dst_mac
   - comment: Set source MAC address
     api: pktgen.set_mac
     args:

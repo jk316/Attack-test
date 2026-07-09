@@ -23,6 +23,10 @@ target_port:
   portlist: "all"
   description: "Port(s) for control operations (stop/reset)"
 
+dst_mac:
+  portlist: "f0:c4:78:4c:a5:55"
+  description: "Destination MAC address for traffic generation"
+
 # Add more ports as needed, e.g.:
 #  secondary_tx:
 #    portlist: "2"
