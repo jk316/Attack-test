@@ -85,7 +85,7 @@ def _build_model() -> ChatOpenAI:
     )
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5) -> str:
     """Render the system prompt from Jinja2 template."""
     env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)))
     template = env.get_template("system_prompt.j2")
@@ -95,6 +95,8 @@ def _build_system_prompt() -> str:
         max_packet_size=MAX_PACKET_SIZE,
         max_flow_count=MAX_FLOW_COUNT,
         max_iat_jitter_ms=MAX_IAT_JITTER_MS,
+        max_iters=max_iters,
+        no_improve_limit=no_improve_limit,
         # Pktgen-DPDK context
         pktgen_available=_pktgen_available(),
         pktgen_dry_run=is_dry_run(),
@@ -103,8 +105,12 @@ def _build_system_prompt() -> str:
     )
 
 
-def build_graph() -> CompiledStateGraph:
+def build_graph(max_iters: int = 20, no_improve_limit: int = 5) -> CompiledStateGraph:
     """Build the closed-loop experiment agent using create_agent.
+
+    Args:
+        max_iters: Maximum experiment iterations (injected into system prompt).
+        no_improve_limit: Stop after N rounds without improvement.
 
     Returns a CompiledStateGraph that follows the ReAct pattern:
     LLM reasons → calls tools → observes results → repeats until stop.
@@ -113,7 +119,9 @@ def build_graph() -> CompiledStateGraph:
     Caller must handle resume via Command(resume=True/False).
     """
     model = _build_model()
-    system_prompt = _build_system_prompt()
+    system_prompt = _build_system_prompt(
+        max_iters=max_iters, no_improve_limit=no_improve_limit,
+    )
 
     return create_agent(
         model=model,

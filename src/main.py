@@ -213,7 +213,9 @@ def main() -> None:
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
 
     verbose = VerboseCallback()
-    graph = build_graph()
+    graph = build_graph(
+        max_iters=args.max_iters, no_improve_limit=args.no_improve_limit,
+    )
     thread_id = str(uuid4())[:8]
     config = {"configurable": {"thread_id": thread_id}, "callbacks": [verbose]}
 
