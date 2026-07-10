@@ -133,7 +133,26 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Auto-approve all HITL traffic send requests (skip interactive prompts)",
     )
+    # ── Attack parameter defaults ────────────────────────────────────
+    attack_cfg = cfg.get("attack", {})
+    parser.add_argument(
+        "--duration", type=int, default=attack_cfg.get("duration_s", 5),
+        help="Attack duration in seconds (default 5)",
+    )
+    parser.add_argument(
+        "--pps", type=int, default=attack_cfg.get("pps", 100),
+        help="Packets per second for Scapy tools (default 100)",
+    )
+    parser.add_argument(
+        "--packet-size", type=int, default=attack_cfg.get("packet_size", 64),
+        help="Packet payload size in bytes (default 64)",
+    )
+    parser.add_argument(
+        "--flow-count", type=int, default=attack_cfg.get("flow_count", 1),
+        help="Number of concurrent flows (default 1)",
+    )
     # ── Pktgen-DPDK options ──────────────────────────────────────────
+    pktgen_cfg = cfg.get("pktgen", {})
     parser.add_argument(
         "--pktgen-live",
         action="store_true",
@@ -144,13 +163,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pktgen-host",
         default=None,
-        help="Pktgen-DPDK hostname or IP (default from topology.yaml or 10.99.80.222)",
+        help="Pktgen-DPDK hostname or IP (default from topology.yaml)",
     )
     parser.add_argument(
         "--pktgen-port",
         type=int,
         default=None,
-        help="Pktgen-DPDK TCP control port (default from topology.yaml or 22022)",
+        help="Pktgen-DPDK TCP control port (default from topology.yaml)",
+    )
+    parser.add_argument(
+        "--pktgen-rate", type=float, default=pktgen_cfg.get("rate", 50),
+        help="Pktgen rate as percentage 0-100 (default 50)",
+    )
+    parser.add_argument(
+        "--pktgen-duration", type=int, default=pktgen_cfg.get("duration_ms", 5000),
+        help="Pktgen duration in milliseconds (default 5000)",
     )
     return parser.parse_args()
 
@@ -177,7 +204,15 @@ def _build_user_message(args: argparse.Namespace) -> str:
 def main() -> None:
     args = parse_args()
 
-    # ── Pktgen-DPDK configuration (env vars read by adapter + system prompt) ──
+    # ── Inject defaults as env vars (tools read these at call time) ──
+    os.environ["ATK_DURATION_S"] = str(args.duration)
+    os.environ["ATK_PPS"] = str(args.pps)
+    os.environ["ATK_PACKET_SIZE"] = str(args.packet_size)
+    os.environ["ATK_FLOW_COUNT"] = str(args.flow_count)
+    os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
+    os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
+
+    # ── Pktgen-DPDK configuration ──
     if args.pktgen_live:
         os.environ["PKTGEN_DRY_RUN"] = "false"
     if args.pktgen_host is not None:

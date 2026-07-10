@@ -232,11 +232,17 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 | 参数 | 最小值 | 最大值 |
 |------|--------|--------|
 | dst_port | 1 | 65535 |
-| duration_s | 1 | {{ max_duration_s }} |
-| pps | 1 | {{ max_pps }} |
-| packet_size | 1 | {{ max_packet_size }} |
-| flow_count | 1 | {{ max_flow_count }} |
+| duration_s | 1 | {{ max_duration_s }} (默认 {{ atk_duration_s }}) |
+| pps | 1 | {{ max_pps }} (默认 {{ atk_pps }}) |
+| packet_size | 1 | {{ max_packet_size }} (默认 {{ atk_packet_size }}) |
+| flow_count | 1 | {{ max_flow_count }} (默认 {{ atk_flow_count }}) |
 | iat_jitter_ms | 0 | {{ max_iat_jitter_ms }} |
+
+**默认攻击参数**（可通过 CLI 覆盖）:
+- duration_s={{ atk_duration_s }}, pps={{ atk_pps }}, packet_size={{ atk_packet_size }}, flow_count={{ atk_flow_count }}
+{% if pktgen_available %}
+- Pktgen: rate={{ pktgen_rate }}%, duration={{ pktgen_duration_ms }}ms
+{% endif %}
 
 ## 优化策略 & 奖励函数
 

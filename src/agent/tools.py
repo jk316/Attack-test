@@ -2,7 +2,11 @@
 
 Each tool is decorated with @tool so the LLM can call it via ReAct tool-calling.
 The traffic_send tool includes a HITL gate via langgraph interrupt().
+
+Default values are read from environment variables (set by main.py from
+experiment.json or CLI), with hardcoded fallbacks for standalone use.
 """
+import os
 import time
 from typing import Any
 
@@ -37,11 +41,11 @@ def ping_rtt(ip: str, count: int = 4, timeout: int = 10) -> dict[str, Any]:
 def traffic_send(
     dst_ip: str,
     dst_port: int,
-    duration_s: int = 5,
-    pps: int = 100,
-    packet_size: int = 64,
-    flow_count: int = 1,
-    iat_jitter_ms: int = 0,
+    duration_s: int | None = None,
+    pps: int | None = None,
+    packet_size: int | None = None,
+    flow_count: int | None = None,
+    iat_jitter_ms: int | None = None,
 ) -> dict[str, Any]:
     """Send controlled traffic to a target. REQUIRES HUMAN APPROVAL.
 
@@ -60,6 +64,13 @@ def traffic_send(
     Returns:
         Dict with success, params, packets_sent, elapsed_s, effective_pps.
     """
+    # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
+    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "5"))
+    pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
+    packet_size = packet_size if packet_size is not None else int(os.environ.get("ATK_PACKET_SIZE", "64"))
+    flow_count = flow_count if flow_count is not None else int(os.environ.get("ATK_FLOW_COUNT", "1"))
+    iat_jitter_ms = iat_jitter_ms if iat_jitter_ms is not None else int(os.environ.get("ATK_IAT_JITTER_MS", "0"))
+
     params_display = {
         "dst_ip": dst_ip,
         "dst_port": dst_port,
@@ -150,8 +161,8 @@ def log_result(log_path: str, iteration: int, params: dict, rtt: float, loss: fl
 def mixed_traffic_send(
     dst_ip: str,
     traffic_spec_json: str,
-    duration_s: int = 5,
-    pps: int = 100,
+    duration_s: int | None = None,
+    pps: int | None = None,
 ) -> dict[str, Any]:
     """Send mixed-protocol traffic to a target using a traffic specification.
     REQUIRES HUMAN APPROVAL.
@@ -174,6 +185,10 @@ def mixed_traffic_send(
         Dict with success, params, packets_sent (total + per_stream),
         elapsed_s, effective_pps.
     """
+    # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
+    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "5"))
+    pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
+
     params_display = {
         "dst_ip": dst_ip,
         "duration_s": duration_s,
