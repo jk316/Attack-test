@@ -162,8 +162,9 @@ def _build_summary(raw: dict[str, Any], skill_name: str) -> str:
 def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Execute a Pktgen skill (dry-run or live), return normalized dict.
 
-    Both ``execute_skill_dry_run`` and ``execute_skill_live`` return
-    ``dict[str, Any]`` directly (never a JSON string), so no parsing needed.
+    In live mode, sleeps for the skill's duration after sending Lua so that
+    ``rtt_during`` captures the full attack window (same synchronous behavior
+    as Scapy tools).
     """
     execute_dry, execute_live = _import_pktgen()
 
@@ -180,12 +181,23 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
             logger.info("Live: skill=%s params=%s host=%s:%s",
                          skill_name, clean_params, host, port)
             raw = execute_live(skill_name, clean_params, host=host, port=port)
+            # Wait for traffic to complete so RTT sampling captures full attack
+            _wait_for_attack(clean_params)
     except Exception as e:
         logger.error("Skill execution failed: skill=%s error=%s", skill_name, e)
         raw = {"success": False, "skill": skill_name,
                "error": str(e), "mode": "unknown"}
 
     return _normalize_result(raw, skill_name, clean_params)
+
+
+def _wait_for_attack(params: dict[str, Any]) -> None:
+    """Sleep while Pktgen traffic is in flight so RTT sampling is meaningful."""
+    duration_ms = params.get("duration", 0)
+    if isinstance(duration_ms, (int, float)) and duration_ms > 0:
+        sleep_s = min(duration_ms / 1000.0, 60.0)  # cap at 60s for safety
+        logger.info("Waiting %.1fs for Pktgen traffic to complete...", sleep_s)
+        time.sleep(sleep_s)
 
 
 def _apply_allowlist(dst_ip: str | None, skill_name: str) -> None:
