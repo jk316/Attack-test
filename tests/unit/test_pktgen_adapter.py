@@ -240,6 +240,92 @@ class TestSkillExecution:
             assert "rate" in call_params
 
 
+class TestWaitForAttack:
+    """_wait_for_attack 同步等待测试。"""
+
+    def test_sleeps_for_duration_in_live_mode(self):
+        """live 模式下应 sleep duration_ms / 1000 秒。"""
+        from src.pktgen.adapter import _wait_for_attack
+        import time
+
+        with patch("time.sleep") as mock_sleep:
+            _wait_for_attack({"duration": 3000})
+            mock_sleep.assert_called_once_with(3.0)
+
+    def test_no_sleep_when_duration_zero(self):
+        """duration=0 时不 sleep。"""
+        from src.pktgen.adapter import _wait_for_attack
+        import time
+
+        with patch("time.sleep") as mock_sleep:
+            _wait_for_attack({"duration": 0})
+            mock_sleep.assert_not_called()
+
+    def test_no_sleep_when_duration_missing(self):
+        """没有 duration 参数时不 sleep。"""
+        from src.pktgen.adapter import _wait_for_attack
+        import time
+
+        with patch("time.sleep") as mock_sleep:
+            _wait_for_attack({})
+            mock_sleep.assert_not_called()
+
+    def test_sleep_capped_at_60s(self):
+        """duration 超过 60000ms 时，sleep 最多 60 秒。"""
+        from src.pktgen.adapter import _wait_for_attack
+        import time
+
+        with patch("time.sleep") as mock_sleep:
+            _wait_for_attack({"duration": 120000})
+            mock_sleep.assert_called_once_with(60.0)
+
+
+class TestEnvVarDefaults:
+    """工具从环境变量读取默认值测试。"""
+
+    def test_traffic_send_reads_env_duration(self):
+        """traffic_send 应从 ATK_DURATION_S 读取默认 duration。"""
+        import os
+        os.environ["ATK_DURATION_S"] = "8"
+        os.environ["ATK_PPS"] = "200"
+        try:
+            from src.agent.tools import traffic_send
+            # 不传 duration_s，应使用 env var
+            with patch("src.agent.tools.traffic_send_tool") as mock_send, \
+                 patch("src.agent.tools.interrupt", return_value=True):
+                mock_send.return_value = {"success": True}
+                traffic_send.invoke({
+                    "dst_ip": "10.99.80.160", "dst_port": 8080,
+                })
+                call_args = mock_send.call_args
+                assert call_args[1]["duration_s"] == 8
+                assert call_args[1]["pps"] == 200
+        finally:
+            os.environ.pop("ATK_DURATION_S", None)
+            os.environ.pop("ATK_PPS", None)
+
+    def test_mixed_traffic_send_reads_env_duration(self):
+        """mixed_traffic_send 应从 ATK_DURATION_S 读取默认 duration。"""
+        import os
+        os.environ["ATK_DURATION_S"] = "7"
+        os.environ["ATK_PPS"] = "150"
+        try:
+            from src.agent.tools import mixed_traffic_send
+            with patch("src.agent.tools.mixed_traffic_send_tool") as mock_send, \
+                 patch("src.agent.tools.interrupt", return_value=True):
+                mock_send.return_value = {"success": True}
+                mixed_traffic_send.invoke({
+                    "dst_ip": "10.99.80.160",
+                    "traffic_spec_json": '[{"stream_id":"s1","protocol_stack":["IP","UDP"],"fields":{},"percentage":100}]',
+                })
+                call_args = mock_send.call_args
+                assert call_args[1]["duration_s"] == 7
+                assert call_args[1]["pps"] == 150
+        finally:
+            os.environ.pop("ATK_DURATION_S", None)
+            os.environ.pop("ATK_PPS", None)
+
+
 class TestRttSampling:
     """RTT 采样附加测试。"""
 

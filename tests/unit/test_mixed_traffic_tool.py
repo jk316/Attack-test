@@ -117,6 +117,62 @@ class TestMixedTrafficTool:
         with pytest.raises(ValueError, match="percentage"):
             validate_traffic_spec(spec)
 
+    # ── Auto-fill ──────────────────────────────────────────────
+
+    def test_missing_percentage_auto_filled(self):
+        """Streams with missing percentage get auto-filled evenly."""
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        spec = {
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {}, "percentage": 30},
+                {"stream_id": "s2", "protocol_stack": ["IP", "TCP"],
+                 "fields": {}, "percentage": 30},
+                {"stream_id": "s3", "protocol_stack": ["IP", "ICMP"],
+                 "fields": {}},
+            ]
+        }
+        result = validate_traffic_spec(spec)
+        # s3 should get 100 - 30 - 30 = 40
+        assert result[2]["percentage"] == 40
+        total = sum(s["percentage"] for s in result)
+        assert total == 100
+
+    def test_missing_all_percentages_auto_filled(self):
+        """All streams missing percentage get evenly distributed."""
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        spec = {
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {}},
+                {"stream_id": "s2", "protocol_stack": ["IP", "TCP"],
+                 "fields": {}},
+            ]
+        }
+        result = validate_traffic_spec(spec)
+        assert result[0]["percentage"] == 50
+        assert result[1]["percentage"] == 50
+
+    def test_specified_over_100_with_missing_rejected(self):
+        """Specified pct > 100 leaves no room for auto-fill → error."""
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        spec = {
+            "streams": [
+                {"stream_id": "s1", "protocol_stack": ["IP", "UDP"],
+                 "fields": {}, "percentage": 60},
+                {"stream_id": "s2", "protocol_stack": ["IP", "TCP"],
+                 "fields": {}, "percentage": 60},
+                {"stream_id": "s3", "protocol_stack": ["IP", "ICMP"],
+                 "fields": {}},
+            ]
+        }
+        # 60+60=120 specified, no room for s3 → error
+        with pytest.raises(ValueError, match="no room"):
+            validate_traffic_spec(spec)
+
     # ── Protocol Whitelist ────────────────────────────────────
 
     def test_unknown_protocol_rejected(self):
