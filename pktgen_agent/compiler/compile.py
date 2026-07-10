@@ -174,6 +174,20 @@ class SkillCompiler:
         if "$sequence_count" in value:
             seq_param = user_params.get("sequences", [])
             value = value.replace("$sequence_count", str(len(seq_param)))
+        if "$range_api" in value:
+            scan_field = user_params.get("scan_field", "dst_port")
+            mapping = {
+                "dst_ip": "pktgen.range.dst_ip",
+                "src_ip": "pktgen.range.src_ip",
+                "dst_port": "pktgen.range.dst_port",
+                "src_port": "pktgen.range.src_port",
+                "dst_mac": "pktgen.range.dst_mac",
+                "src_mac": "pktgen.range.src_mac",
+                "vlan_id": "pktgen.range.vlan_id",
+                "pkt_size": "pktgen.range.pkt_size",
+            }
+            api = mapping.get(scan_field, f"pktgen.range.{scan_field}")
+            value = value.replace("$range_api", api)
         return value
 
     def _to_lua_literal(self, value: Any) -> str:
@@ -225,6 +239,7 @@ class SkillCompiler:
         table_name = step.get("table_name", "tbl")
 
         # Resolve API (e.g., $range_api → pktgen.range.dst_ip)
+        api = self.resolve_special(api, skill, user_params)
         api = self.resolve_params(api, user_params, skill.get("params", []))
         api = self.resolve_topology(api)
 
