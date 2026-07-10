@@ -185,9 +185,14 @@ def validate_traffic_spec(spec: dict) -> list[dict]:
             _check_dangerous_values(field_dict, sid, proto_name)
 
         pct = stream.get("percentage")
+        if pct is None:
+            raise ValueError(
+                f"stream '{sid}': missing 'percentage' field — add an integer "
+                f"between 1 and 100 (all streams must sum to 100)"
+            )
         if not isinstance(pct, int) or not (1 <= pct <= 100):
             raise ValueError(
-                f"stream '{sid}': percentage must be int 1-100, got {pct}"
+                f"stream '{sid}': percentage must be int 1-100, got {type(pct).__name__} {pct}"
             )
         total_pct += pct
 
