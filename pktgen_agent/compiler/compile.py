@@ -230,6 +230,9 @@ class SkillCompiler:
             condition = self.resolve_params(
                 condition, user_params, skill.get("params", [])
             )
+            # Skip steps where the condition is known-false at compile time
+            if condition == "false":
+                return lines
             lines.append(f"if ( {condition} ) then")
 
         api = step.get("api", "")
