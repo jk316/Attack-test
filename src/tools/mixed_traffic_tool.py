@@ -151,7 +151,7 @@ def validate_traffic_spec(spec: dict) -> list[dict]:
         )
 
     stream_ids: set[str] = set()
-    total_pct = 0
+    specified, missing = 0, 0
 
     for stream in streams:
         if not isinstance(stream, dict):
@@ -186,20 +186,29 @@ def validate_traffic_spec(spec: dict) -> list[dict]:
 
         pct = stream.get("percentage")
         if pct is None:
+            missing += 1
+        elif not isinstance(pct, int) or not (1 <= pct <= 100):
             raise ValueError(
-                f"stream '{sid}': missing 'percentage' field — add an integer "
-                f"between 1 and 100 (all streams must sum to 100)"
+                f"stream '{sid}': percentage must be int 1-100, "
+                f"got {type(pct).__name__} {pct}"
             )
-        if not isinstance(pct, int) or not (1 <= pct <= 100):
-            raise ValueError(
-                f"stream '{sid}': percentage must be int 1-100, got {type(pct).__name__} {pct}"
-            )
-        total_pct += pct
+        else:
+            specified += pct
 
+    # Auto-fill missing percentages evenly
+    if missing:
+        if specified >= 100:
+            raise ValueError(f"specified percentages sum to {specified}, no room for auto-fill")
+        each, extra = divmod(100 - specified, missing)
+        i = 0
+        for s in streams:
+            if s.get("percentage") is None:
+                s["percentage"] = each + (1 if i < extra else 0)
+                i += 1
+
+    total_pct = sum(s.get("percentage", 0) for s in streams)
     if total_pct != 100:
-        raise ValueError(
-            f"stream percentages sum to {total_pct}, must be 100"
-        )
+        raise ValueError(f"stream percentages sum to {total_pct}, must be 100")
 
     return streams
 
