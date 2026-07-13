@@ -349,6 +349,12 @@ class TestRttSampling:
         assert result["rtt_during"]["min_rtt_ms"] == 10.0
         assert result["rtt_during"]["max_rtt_ms"] == 20.0
         assert len(result["rtt_during"]["samples"]) == 2
+        # 新增：攻击窗口与观测窗口时间点应被暴露
+        assert "attack_window" in result
+        assert "start" in result["attack_window"] and "end" in result["attack_window"]
+        assert result["attack_window"]["mode"] in {"dry_run", "live"}
+        assert "observation_window" in result
+        assert result["observation_window"]["sample_count"] == 2
 
     def test_rtt_null_when_monitor_not_running(self):
         """PingMonitor 未运行时，rtt_during 应为 None。"""
@@ -465,6 +471,9 @@ class TestRunTrafficToolIntegration:
             assert result["success"] is True
             assert "rtt_during" in result
             assert result["rtt_during"]["avg_rtt_ms"] == 30.0
+            # 新增：live 模式下 attack_window.mode 应为 live
+            assert result["attack_window"]["mode"] == "live"
+            assert "observation_window" in result
 
     def test_dry_run_skips_hitl_and_still_executes(self):
         """dry-run 模式跳过 HITL，但仍执行 and 附加 RTT。"""

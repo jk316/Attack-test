@@ -28,6 +28,7 @@ from langgraph.types import interrupt
 
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.ping_rtt_tool import validate_target
+from src.tools.rtt_window import build_rtt_observation
 
 logger = logging.getLogger(__name__)
 
@@ -230,25 +231,18 @@ def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
 
 
 def _sample_rtt(result: dict[str, Any], t0: float) -> dict[str, Any]:
-    """Attach RTT samples from the PingMonitor (same pattern as traffic_send)."""
+    """Attach RTT observation from the PingMonitor (same pattern as traffic_send).
+
+    Adds ``rtt_during`` plus ``attack_window`` / ``observation_window`` so the
+    LLM can tell whether the RTT observation actually covered the attack window.
+    The mode reflects whether traffic was really sent (live) or not (dry_run).
+    """
+    mode = "dry_run" if is_dry_run() else "live"
     try:
         monitor = get_ping_monitor()
-        if monitor.is_running():
-            rtt_samples = monitor.get_samples_since(t0)
-            if rtt_samples:
-                rtt_values = [s["rtt_ms"] for s in rtt_samples]
-                result["rtt_during"] = {
-                    "samples": rtt_samples,
-                    "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
-                    "min_rtt_ms": round(min(rtt_values), 3),
-                    "max_rtt_ms": round(max(rtt_values), 3),
-                }
-            else:
-                result["rtt_during"] = None
-        else:
-            result["rtt_during"] = None
     except Exception:
-        result["rtt_during"] = None
+        monitor = None
+    result.update(build_rtt_observation(monitor, t0, mode=mode))
     return result
 
 

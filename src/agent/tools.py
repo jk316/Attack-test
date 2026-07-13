@@ -19,6 +19,7 @@ from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
 from src.tools.pcap_profile_tool import pcap_profile_tool, DEFAULT_COUNT_LIMIT
 from src.tools.log_tool import log_tool
 from src.tools.ping_monitor import get_ping_monitor
+from src.tools.rtt_window import build_rtt_observation
 from src.pktgen.adapter import PKTGEN_TOOLS
 
 
@@ -99,23 +100,10 @@ def traffic_send(
         iat_jitter_ms=iat_jitter_ms,
     )
 
-    # Collect RTT samples during the attack window (if monitor is running)
-    try:
-        monitor = get_ping_monitor()
-        if monitor.is_running():
-            rtt_samples = monitor.get_samples_since(t0)
-            if rtt_samples:
-                rtt_values = [s["rtt_ms"] for s in rtt_samples]
-                result["rtt_during"] = {
-                    "samples": rtt_samples,
-                    "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
-                    "min_rtt_ms": round(min(rtt_values), 3),
-                    "max_rtt_ms": round(max(rtt_values), 3),
-                }
-            else:
-                result["rtt_during"] = None
-    except Exception:
-        result["rtt_during"] = None
+    # Collect RTT samples during the attack window (if monitor is running).
+    # build_rtt_observation adds rtt_during + attack_window + observation_window
+    # so the LLM can tell whether the observation actually covered the attack.
+    result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
 
     return result
 
@@ -209,23 +197,8 @@ def mixed_traffic_send(
         pps=pps,
     )
 
-    # Collect RTT samples during the attack window (if monitor is running)
-    try:
-        monitor = get_ping_monitor()
-        if monitor.is_running():
-            rtt_samples = monitor.get_samples_since(t0)
-            if rtt_samples:
-                rtt_values = [s["rtt_ms"] for s in rtt_samples]
-                result["rtt_during"] = {
-                    "samples": rtt_samples,
-                    "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
-                    "min_rtt_ms": round(min(rtt_values), 3),
-                    "max_rtt_ms": round(max(rtt_values), 3),
-                }
-            else:
-                result["rtt_during"] = None
-    except Exception:
-        result["rtt_during"] = None
+    # Collect RTT samples during the attack window (if monitor is running).
+    result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
 
     return result
 
