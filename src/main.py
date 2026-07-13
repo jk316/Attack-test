@@ -9,6 +9,10 @@ from uuid import uuid4
 
 logger = logging.getLogger("agent")
 
+# Console preview length for message content in [LLM INPUT] lines.
+# Full untruncated content always goes to data/agent.log at DEBUG.
+MSG_PREVIEW_LEN = 500
+
 # Ensure the project root is on sys.path so `src` is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -41,7 +45,10 @@ class VerboseCallback(BaseCallbackHandler):
         for i, msg in enumerate(new_msgs):
             idx = last + i
             role = getattr(msg, "type", "unknown")
-            content_preview = str(getattr(msg, "content", ""))[:80].replace("\n", "\\n")
+            raw_content = str(getattr(msg, "content", ""))
+            content_preview = raw_content[:MSG_PREVIEW_LEN].replace("\n", "\\n")
+            if len(raw_content) > MSG_PREVIEW_LEN:
+                content_preview += f"… (+{len(raw_content) - MSG_PREVIEW_LEN} chars, see data/agent.log)"
             tc = self._flat_tool_calls(msg)
             extra_info = f" tool_calls={tc}" if tc else ""
             logger.info("  [%d] %s: %s %s", idx, role, content_preview, extra_info)
@@ -56,13 +63,13 @@ class VerboseCallback(BaseCallbackHandler):
         tc = self._flat_tool_calls(msg)
         logger.info("[LLM OUTPUT] tool_calls=%s", tc)
         for t in getattr(msg, "tool_calls", None) or []:
-            logger.debug("  args: %s", json.dumps(t.get("args", {}), ensure_ascii=False)[:300])
+            logger.debug("  args: %s", json.dumps(t.get("args", {}), ensure_ascii=False)[:MSG_PREVIEW_LEN])
         content = getattr(msg, "content", "")
         if content:
-            logger.debug("  content: %s", content[:300])
+            logger.debug("  content: %s", content[:MSG_PREVIEW_LEN])
         extra = getattr(msg, "additional_kwargs", None) or {}
         if extra:
-            logger.debug("  kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:300])
+            logger.debug("  kwargs=%s", json.dumps(extra, ensure_ascii=False, default=str)[:MSG_PREVIEW_LEN])
         logger.info("=" * 60)
 
     # def on_tool_start(self, serialized, input_str, **kwargs):
@@ -132,6 +139,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Auto-approve all HITL traffic send requests (skip interactive prompts)",
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        default=False,
+        help="Show full untruncated message content on the console (console → DEBUG). "
+             "Full content is always written to data/agent.log regardless.",
     )
     # ── Attack parameter defaults ────────────────────────────────────
     attack_cfg = cfg.get("attack", {})
@@ -238,7 +252,7 @@ def main() -> None:
     log_fh.setLevel(logging.DEBUG)
     log_fh.setFormatter(logging.Formatter("%(message)s"))
     log_ch = logging.StreamHandler()
-    log_ch.setLevel(logging.INFO)
+    log_ch.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     log_ch.setFormatter(logging.Formatter("%(message)s"))
 
     agent_logger = logging.getLogger("agent")
