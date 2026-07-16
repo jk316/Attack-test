@@ -43,8 +43,8 @@ class TestCoversAttackWindow:
     def test_covers_true_when_window_long_enough_and_samples_present(self):
         t0 = time.time() - 5.0
         monitor = _make_monitor(samples=[
-            {"ts": t0 + 1, "rtt_ms": 10.0},
-            {"ts": t0 + 3, "rtt_ms": 20.0},
+            {"ts": t0 + 1, "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": t0 + 3, "rtt_ms": 20.0, "sent": 1, "received": 1},
         ])
 
         result = build_rtt_observation(monitor, t0, mode="live")
@@ -53,6 +53,9 @@ class TestCoversAttackWindow:
         assert ow["covers_attack_window"] is True
         assert ow["sample_count"] == 2
         assert result["rtt_during"]["avg_rtt_ms"] == 15.0
+        assert result["rtt_during"]["loss_pct"] == 0.0
+        assert result["rtt_during"]["total_sent"] == 2
+        assert result["rtt_during"]["total_received"] == 2
         assert "覆盖" in ow["note"]
 
     def test_short_window_flags_misalignment_even_with_samples(self):
@@ -82,7 +85,7 @@ class TestNoObservation:
         assert result["rtt_during"] is None
         assert result["observation_window"]["sample_count"] == 0
         assert result["observation_window"]["covers_attack_window"] is False
-        assert "无 RTT 样本" in result["observation_window"]["note"]
+        assert "无 ping 探测结果" in result["observation_window"]["note"]
         # 攻击窗口仍应暴露（用于诊断）
         assert result["attack_window"]["duration_s"] >= 5.0
 
@@ -106,3 +109,54 @@ class TestNoObservation:
 
         assert result["rtt_during"] is None
         assert result["observation_window"]["covers_attack_window"] is False
+
+
+class TestLossPct:
+    """丢包率相关测试。"""
+
+    def test_partial_loss(self):
+        """部分丢包时 loss_pct 应在 rtt_during 和 observation_window 中反映。"""
+        t0 = time.time() - 5.0
+        monitor = _make_monitor(samples=[
+            {"ts": t0 + 1, "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": None, "sent": 1, "received": 0},
+            {"ts": t0 + 3, "rtt_ms": 20.0, "sent": 1, "received": 1},
+            {"ts": t0 + 4, "rtt_ms": None, "sent": 1, "received": 0},
+        ])
+
+        result = build_rtt_observation(monitor, t0, mode="live")
+
+        rd = result["rtt_during"]
+        assert rd["avg_rtt_ms"] == 15.0
+        assert rd["loss_pct"] == 50.0
+        assert rd["total_sent"] == 4
+        assert rd["total_received"] == 2
+
+    def test_all_lost(self):
+        """全丢包时 rtt_during 应为 None，note 提示目标不可达。"""
+        t0 = time.time() - 5.0
+        monitor = _make_monitor(samples=[
+            {"ts": t0 + 1, "rtt_ms": None, "sent": 1, "received": 0},
+            {"ts": t0 + 2, "rtt_ms": None, "sent": 1, "received": 0},
+        ])
+
+        result = build_rtt_observation(monitor, t0, mode="live")
+
+        assert result["rtt_during"] is None
+        assert "均丢失" in result["observation_window"]["note"]
+        assert result["observation_window"]["covers_attack_window"] is False
+
+    def test_high_loss_generates_warning(self):
+        """高丢包率(>=50%) 时 note 应包含丢包严重提示。"""
+        t0 = time.time() - 5.0
+        monitor = _make_monitor(samples=[
+            {"ts": t0 + 1, "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": None, "sent": 1, "received": 0},
+            {"ts": t0 + 3, "rtt_ms": None, "sent": 1, "received": 0},
+        ])
+
+        result = build_rtt_observation(monitor, t0, mode="live")
+
+        assert result["observation_window"]["covers_attack_window"] is True
+        assert result["rtt_during"]["loss_pct"] >= 50.0
+        assert "丢包严重" in result["observation_window"]["note"]

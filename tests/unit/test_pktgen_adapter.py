@@ -337,8 +337,8 @@ class TestRttSampling:
         mock_monitor = MagicMock()
         mock_monitor.is_running.return_value = True
         mock_monitor.get_samples_since.return_value = [
-            {"ts": time.time(), "rtt_ms": 10.0},
-            {"ts": time.time(), "rtt_ms": 20.0},
+            {"ts": time.time(), "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": time.time(), "rtt_ms": 20.0, "sent": 1, "received": 1},
         ]
 
         with patch("src.pktgen.adapter.get_ping_monitor", return_value=mock_monitor):
@@ -456,7 +456,7 @@ class TestRunTrafficToolIntegration:
 
             mock_monitor = MagicMock()
             mock_monitor.is_running.return_value = True
-            mock_monitor.get_samples_since.return_value = [{"ts": 1.0, "rtt_ms": 30.0}]
+            mock_monitor.get_samples_since.return_value = [{"ts": 1.0, "rtt_ms": 30.0, "sent": 1, "received": 1}]
             mock_pm.return_value = mock_monitor
 
             result = _run_traffic_tool(

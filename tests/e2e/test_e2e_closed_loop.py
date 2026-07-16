@@ -347,11 +347,11 @@ class TestContinuousPingWorkflow:
         }
         # RTT samples during attack: baseline → spike → recovery
         monitor.get_samples_since.return_value = [
-            {"ts": 1000.0, "rtt_ms": 12.0},
-            {"ts": 1001.0, "rtt_ms": 35.0},
-            {"ts": 1002.0, "rtt_ms": 80.0},
-            {"ts": 1003.0, "rtt_ms": 55.0},
-            {"ts": 1004.0, "rtt_ms": 20.0},
+            {"ts": 1000.0, "rtt_ms": 12.0, "sent": 1, "received": 1},
+            {"ts": 1001.0, "rtt_ms": 35.0, "sent": 1, "received": 1},
+            {"ts": 1002.0, "rtt_ms": 80.0, "sent": 1, "received": 1},
+            {"ts": 1003.0, "rtt_ms": 55.0, "sent": 1, "received": 1},
+            {"ts": 1004.0, "rtt_ms": 20.0, "sent": 1, "received": 1},
         ]
         return monitor
 

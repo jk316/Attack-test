@@ -86,7 +86,7 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
 
     if sample_count == 0:
         observation_window["note"] = (
-            "观测窗口内无 RTT 样本——攻击时长过短或目标无回应，"
+            "观测窗口内无 ping 探测结果——攻击时长过短或目标无回应，"
             "此结果不可用于规划，建议增大 duration 或重跑本轮。"
         )
         return {
@@ -95,12 +95,33 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
             "observation_window": observation_window,
         }
 
-    rtt_values = [s["rtt_ms"] for s in samples]
+    # Compute per-probe stats: sent / received / RTT / loss
+    total_sent = sum(s.get("sent", 1) for s in samples)
+    total_received = sum(s.get("received", 1) for s in samples)
+    loss_pct = round((1 - total_received / total_sent) * 100, 1) if total_sent > 0 else 0.0
+
+    # RTT stats from received probes only (rtt_ms is None for lost probes)
+    rtt_values = [s["rtt_ms"] for s in samples if s.get("received", 1) > 0 and s["rtt_ms"] is not None]
+
+    if not rtt_values:
+        observation_window["note"] = (
+            f"观测窗口内所有 {total_sent} 个探测均丢失（loss={loss_pct}%）。"
+            "目标可能不可达或攻击完全阻断了 ICMP 通信。"
+        )
+        return {
+            "rtt_during": None,
+            "attack_window": attack_window,
+            "observation_window": observation_window,
+        }
+
     rtt_during = {
         "samples": samples,
         "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
         "min_rtt_ms": round(min(rtt_values), 3),
         "max_rtt_ms": round(max(rtt_values), 3),
+        "loss_pct": loss_pct,
+        "total_sent": total_sent,
+        "total_received": total_received,
     }
 
     # 有样本，但攻击窗口过短（forever 未等待 / dry-run 未发流）时告警：
@@ -110,13 +131,14 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
         observation_window["note"] = (
             f"攻击窗口过短（{duration_s}s < {MIN_MEANINGFUL_WINDOW_S}s）——"
             "工具未等待攻击完成（如 duration=0 或 dry-run），"
-            f"仅采到 {sample_count} 个样本，可能不足以反映攻击效果。"
+            f"仅采到 {total_sent} 个探测（收到 {total_received}），可能不足以反映攻击效果。"
         )
     else:
         observation_window["covers_attack_window"] = True
-        observation_window["note"] = (
-            f"观测窗口已覆盖攻击窗口，共 {sample_count} 个样本。"
-        )
+        note = f"观测窗口已覆盖攻击窗口，共 {total_sent} 个探测（收到 {total_received}，丢包 {loss_pct}%）。"
+        if loss_pct >= 50.0:
+            note += " 丢包严重——这本身就是有效攻击信号（DoS/DDoS 效果）。"
+        observation_window["note"] = note
 
     return {
         "rtt_during": rtt_during,
