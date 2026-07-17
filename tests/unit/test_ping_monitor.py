@@ -197,6 +197,62 @@ class TestFpingParsing:
         assert monitor._parse_fping_line("   ") is None
 
 
+class TestFpingQ:
+    """Tests for fping -Q periodic summary backend."""
+
+    def test_build_fping_q_cmd(self):
+        monitor = PingMonitor()
+        cmd = monitor._build_fping_q_cmd(ALLOWLISTED_IP)
+        assert cmd[0] == "fping"
+        assert "-l" in cmd
+        assert "-Q" in cmd
+        assert "1" in cmd
+        assert "-p" in cmd
+        assert "100" in cmd
+        assert ALLOWLISTED_IP in cmd
+
+    def test_parse_summary_normal(self):
+        monitor = PingMonitor()
+        sample = monitor._parse_fping_summary_line(
+            "10.99.80.160 : xmt/rcv/%loss = 10/10/0%, min/avg/max = 1.5/2.3/3.1"
+        )
+        assert sample is not None
+        assert sample.rtt_ms == 2.3  # avg
+        assert sample.sent == 10
+        assert sample.received == 10
+
+    def test_parse_summary_with_loss(self):
+        monitor = PingMonitor()
+        sample = monitor._parse_fping_summary_line(
+            "10.99.80.160 : xmt/rcv/%loss = 10/6/40%, min/avg/max = 2.1/5.7/12.3"
+        )
+        assert sample is not None
+        assert sample.rtt_ms == 5.7
+        assert sample.sent == 10
+        assert sample.received == 6
+
+    def test_parse_summary_all_lost(self):
+        monitor = PingMonitor()
+        sample = monitor._parse_fping_summary_line(
+            "10.99.80.160 : xmt/rcv/%loss = 10/0/100%, min/avg/max = 0/0/0"
+        )
+        assert sample is not None
+        assert sample.rtt_ms == 0.0
+        assert sample.sent == 10
+        assert sample.received == 0
+
+    def test_parse_summary_empty(self):
+        monitor = PingMonitor()
+        assert monitor._parse_fping_summary_line("") is None
+        assert monitor._parse_fping_summary_line("   ") is None
+
+    def test_parse_summary_icmp_host_line(self):
+        monitor = PingMonitor()
+        assert monitor._parse_fping_summary_line(
+            "ICMP Host Unreachable from 192.168.1.1 for ICMP Echo sent to 10.99.80.160"
+        ) is None
+
+
 class TestPingMonitorStats:
     """Tests for get_stats and get_samples_since."""
 

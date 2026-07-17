@@ -66,18 +66,26 @@ _FPING_TIMEOUT_RE = re.compile(
     r"timeout\s*\(([\d.]+)\s*avg,\s*(\d+)%\s*loss\)"
 )
 
+# fping -Q N summary-line format:
+#   "IP : xmt/rcv/%loss = 10/8/20%, min/avg/max = 2.1/5.7/12.3"
+_FPING_Q_RE = re.compile(
+    r"xmt/rcv/%loss\s*=\s*(\d+)/(\d+)/(\d+)%"
+    r".*min/avg/max\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)"
+)
+
 
 # ── Data model ──────────────────────────────────────────────────────
 
 
 @dataclass
 class MonitorSample:
-    """A single ping probe result.
+    """A single ping probe result or fping periodic summary cycle.
 
     Stored in a thread-safe deque and aggregated by ``get_stats()`` /
-    ``get_samples_since()``.  ``sent`` / ``received`` are always 0 or 1
-    per sample; loss_pct is computed from their sums in the aggregation
-    methods, NOT stored per-sample.
+    ``get_samples_since()``.  For per-probe backends (ping / fping -l)
+    ``sent`` / ``received`` are 0 or 1; for fping -Q summary cycles
+    they reflect the cycle's probe count.  loss_pct is computed from
+    their sums in the aggregation methods, NOT stored per-sample.
     """
 
     ts: float          # time.time() when the line was parsed
@@ -117,7 +125,7 @@ class PingMonitor:
         self._running = False
         self._target_ip: Optional[str] = None
         self._stop_event = threading.Event()
-        self._backend: str = ""  # "fping" | "ping"
+        self._backend: str = ""  # "fping_q" | "fping" | "ping"
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -145,11 +153,11 @@ class PingMonitor:
         self._target_ip = ip
         self._stop_event.clear()
 
-        # Auto-select backend
+        # Auto-select backend: fping -Q (periodic summary) preferred, then system ping
         if sys.platform != "win32" and _fping_available():
-            self._backend = "fping"
-            cmd = self._build_fping_cmd(ip, interval_s)
-            parser: Callable[[str], Optional[MonitorSample]] = self._parse_fping_line
+            self._backend = "fping_q"
+            cmd = self._build_fping_q_cmd(ip)
+            parser: Callable[[str], Optional[MonitorSample]] = self._parse_fping_summary_line
         else:
             self._backend = "ping"
             cmd = self._build_ping_cmd(ip, interval_s)
@@ -381,6 +389,43 @@ class PingMonitor:
             return MonitorSample(ts=now, rtt_ms=None, sent=1, received=0)
 
         return None
+
+    # ── Backend: fping -Q (default, periodic summary) ────────────────
+
+    @staticmethod
+    def _build_fping_q_cmd(ip: str) -> list[str]:
+        """Build fping loop + periodic summary command.
+
+        ``-l``: loop mode (continuous until killed)
+        ``-Q 1``: emit a summary line every 1 second
+        ``-p 100``: send one probe every 100 ms (10 probes/sec)
+        """
+        return ["fping", "-l", "-Q", "1", "-p", "100", ip]
+
+    @staticmethod
+    def _parse_fping_summary_line(line: str) -> Optional[MonitorSample]:
+        """Parse an fping ``-Q`` periodic summary line into a MonitorSample.
+
+        Summary format::
+
+            IP : xmt/rcv/%loss = 10/8/20%, min/avg/max = 2.1/5.7/12.3
+
+        Returns ``None`` for non-summary lines (headers, blanks).
+        """
+        now = time.time()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("ICMP "):
+            return None
+
+        m = _FPING_Q_RE.search(stripped)
+        if not m:
+            return None
+
+        sent = int(m.group(1))
+        received = int(m.group(2))
+        avg_rtt = float(m.group(5))
+
+        return MonitorSample(ts=now, rtt_ms=avg_rtt, sent=sent, received=received)
 
     # ── Reader thread ───────────────────────────────────────────────
 
