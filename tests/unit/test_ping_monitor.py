@@ -237,7 +237,7 @@ class TestFpingQ:
             "10.99.80.160 : xmt/rcv/%loss = 10/0/100%, min/avg/max = 0/0/0"
         )
         assert sample is not None
-        assert sample.rtt_ms == 0.0
+        assert sample.rtt_ms is None  # all-lost → no RTT, not misleading 0.0
         assert sample.sent == 10
         assert sample.received == 0
 
@@ -396,6 +396,20 @@ class TestPingMonitorStats:
         assert stats["loss_pct"] == 100.0
         assert stats["sample_count"] == 0
         assert stats["sent_count"] == 2
+
+    def test_get_stats_weighted_avg(self):
+        """fping_q 周期汇总的 avg_rtt 应按 received 加权。"""
+        now = time.time()
+        # Cycle 1: 9 received, avg=10ms → weighted contribution 90
+        # Cycle 2: 1 received, avg=100ms → weighted contribution 100
+        # True weighted avg = 190/10 = 19ms (vs unweighted 55ms)
+        monitor = self._make_monitor_with_samples([
+            MonitorSample(ts=now - 2, rtt_ms=10.0, sent=10, received=9),
+            MonitorSample(ts=now - 1, rtt_ms=100.0, sent=10, received=1),
+        ])
+
+        stats = monitor.get_stats(window_s=10)
+        assert stats["avg_rtt_ms"] == 19.0
 
 
 class TestPingMonitorStop:

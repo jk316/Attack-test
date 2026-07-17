@@ -246,6 +246,9 @@ class PingMonitor:
         rtt_values: list[float] = []
         total_sent = 0
         total_received = 0
+        # Weighted sum for fping_q cycles (each cycle has N probes)
+        rtt_weighted_sum = 0.0
+        rtt_weight_total = 0
         latest: Optional[float] = None
 
         with self._lock:
@@ -255,6 +258,8 @@ class PingMonitor:
                     total_received += s.received
                     if s.received > 0 and s.rtt_ms is not None:
                         rtt_values.append(s.rtt_ms)
+                        rtt_weighted_sum += s.rtt_ms * s.received
+                        rtt_weight_total += s.received
             if self._samples:
                 latest = self._samples[-1].rtt_ms
 
@@ -275,12 +280,14 @@ class PingMonitor:
             }
 
         loss_pct = round((1 - total_received / total_sent) * 100, 1) if total_sent > 0 else 0.0
+        # Weighted average: each cycle's avg is weighted by its received count
+        weighted_avg = round(rtt_weighted_sum / rtt_weight_total, 3) if rtt_weight_total > 0 else 0.0
 
         return {
             "monitor_active": True,
             "target_ip": self._target_ip,
             "latest_rtt_ms": latest,
-            "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
+            "avg_rtt_ms": weighted_avg,
             "min_rtt_ms": round(min(rtt_values), 3),
             "max_rtt_ms": round(max(rtt_values), 3),
             "sample_count": total_received,
@@ -425,7 +432,15 @@ class PingMonitor:
         received = int(m.group(2))
         avg_rtt = float(m.group(5))
 
-        return MonitorSample(ts=now, rtt_ms=avg_rtt, sent=sent, received=received)
+        # When all probes were lost, fping reports min/avg/max = 0/0/0.
+        # Storing rtt_ms=0 would be misleading (0 ms suggests local delivery),
+        # so treat it as None (no RTT data).
+        return MonitorSample(
+            ts=now,
+            rtt_ms=avg_rtt if received > 0 else None,
+            sent=sent,
+            received=received,
+        )
 
     # ── Reader thread ───────────────────────────────────────────────
 

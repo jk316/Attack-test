@@ -100,8 +100,19 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
     total_received = sum(s.get("received", 1) for s in samples)
     loss_pct = round((1 - total_received / total_sent) * 100, 1) if total_sent > 0 else 0.0
 
-    # RTT stats from received probes only (rtt_ms is None for lost probes)
-    rtt_values = [s["rtt_ms"] for s in samples if s.get("received", 1) > 0 and s["rtt_ms"] is not None]
+    # RTT stats from received probes only (rtt_ms is None for lost probes).
+    # Weighted by received count so fping_q cycles (>1 probe each) aren't
+    # under-weighted relative to per-probe backends.
+    rtt_values: list[float] = []
+    rtt_weighted_sum = 0.0
+    rtt_weight_total = 0
+    for s in samples:
+        received = s.get("received", 1)
+        rtt = s.get("rtt_ms")
+        if received > 0 and rtt is not None:
+            rtt_values.append(rtt)
+            rtt_weighted_sum += rtt * received
+            rtt_weight_total += received
 
     if not rtt_values:
         observation_window["note"] = (
@@ -116,7 +127,7 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
 
     rtt_during = {
         "samples": samples,
-        "avg_rtt_ms": round(sum(rtt_values) / len(rtt_values), 3),
+        "avg_rtt_ms": round(rtt_weighted_sum / rtt_weight_total, 3) if rtt_weight_total > 0 else 0.0,
         "min_rtt_ms": round(min(rtt_values), 3),
         "max_rtt_ms": round(max(rtt_values), 3),
         "loss_pct": loss_pct,
