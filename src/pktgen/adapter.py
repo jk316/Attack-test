@@ -288,8 +288,8 @@ def pktgen_udp_flood(
     HUMAN APPROVAL in live mode.
 
     Pktgen generates UDP traffic at the DPDK level — orders of magnitude
-    faster than Scapy.  Use this when ``traffic_send`` hits its 200 pps
-    ceiling and you need higher throughput to saturate the link.
+    faster than Scapy.  Use this when you need higher throughput than
+    ``traffic_send`` can provide to saturate the link.
 
     Rate is a PERCENTAGE (0–100) of the port's maximum rate, NOT packets per
     second.  Duration is in MILLISECONDS (5000 = 5 seconds).

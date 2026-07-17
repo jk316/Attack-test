@@ -128,7 +128,7 @@
 {% if pktgen_available %}
 ## Pktgen-DPDK 工具（硬件线速流量）
 
-Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬件线速** 发送流量，吞吐量远超 Python Scapy（后者在 200 pps 左右即达性能上限）。Pktgen 编译 Lua 脚本并发送到运行中的 Pktgen 实例（{{ pktgen_host }}:{{ pktgen_port }}）执行。
+Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬件线速** 发送流量，吞吐量远超 Python Scapy。Pktgen 编译 Lua 脚本并发送到运行中的 Pktgen 实例（{{ pktgen_host }}:{{ pktgen_port }}）执行。
 
 {% if pktgen_dry_run %}
 **当前为 dry-run 模式**：Pktgen 工具仅编译 Lua 脚本并保存到 `lua_scripts/` 目录，**不实际发送流量**。适合验证参数和脚本正确性。如需实际发送，使用 `--pktgen-live` 启动。
@@ -177,7 +177,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 | 目标 IP | `dst_ip` 必填（allowlist） | `dst_ip` 必填（allowlist）。Pktgen 技能内置默认值 `10.10.10.2`，**不应依赖**——始终显式传入 allowlist 中的目标 IP |
 
 **关键换算**：
-- rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远高于 Scapy 的 200 pps
+- rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远超 Scapy 的发流能力
 - rate=1 在 10G 端口上约为 148.8 Kpps，仍远超 Scapy 上限
 - duration=5000 表示 5 秒（5000 毫秒），duration=0 表示永远发送
 - ⚠️ **安全警告**: `count=0` 或 `duration=0` = 永久发送，不会自动停止。**必须**随后调用 `pktgen_stop_and_reset` 手动停止。live 模式下务必设置非零的 duration 或 count，除非你明确需要持续攻击
@@ -208,7 +208,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 
 不设硬性规则。以下为决策参考，由你自主判断：
 
-- **低速率探索阶段**（< 200 pps）→ Scapy 工具更灵活（多协议混合、DNS 查询、字段精细控制）
+- **低速率探索阶段** → Scapy 工具更灵活（多协议混合、DNS 查询、字段精细控制）
 - **需要更高吞吐量** → Pktgen 洪水工具
 - **需要自动遍历参数范围** → `pktgen_range_scan`（硬件扫描比软件逐轮调整快几个数量级）
 - **需要多协议混合 + 字段精确控制** → `mixed_traffic_send` 或 `pktgen_packet_sequence`

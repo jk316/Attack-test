@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Closed-Loop Network Experiment Agent — a LangChain ReAct agent that autonomously explores traffic parameters to maximize ping RTT, with continuous background ping monitoring, web console, and strict safety constraints (allowlist, rate limits, HITL approval). Built with Python 3.11+, Scapy, LangChain, FastAPI, and DeepSeek API.
 
-Also integrates Pktgen-DPDK (hardware packet generator) via vendored Lua compiler — the agent can escalate to line-rate traffic generation when Scapy's 200 pps ceiling is insufficient.
+Also integrates Pktgen-DPDK (hardware packet generator) via vendored Lua compiler — the agent can escalate to hardware line-rate traffic generation when higher throughput is needed.
 
 ## Commands
 
