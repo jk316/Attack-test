@@ -30,7 +30,7 @@ from typing import Callable, Optional
 
 from src.tools.ping_rtt_tool import validate_target
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent")
 
 # ── Per-line RTT pattern (system ping, handles Unix and Windows) ────
 _UNIX_RTT_RE = re.compile(r"time[<=](\d+\.?\d*)\s*ms", re.IGNORECASE)
