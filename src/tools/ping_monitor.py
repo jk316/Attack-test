@@ -18,6 +18,7 @@ Two backends, auto-selected at ``start()``:
 from __future__ import annotations
 
 import re
+import logging
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from src.tools.ping_rtt_tool import validate_target
+
+logger = logging.getLogger(__name__)
 
 # ── Per-line RTT pattern (system ping, handles Unix and Windows) ────
 _UNIX_RTT_RE = re.compile(r"time[<=](\d+\.?\d*)\s*ms", re.IGNORECASE)
@@ -162,6 +165,8 @@ class PingMonitor:
             self._backend = "ping"
             cmd = self._build_ping_cmd(ip, interval_s)
             parser = self._parse_ping_line
+
+        logger.info("[%s] backend=%s cmd=%s", ip, self._backend, " ".join(cmd))
 
         try:
             self._process = subprocess.Popen(
@@ -450,18 +455,31 @@ class PingMonitor:
         if proc is None or proc.stdout is None:
             return
 
+        _unparsed_count = 0
         try:
             while self._running and not self._stop_event.is_set():
                 line = proc.stdout.readline()
                 if not line:
                     break
+                stripped = line.strip()
                 sample = parser(line)
                 if sample is not None:
                     with self._lock:
                         self._samples.append(sample)
+                    logger.info("[%s] s=%d r=%d rtt=%s",
+                                self._backend, sample.sent, sample.received, sample.rtt_ms)
+                elif stripped:
+                    # Non-empty line that the parser couldn't handle — likely
+                    # a format mismatch.  Rate-limit to 1 logged line per second.
+                    _unparsed_count += 1
+                    if _unparsed_count <= 1:
+                        logger.info("[%s] UNPARSED: %s", self._backend, stripped[:200])
         except (ValueError, OSError):
             pass
         finally:
+            if _unparsed_count > 1:
+                logger.info("[%s] UNPARSED: ... (%d more similar lines)",
+                            self._backend, _unparsed_count - 1)
             self._running = False
 
 
