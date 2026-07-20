@@ -5,7 +5,7 @@
     "max_iters": 20,
     "no_improve_limit": 5,
     "attack": {
-        "duration_s": 5,
+        "duration_s": 10,
         "pps": 100,
         "packet_size": 64,
         "flow_count": 1,
@@ -13,6 +13,6 @@
     },
     "pktgen": {
         "rate": 50,
-        "duration_ms": 5000
+        "duration_ms": 10000
     }
 }

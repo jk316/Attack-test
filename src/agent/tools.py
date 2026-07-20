@@ -66,7 +66,7 @@ def traffic_send(
         Dict with success, params, packets_sent, elapsed_s, effective_pps.
     """
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
-    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "5"))
+    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
     pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
     packet_size = packet_size if packet_size is not None else int(os.environ.get("ATK_PACKET_SIZE", "64"))
     flow_count = flow_count if flow_count is not None else int(os.environ.get("ATK_FLOW_COUNT", "1"))
@@ -174,7 +174,7 @@ def mixed_traffic_send(
         elapsed_s, effective_pps.
     """
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
-    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "5"))
+    duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
     pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
 
     params_display = {

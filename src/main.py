@@ -190,7 +190,7 @@ def parse_args() -> argparse.Namespace:
         help="Pktgen rate as percentage 0-100 (default 50)",
     )
     parser.add_argument(
-        "--pktgen-duration", type=int, default=pktgen_cfg.get("duration_ms", 5000),
+        "--pktgen-duration", type=int, default=pktgen_cfg.get("duration_ms", 10000),
         help="Pktgen duration in milliseconds (default 5000)",
     )
     return parser.parse_args()

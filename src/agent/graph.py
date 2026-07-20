@@ -98,13 +98,13 @@ def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5) -> str:
         max_iters=max_iters,
         no_improve_limit=no_improve_limit,
         # Scapy defaults (from env / experiment.json / CLI)
-        atk_duration_s=int(os.environ.get("ATK_DURATION_S", "5")),
+        atk_duration_s=int(os.environ.get("ATK_DURATION_S", "10")),
         atk_pps=int(os.environ.get("ATK_PPS", "100")),
         atk_packet_size=int(os.environ.get("ATK_PACKET_SIZE", "64")),
         atk_flow_count=int(os.environ.get("ATK_FLOW_COUNT", "1")),
         # Pktgen defaults (from env / experiment.json / CLI)
         pktgen_rate=os.environ.get("PKTGEN_RATE", "50"),
-        pktgen_duration_ms=os.environ.get("PKTGEN_DURATION_MS", "5000"),
+        pktgen_duration_ms=os.environ.get("PKTGEN_DURATION_MS", "10000"),
         # Pktgen-DPDK context
         pktgen_available=_pktgen_available(),
         pktgen_dry_run=is_dry_run(),
