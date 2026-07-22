@@ -438,6 +438,35 @@ class TestPacketSequenceJsonParsing:
             assert result["success"] is False
             assert "Invalid JSON" in result["error"]
 
+    def test_auto_fills_missing_eth_dst_addr(self):
+        """缺失或全零的 eth_dst_addr 应被自动填充为 topology.yaml 的 dst_mac。"""
+        from src.pktgen.adapter import pktgen_packet_sequence
+
+        seq_json = json.dumps([{
+            "eth_dst_addr": "00:00:00:00:00:01",
+            "eth_src_addr": "00:00:00:00:00:02",
+            "ip_dst_addr": ALLOWLISTED_IP,
+            "ip_src_addr": "10.0.0.1",
+            "sport": 0, "dport": 0,
+            "ethType": "0x0800", "ipProto": 1,
+            "vlanid": 0, "pktSize": 64,
+        }])
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec, \
+             patch("src.pktgen.adapter._hitl_gate", return_value=True), \
+             patch("src.pktgen.adapter.validate_target"), \
+             patch("src.pktgen.adapter._get_dst_mac", return_value="f0:c4:78:4c:a5:55"):
+            mock_exec.return_value = {"success": True}
+
+            pktgen_packet_sequence.invoke({
+                "dst_ip": ALLOWLISTED_IP, "sequences": seq_json, "rate": 50,
+            })
+
+            _, params = mock_exec.call_args[0]
+            sequences = params["sequences"]
+            # LLM 编造的 00:00:00:00:00:01 (all-zeros pattern) 应被替换
+            assert sequences[0]["eth_dst_addr"] == "f0:c4:78:4c:a5:55"
+
 
 class TestRunTrafficToolIntegration:
     """_run_traffic_tool 集成流程测试。"""

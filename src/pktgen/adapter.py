@@ -60,6 +60,19 @@ def _get_default_port() -> int:
         return 22022
 
 
+def _get_dst_mac() -> str:
+    """Read dst_mac from topology.yaml, falling back to hardcoded default."""
+    try:
+        import yaml
+        from pathlib import Path as _Path
+        topology_path = _Path(__file__).resolve().parent.parent.parent / "topology.yaml"
+        with open(topology_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("dst_mac", {}).get("portlist", "f0:c4:78:4c:a5:55")
+    except Exception:
+        return "f0:c4:78:4c:a5:55"
+
+
 # Environment overrides take priority over topology.yaml.
 # These are FUNCTIONS (not constants) so that main() can set env vars
 # AFTER module import — the values are re-evaluated at each call.
@@ -543,6 +556,22 @@ def pktgen_packet_sequence(
         seq_list = json.loads(sequences) if isinstance(sequences, str) else sequences
     except json.JSONDecodeError:
         return {"success": False, "error": f"Invalid JSON for sequences: {sequences[:200]}"}
+
+    # Auto-fill eth_dst_addr from topology.yaml when missing or obviously
+    # fabricated — the LLM doesn't know the real dst_mac and tends to
+    # invent numbers like 00:00:00:00:00:01.
+    dst_mac_default = _get_dst_mac()
+    for i, entry in enumerate(seq_list):
+        eth = (entry.get("eth_dst_addr") or "").strip()
+        # Missing, empty, or clearly fabricated (all-zeros prefix pattern
+        # like 00:00:00:00:00:01) → replace with real dst_mac.
+        digits = eth.replace(":", "").replace("-", "")
+        if not eth or set(digits) <= {"0", "1"}:
+            logger.info(
+                "packet_sequence: replacing fabricated eth_dst_addr[%d] %r → %s",
+                i, eth, dst_mac_default,
+            )
+            entry["eth_dst_addr"] = dst_mac_default
 
     return _run_traffic_tool("packet_sequence_generation", {
         "sequences": seq_list, "rate": rate,
