@@ -28,3 +28,6 @@ data/
 
 # Pktgen compiled Lua output
 lua_scripts/
+
+# TRex generated client scripts
+trex_scripts/

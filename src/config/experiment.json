@@ -14,5 +14,8 @@
     "pktgen": {
         "rate": 50,
         "duration_ms": 10000
+    },
+    "trex": {
+        "timeout_s": 30
     }
 }

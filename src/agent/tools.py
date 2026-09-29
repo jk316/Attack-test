@@ -21,6 +21,7 @@ from src.tools.log_tool import log_tool
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.rtt_window import build_rtt_observation
 from src.pktgen.adapter import PKTGEN_TOOLS
+from src.trex.tools import TREX_TOOLS
 
 
 @tool
@@ -283,4 +284,5 @@ EXPERIMENT_TOOLS = [
     ping_rtt,
     log_result,
     *PKTGEN_TOOLS,  # Pktgen-DPDK hardware line-rate tools (9 skills)
+    *TREX_TOOLS,    # TRex client tools (write_python_file, run_python_file)
 ]

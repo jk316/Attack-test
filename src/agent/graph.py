@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port, is_dry_run
+from src.trex.config import get_trex_host, get_trex_port, is_trex_dry_run
 from src.tools.traffic_send_tool import (
     MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
 )
@@ -26,6 +27,15 @@ def _pktgen_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _trex_available() -> bool:
+    """Whether the TRex client tools are available.
+
+    These tools only write + run local Python scripts (they do not import the
+    TRex library at agent runtime), so they are always available here.
+    """
+    return True
 
 
 def _patch_reasoning_content():
@@ -110,6 +120,11 @@ def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5) -> str:
         pktgen_dry_run=is_dry_run(),
         pktgen_host=get_pktgen_host(),
         pktgen_port=str(get_pktgen_port()),
+        # TRex client context
+        trex_available=_trex_available(),
+        trex_dry_run=is_trex_dry_run(),
+        trex_host=get_trex_host(),
+        trex_port=str(get_trex_port()),
     )
 
 

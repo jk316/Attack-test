@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
+from src.trex.config import get_trex_host, get_trex_port  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
@@ -92,14 +93,21 @@ DEFAULTS: dict = {
 
 def _load_config_defaults() -> dict:
     """Load experiment defaults from config file, falling back to hardcoded values."""
+    merged = dict(DEFAULTS)
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, "r") as f:
                 data = json.load(f)
-            return {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
+            for key in DEFAULTS:
+                if key in data:
+                    merged[key] = data[key]
+            # Preserve nested config sections (attack/pktgen/trex) for parse_args().
+            for key in ("attack", "pktgen", "trex"):
+                if key in data:
+                    merged[key] = data[key]
         except (json.JSONDecodeError, OSError):
             pass
-    return dict(DEFAULTS)
+    return merged
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,7 +146,8 @@ def parse_args() -> argparse.Namespace:
         "--auto-approve",
         action="store_true",
         default=False,
-        help="Auto-approve all HITL traffic send requests (skip interactive prompts)",
+        help="Auto-approve all HITL requests (traffic send + TRex script execution), "
+             "skipping interactive prompts",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -193,6 +202,30 @@ def parse_args() -> argparse.Namespace:
         "--pktgen-duration", type=int, default=pktgen_cfg.get("duration_ms", 10000),
         help="Pktgen duration in milliseconds (default 5000)",
     )
+    # ── TRex options ─────────────────────────────────────────────────
+    trex_cfg = cfg.get("trex", {})
+    parser.add_argument(
+        "--trex-live",
+        action="store_true",
+        default=False,
+        help="Run TRex scripts in live mode (actually execute generated Python). "
+             "Default is dry-run (write + syntax-check only).",
+    )
+    parser.add_argument(
+        "--trex-host",
+        default=None,
+        help="TRex server hostname or IP (default from topology.yaml)",
+    )
+    parser.add_argument(
+        "--trex-port",
+        type=int,
+        default=None,
+        help="TRex server RPC port (default from topology.yaml)",
+    )
+    parser.add_argument(
+        "--trex-timeout", type=float, default=trex_cfg.get("timeout_s", 30),
+        help="Timeout in seconds for running a TRex script (default 30)",
+    )
     return parser.parse_args()
 
 
@@ -215,6 +248,20 @@ def _build_user_message(args: argparse.Namespace) -> str:
     )
 
 
+def _extract_hitl_payload(gs) -> dict | None:
+    """Extract the HITL interrupt payload from a StateSnapshot, if any.
+
+    Mirrors backend/experiment.py::_extract_hitl so the CLI operator sees the
+    same details (message + params) that the web console shows.
+    """
+    for task in getattr(gs, "tasks", None) or []:
+        for intr in getattr(task, "interrupts", None) or []:
+            val = intr.value
+            if isinstance(val, dict) and "message" in val:
+                return val
+    return None
+
+
 def main() -> None:
     args = parse_args()
 
@@ -234,8 +281,19 @@ def main() -> None:
     if args.pktgen_port is not None:
         os.environ["PKTGEN_PORT"] = str(args.pktgen_port)
 
+    # ── TRex configuration ──
+    if args.trex_live:
+        os.environ["TREX_DRY_RUN"] = "false"
+    if args.trex_host is not None:
+        os.environ["TREX_HOST"] = args.trex_host
+    if args.trex_port is not None:
+        os.environ["TREX_PORT"] = str(args.trex_port)
+    os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
+
     pktgen_host = args.pktgen_host or get_pktgen_host()
     pktgen_port = args.pktgen_port or get_pktgen_port()
+    trex_host = args.trex_host or get_trex_host()
+    trex_port = args.trex_port or get_trex_port()
 
     print(f"=== Closed-Loop Experiment ===")
     print(f"Target:     {args.target_ip}")
@@ -245,6 +303,8 @@ def main() -> None:
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"
     print(f"Pktgen:     {pktgen_mode} ({pktgen_host}:{pktgen_port})")
+    trex_mode = "live" if args.trex_live else "dry-run"
+    print(f"Trex:       {trex_mode} ({trex_host}:{trex_port})")
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
@@ -283,14 +343,17 @@ def main() -> None:
             if not gs or not gs.next:
                 break  # graph completed
 
-            # Display context for the human operator
-            print(f"[HITL] Traffic send requested")
+            # Display the interrupt payload so the operator sees what is approved
+            payload = _extract_hitl_payload(gs)
+            print((payload or {}).get("message", "[HITL] Action requested"))
+            if payload and payload.get("params"):
+                print(json.dumps(payload["params"], ensure_ascii=False, indent=2))
             if args.auto_approve:
                 approved = True
                 print("  Auto-approved (--auto-approve)")
             else:
                 try:
-                    response = input("  Approve traffic send? (y/n): ").strip().lower()
+                    response = input("  Approve? (y/n): ").strip().lower()
                 except EOFError:
                     print("  No input — rejecting by default")
                     response = "n"

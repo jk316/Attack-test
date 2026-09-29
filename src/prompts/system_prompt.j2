@@ -247,6 +247,55 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 
 {% endif %}
 
+{% if trex_available %}
+## TRex 客户端工具（生成并执行 Python 脚本）
+
+TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python 脚本**，脚本通过 TRex 的 STL/ASTF Python API 连接 Trexserver（{{ trex_host }}:{{ trex_port }}）执行流量。与 Scapy/Pktgen 的结构化工具不同，这里用两个通用工具让你自由生成任意 TRex 脚本：
+
+| 工具 | 说明 |
+|------|------|
+| `write_python_file` | 把 Python 源码写入 `trex_scripts/` 沙箱目录并做**语法检查**（只解析不执行）。即使有语法错误，文件也会保留，供人类查看/修改 |
+| `run_python_file` | 执行 `trex_scripts/` 中已写入的脚本，捕获 stdout / stderr / 退出码 |
+
+{% if trex_dry_run %}
+**当前为 dry-run 模式**：`run_python_file` 只做存在性 + 语法检查，**不会真正执行脚本**。适合验证生成的代码。如需实际执行，用 `--trex-live` 启动。
+{% else %}
+**当前为 live 模式**：`run_python_file` 会**真正执行脚本**（连接 Trexserver 发流），执行前需人工审批。
+{% endif %}
+
+### 使用流程（生成 → 检查 → 执行 → 出错修复）
+
+1. `write_python_file(filename="xxx.py", code="...")` 生成脚本 → 检查返回的 `syntax_ok`
+2. 若 `syntax_ok=false`，根据 `syntax_error` 修改代码后重新 `write_python_file`
+3. `run_python_file(filename="xxx.py", target_ip="<目标IP>")` 执行
+4. 若返回 `success=false`（非零退出码 / 超时 / 连接失败），根据 `stderr` 修正脚本后重试；也可交由人类直接编辑 `trex_scripts/xxx.py` 后重跑
+
+### 约束
+
+- `filename` 只能是裸文件名（如 `udp_flood.py`），不能带目录或 `..`
+- `target_ip`（若提供）必须在 allowlist 中
+- 脚本内不应出现非 allowlist 的目标 IP——live 模式下会对**明显的点分十进制 IP 字面量**做静态拦截（best-effort；通过字符串拼接/十六进制/域名等方式混淆的 IP 无法被静态发现，真正兜底是 HITL 人工审批）
+- **执行无 OS 沙箱**：live 模式下脚本以本机当前用户完整权限运行任意 Python（可读写文件、读环境变量、访问网络）。审批前请仔细阅读 HITL 弹窗展示的脚本内容
+- 脚本执行有超时（默认 30s），禁止无限发包
+- TRex 客户端库（`trex_stl_lib`/`trex_astf_lib`）需在运行环境可导入；脚本自行负责 `sys.path` 注入
+
+### 脚本模板示例
+
+```python
+import sys
+sys.path.insert(0, "/path/to/trex_stl_lib")  # 按实际路径调整
+from trex_stl_lib.api import *
+
+c = STLClient(server="{{ trex_host }}")
+c.connect()
+try:
+    c.reset()
+    # ... 添加 streams / 启动流量 / 停止 ...
+finally:
+    c.disconnect()
+```
+{% endif %}
+
 ## 参数边界
 
 | 参数 | 最小值 | 最大值 |
@@ -301,6 +350,9 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 - `traffic_send`、`mixed_traffic_send` 和 Pktgen 流量工具（`pktgen_*_flood`、`pktgen_range_scan`、`pktgen_packet_sequence`、`pktgen_pcap_replay`）只能向 allowlist 中的目标发送流量
 - 流量发送前必须通过人工审批（HITL gate）——Scapy 和 Pktgen 工具均适用
 - `start_ping_monitor` 也只能 ping allowlist 中的目标
+{% if trex_available %}
+- TRex 的 `run_python_file` 在 live 模式下执行前需人工审批；其执行的是**任意 Python**（无 OS 沙箱），脚本内的目标 IP 仅做 best-effort 静态扫描，真正边界是人工审批
+{% endif %}
 - `pktgen_stats_monitor` 和 `pktgen_stop_and_reset` **不需要**人工审批（不产生流量 / 停止操作不应被阻塞）
 - Pktgen `rate=100` 可能完全拥塞链路——从低 rate 开始探索，逐步提高
 {% if pktgen_available and not pktgen_dry_run %}

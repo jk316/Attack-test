@@ -7,6 +7,10 @@ pktgen:
   host: "10.99.80.222"
   port: 22022
 
+trex:
+  host: "10.99.80.222"  
+  port: 4501
+
 tx_port:
   portlist: "0"
   description: "TX port — traffic egress"
