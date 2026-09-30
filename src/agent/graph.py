@@ -1,4 +1,5 @@
 """Agent builder using langchain.agents.create_agent for the closed-loop experiment."""
+import importlib.util
 import os
 from pathlib import Path
 
@@ -30,12 +31,14 @@ def _pktgen_available() -> bool:
 
 
 def _trex_available() -> bool:
-    """Whether the TRex client tools are available.
+    """Whether the TRex client lib is importable on this host.
 
-    These tools only write + run local Python scripts (they do not import the
-    TRex library at agent runtime), so they are always available here.
+    Uses find_spec (not import) so TRex's bundled scapy is never pulled into the
+    agent process, avoiding a clash with the project's scapy 2.7.0. The
+    write/run tools themselves are always registered; this only gates whether
+    the prompt describes them.
     """
-    return True
+    return importlib.util.find_spec("trex_stl_lib") is not None
 
 
 def _patch_reasoning_content():

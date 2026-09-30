@@ -277,13 +277,11 @@ TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python �
 - 脚本内不应出现非 allowlist 的目标 IP——live 模式下会对**明显的点分十进制 IP 字面量**做静态拦截（best-effort；通过字符串拼接/十六进制/域名等方式混淆的 IP 无法被静态发现，真正兜底是 HITL 人工审批）
 - **执行无 OS 沙箱**：live 模式下脚本以本机当前用户完整权限运行任意 Python（可读写文件、读环境变量、访问网络）。审批前请仔细阅读 HITL 弹窗展示的脚本内容
 - 脚本执行有超时（默认 30s），禁止无限发包
-- TRex 客户端库（`trex_stl_lib`/`trex_astf_lib`）需在运行环境可导入；脚本自行负责 `sys.path` 注入
+- TRex 客户端库已安装在运行主机，脚本直接 `import trex_stl_lib` / `import trex_astf_lib` 即可
 
 ### 脚本模板示例
 
 ```python
-import sys
-sys.path.insert(0, "/path/to/trex_stl_lib")  # 按实际路径调整
 from trex_stl_lib.api import *
 
 c = STLClient(server="{{ trex_host }}")
