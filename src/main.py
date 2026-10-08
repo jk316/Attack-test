@@ -133,8 +133,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-iters",
         type=int,
-        default=cfg["max_iters"],
-        help="Maximum iterations (default 20)",
+        default=None,
+        help="Maximum iterations (default 20; 40 in --trex-explore mode)",
     )
     parser.add_argument(
         "--no-improve-limit",
@@ -226,11 +226,41 @@ def parse_args() -> argparse.Namespace:
         "--trex-timeout", type=float, default=trex_cfg.get("timeout_s", 30),
         help="Timeout in seconds for running a TRex script (default 30)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--trex-explore",
+        action="store_true",
+        default=False,
+        help="TRex attack catalog exploration mode: the agent only generates "
+             "attack scripts with Chinese annotations (dry-run, no traffic, no "
+             "HITL) and saves the catalog summary to output/trex_attack_catalog.md.",
+    )
+    parser.add_argument(
+        "--catalog-target",
+        type=int,
+        default=10,
+        help="Minimum number of attack scripts the agent must generate in "
+             "--trex-explore mode (default 10)",
+    )
+    args = parser.parse_args()
+    if args.trex_explore and args.trex_live:
+        parser.error(
+            "--trex-explore cannot be combined with --trex-live: "
+            "explore mode never executes traffic"
+        )
+    if args.max_iters is None:
+        args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
+    return args
 
 
 def _build_user_message(args: argparse.Namespace) -> str:
     """Build the initial user message with experiment parameters."""
+    if args.trex_explore:
+        return (
+            "请开始 TRex 攻击能力探索：\n"
+            f"- 目标: 枚举并生成 ≥{args.catalog_target} 类攻击脚本（文件名 cat_ 开头）\n"
+            "- 模式: dry-run，只生成代码与中文注释，不发送任何流量\n"
+            "请严格按照系统提示中的探索协议执行（先规划 → 再生成 → 再总结）。"
+        )
     pcap_line = (
         f"- PCAP文件路径: {args.pcap_path}\n"
         if args.pcap_path
@@ -246,6 +276,18 @@ def _build_user_message(args: argparse.Namespace) -> str:
         "\n请严格按照系统提示中的实验协议执行。"
         "如果提供了PCAP文件，先用 pcap_profile 工具分析流量特征。"
     )
+
+
+def _apply_mode_env(args: argparse.Namespace) -> None:
+    """Apply env vars specific to the TRex explore mode (forced dry-run)."""
+    if args.trex_explore:
+        os.environ["TREX_DRY_RUN"] = "true"
+        os.environ["CATALOG_TARGET"] = str(args.catalog_target)
+
+
+def _recursion_limit(max_iters: int) -> int:
+    """Graph superstep budget — must cover the prompt-level max_iters."""
+    return max(25, max_iters + 5)
 
 
 def _extract_hitl_payload(gs) -> dict | None:
@@ -282,6 +324,7 @@ def main() -> None:
         os.environ["PKTGEN_PORT"] = str(args.pktgen_port)
 
     # ── TRex configuration ──
+    _apply_mode_env(args)
     if args.trex_live:
         os.environ["TREX_DRY_RUN"] = "false"
     if args.trex_host is not None:
@@ -303,8 +346,11 @@ def main() -> None:
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"
     print(f"Pktgen:     {pktgen_mode} ({pktgen_host}:{pktgen_port})")
-    trex_mode = "live" if args.trex_live else "dry-run"
+    trex_mode = "live" if args.trex_live else ("explore" if args.trex_explore else "dry-run")
     print(f"Trex:       {trex_mode} ({trex_host}:{trex_port})")
+    if args.trex_explore:
+        print(f"Catalog:    ≥{args.catalog_target} attack scripts → "
+              f"output/trex_attack_catalog.md (no traffic, no HITL)")
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
@@ -324,9 +370,14 @@ def main() -> None:
     verbose = VerboseCallback()
     graph = build_graph(
         max_iters=args.max_iters, no_improve_limit=args.no_improve_limit,
+        mode="catalog" if args.trex_explore else "experiment",
     )
     thread_id = str(uuid4())[:8]
-    config = {"configurable": {"thread_id": thread_id}, "callbacks": [verbose]}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "callbacks": [verbose],
+        "recursion_limit": _recursion_limit(args.max_iters),
+    }
 
     initial_state = {"messages": [{"role": "user", "content": _build_user_message(args)}]}
 
@@ -378,6 +429,14 @@ def main() -> None:
                 print("\n" + str(content))
             else:
                 print("(no summary output)")
+
+        # Catalog mode: persist the final summary as the deliverable.
+        if args.trex_explore and content:
+            out_dir = Path("output")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            catalog_path = out_dir / "trex_attack_catalog.md"
+            catalog_path.write_text(str(content), encoding="utf-8")
+            print(f"\nAttack catalog saved to: {catalog_path}")
 
         print(f"\nResults logged to: {args.log_path}")
     finally:
