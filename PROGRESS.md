@@ -1,5 +1,7 @@
 # 开发进度
 
+> ⚠️ **历史文档（已过时）**：本文档未反映 Pktgen-DPDK 集成、Web 控制台、17 工具、DeepSeek reasoning monkey-patch 等后续演进。当前事实源与未来规划见 **`ARCHITECTURE.md`**。
+
 > 基于 PLAN.md 的 TDD 开发阶段追踪，最后更新: 2026-05-18
 
 ## 总体进度
