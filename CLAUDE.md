@@ -33,6 +33,12 @@ uv run python src/main.py --target-ip 10.99.80.160 --duration 10 --pps 500 --pkt
 # With PCAP profiling
 uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapng
 
+# TRex attack catalog exploration — agent generates ≥10 attack scripts with
+# Chinese annotations (dry-run only: no traffic, no HITL) and saves the catalog
+# summary to output/trex_attack_catalog.md
+uv run python src/main.py --trex-explore
+uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
+
 # ── Web Console ──────────────────────────────────────────────────
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # Open http://localhost:8000
@@ -40,12 +46,19 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 
 ## Architecture
 
-### Agent Runtime (two modes)
+### Agent Runtime (three modes)
 
 ```
-┌─ CLI (src/main.py) ─────────────────────────────────────────────┐
+┌─ CLI experiment (src/main.py, default) ─────────────────────────┐
 │  Synchronous loop: graph.invoke() → poll interrupts → input()   │
 │  HITL: blocking input("Approve? (y/n): ")                       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─ CLI TRex explore (src/main.py --trex-explore) ─────────────────┐
+│  Attack catalog generation: tool set restricted to the 2 TRex   │
+│  tools (write + dry-run syntax check), forced dry-run.          │
+│  Zero traffic, zero HITL — runs fully autonomous; final summary │
+│  saved to output/trex_attack_catalog.md                         │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─ Web Console (backend/server.py + backend/experiment.py) ───────┐
@@ -56,7 +69,7 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Both modes use the same `build_graph()` → `CompiledStateGraph` with `MemorySaver` checkpointer.
+All modes use the same `build_graph()` → `CompiledStateGraph` with `MemorySaver` checkpointer. `build_graph(max_iters, no_improve_limit, mode)` selects the prompt template (`system_prompt.j2` vs `trex_catalog_prompt.j2`) and tool set (`EXPERIMENT_TOOLS` vs `TREX_TOOLS`); the caller passes the graph's superstep budget via invoke config (`_recursion_limit()` in main.py).
 
 ### Core Agent Loop
 
@@ -106,6 +119,7 @@ ExperimentManager (backend/experiment.py)
 | `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`, re-reading env each call |
 | `src/main.py` | CLI entry — reads `experiment.json`, sets env vars for tool defaults, parses CLI args, runs HITL polling loop with `VerboseCallback` for LLM I/O logging |
 | `src/prompts/system_prompt.j2` | Jinja2 system prompt — ReAct protocol, Pktgen tool tables, parameter semantics, optimization strategy table, concrete examples |
+| `src/prompts/trex_catalog_prompt.j2` | Jinja2 prompt for `--trex-explore` mode — plan→generate→summarize protocol, `cat_` filename rule, mandatory Chinese annotation block per script, catalog summary table format |
 | `src/config/experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms) |
 | `src/config/allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
@@ -132,7 +146,7 @@ ExperimentManager (backend/experiment.py)
 | Pktgen (added) | 9 | `pktgen_udp_flood`, `pktgen_tcp_flood`, `pktgen_icmp_flood`, `pktgen_arp_flood`, `pktgen_range_scan`, `pktgen_packet_sequence`, `pktgen_pcap_replay`, `pktgen_stats_monitor`, `pktgen_stop_and_reset` |
 | TRex (added) | 2 | `write_python_file`, `run_python_file` |
 
-HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution.
+HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution. `--trex-explore` is a dedicated catalog mode: the agent gets ONLY the 2 TRex tools (write + dry-run check), TRex dry-run is forced (mutually exclusive with `--trex-live`), so the whole loop runs with zero traffic and zero HITL; the final summary is persisted to `output/trex_attack_catalog.md` and scripts land in `trex_scripts/cat_*.py`.
 
 ### Pktgen Adapter Architecture
 

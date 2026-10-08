@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port, is_dry_run
 from src.trex.config import get_trex_host, get_trex_port, is_trex_dry_run
+from src.trex.tools import TREX_TOOLS
 from src.tools.traffic_send_tool import (
     MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
 )
@@ -98,10 +99,15 @@ def _build_model() -> ChatOpenAI:
     )
 
 
-def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5) -> str:
-    """Render the system prompt from Jinja2 template."""
+def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5, mode: str = "experiment") -> str:
+    """Render the system prompt from the Jinja2 template for the given mode.
+
+    mode="catalog" uses the TRex attack catalog exploration template; anything
+    else uses the default closed-loop experiment template.
+    """
     env = Environment(loader=FileSystemLoader(str(_PROMPTS_DIR)))
-    template = env.get_template("system_prompt.j2")
+    template_name = "trex_catalog_prompt.j2" if mode == "catalog" else "system_prompt.j2"
+    template = env.get_template(template_name)
     return template.render(
         max_pps=MAX_PPS,
         max_duration_s=MAX_DURATION_S,
@@ -125,33 +131,47 @@ def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5) -> str:
         pktgen_port=str(get_pktgen_port()),
         # TRex client context
         trex_available=_trex_available(),
-        trex_dry_run=is_trex_dry_run(),
+        trex_dry_run=True if mode == "catalog" else is_trex_dry_run(),
         trex_host=get_trex_host(),
         trex_port=str(get_trex_port()),
+        # TRex attack catalog exploration (mode="catalog")
+        catalog_target=int(os.environ.get("CATALOG_TARGET", "10")),
     )
 
 
-def build_graph(max_iters: int = 20, no_improve_limit: int = 5) -> CompiledStateGraph:
-    """Build the closed-loop experiment agent using create_agent.
+def build_graph(
+    max_iters: int = 20, no_improve_limit: int = 5, mode: str = "experiment",
+) -> CompiledStateGraph:
+    """Build the agent using create_agent.
 
     Args:
-        max_iters: Maximum experiment iterations (injected into system prompt).
-        no_improve_limit: Stop after N rounds without improvement.
+        max_iters: Maximum iterations (injected into system prompt).
+        no_improve_limit: Stop after N rounds without improvement
+            (closed-loop experiment mode only).
+        mode: "experiment" (default closed-loop RTT experiment) or "catalog"
+            (TRex attack catalog exploration — TRex tools only, forced
+            dry-run, no traffic, no HITL interrupts).
 
     Returns a CompiledStateGraph that follows the ReAct pattern:
     LLM reasons → calls tools → observes results → repeats until stop.
 
-    The traffic_send tool is wrapped with a HITL gate via langgraph interrupt().
+    The traffic tools are wrapped with HITL gates via langgraph interrupt().
     Caller must handle resume via Command(resume=True/False).
     """
     model = _build_model()
     system_prompt = _build_system_prompt(
-        max_iters=max_iters, no_improve_limit=no_improve_limit,
+        max_iters=max_iters, no_improve_limit=no_improve_limit, mode=mode,
     )
 
+    # Catalog mode: only the 2 TRex code tools (write + dry-run check) are
+    # registered — structurally guarantees no traffic tool is callable.
+    tools = TREX_TOOLS if mode == "catalog" else EXPERIMENT_TOOLS
+
+    # NOTE: the graph's superstep budget (recursion_limit) is passed by the
+    # caller via the invoke config — see _recursion_limit() in main.py.
     return create_agent(
         model=model,
-        tools=EXPERIMENT_TOOLS,
+        tools=tools,
         system_prompt=system_prompt,
         checkpointer=MemorySaver(),
     )
