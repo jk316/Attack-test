@@ -241,6 +241,13 @@ def parse_args() -> argparse.Namespace:
         help="Minimum number of attack scripts the agent must generate in "
              "--trex-explore mode (default 10)",
     )
+    parser.add_argument(
+        "--explore-direction",
+        default="",
+        help="User-specified exploration direction for --trex-explore mode, "
+             "injected into the catalog prompt (free-form text, e.g. "
+             '"重点探索DNS放大攻击和TCP SYN洪水")',
+    )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
         parser.error(
@@ -255,9 +262,15 @@ def parse_args() -> argparse.Namespace:
 def _build_user_message(args: argparse.Namespace) -> str:
     """Build the initial user message with experiment parameters."""
     if args.trex_explore:
+        direction_line = (
+            f"- 探索方向: {args.explore_direction}\n"
+            if args.explore_direction
+            else ""
+        )
         return (
             "请开始 TRex 攻击能力探索：\n"
             f"- 目标: 枚举并生成 ≥{args.catalog_target} 类攻击脚本（文件名 cat_ 开头）\n"
+            + direction_line +
             "- 模式: dry-run，只生成代码与中文注释，不发送任何流量\n"
             "请严格按照系统提示中的探索协议执行（先规划 → 再生成 → 再总结）。"
         )
@@ -283,6 +296,8 @@ def _apply_mode_env(args: argparse.Namespace) -> None:
     if args.trex_explore:
         os.environ["TREX_DRY_RUN"] = "true"
         os.environ["CATALOG_TARGET"] = str(args.catalog_target)
+        if args.explore_direction:
+            os.environ["EXPLORE_DIRECTION"] = args.explore_direction
 
 
 def _recursion_limit(max_iters: int) -> int:
@@ -351,6 +366,8 @@ def main() -> None:
     if args.trex_explore:
         print(f"Catalog:    ≥{args.catalog_target} attack scripts → "
               f"output/trex_attack_catalog.md (no traffic, no HITL)")
+        if args.explore_direction:
+            print(f"Direction:  {args.explore_direction}")
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
