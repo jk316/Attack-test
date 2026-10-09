@@ -39,6 +39,10 @@ uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapn
 uv run python src/main.py --trex-explore
 uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 
+# Per-run exploration direction — free-form text injected into the catalog
+# prompt (no traffic, no HITL; omit for generic exploration)
+uv run python src/main.py --trex-explore --explore-direction "重点探索DNS放大攻击和TCP SYN洪水"
+
 # ── Web Console ──────────────────────────────────────────────────
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # Open http://localhost:8000

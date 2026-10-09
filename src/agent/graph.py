@@ -136,6 +136,7 @@ def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5, mode: s
         trex_port=str(get_trex_port()),
         # TRex attack catalog exploration (mode="catalog")
         catalog_target=int(os.environ.get("CATALOG_TARGET", "10")),
+        explore_direction=os.environ.get("EXPLORE_DIRECTION", ""),
     )
 
 

@@ -46,6 +46,15 @@ class TestCatalogCliArgs:
         assert args.max_iters == 15
         assert args.catalog_target == 5
 
+    def test_explore_direction_default_empty(self):
+        args = _parse(["--trex-explore"])
+        assert args.explore_direction == ""
+
+    def test_explore_direction_parsed(self):
+        args = _parse(["--trex-explore", "--explore-direction",
+                       "重点探索DNS放大攻击和TCP SYN洪水"])
+        assert args.explore_direction == "重点探索DNS放大攻击和TCP SYN洪水"
+
     def test_apply_mode_env_forces_dry_run(self, monkeypatch):
         import os
 
@@ -53,7 +62,8 @@ class TestCatalogCliArgs:
 
         monkeypatch.delenv("TREX_DRY_RUN", raising=False)
         monkeypatch.delenv("CATALOG_TARGET", raising=False)
-        _apply_mode_env(argparse.Namespace(trex_explore=True, catalog_target=7))
+        _apply_mode_env(argparse.Namespace(trex_explore=True, catalog_target=7,
+                                           explore_direction=""))
         assert os.environ.get("TREX_DRY_RUN") == "true"
         assert os.environ.get("CATALOG_TARGET") == "7"
 
@@ -63,9 +73,22 @@ class TestCatalogCliArgs:
         from src.main import _apply_mode_env
 
         monkeypatch.delenv("TREX_DRY_RUN", raising=False)
+        monkeypatch.delenv("EXPLORE_DIRECTION", raising=False)
         monkeypatch.setenv("TREX_DRY_RUN", "false")
-        _apply_mode_env(argparse.Namespace(trex_explore=False, catalog_target=7))
+        _apply_mode_env(argparse.Namespace(trex_explore=False, catalog_target=7,
+                                           explore_direction="DNS放大"))
         assert os.environ.get("TREX_DRY_RUN") == "false"  # untouched
+        assert "EXPLORE_DIRECTION" not in os.environ
+
+    def test_apply_mode_env_sets_explore_direction(self, monkeypatch):
+        import os
+
+        from src.main import _apply_mode_env
+
+        monkeypatch.delenv("EXPLORE_DIRECTION", raising=False)
+        _apply_mode_env(argparse.Namespace(trex_explore=True, catalog_target=7,
+                                           explore_direction="DNS放大"))
+        assert os.environ.get("EXPLORE_DIRECTION") == "DNS放大"
 
     def test_recursion_limit_covers_max_iters(self):
         from src.main import _recursion_limit
@@ -81,12 +104,24 @@ class TestCatalogUserMessage:
         from src.main import _build_user_message
 
         msg = _build_user_message(
-            argparse.Namespace(trex_explore=True, catalog_target=12, max_iters=40)
+            argparse.Namespace(trex_explore=True, catalog_target=12, max_iters=40,
+                               explore_direction="")
         )
         assert "TRex 攻击能力探索" in msg
         assert "≥12" in msg
         assert "dry-run" in msg
         assert "不发送任何流量" in msg
+        assert "探索方向" not in msg  # empty direction adds no line
+
+    def test_explore_message_includes_direction(self):
+        from src.main import _build_user_message
+
+        msg = _build_user_message(
+            argparse.Namespace(trex_explore=True, catalog_target=12, max_iters=40,
+                               explore_direction="重点探索DNS放大")
+        )
+        assert "探索方向" in msg
+        assert "重点探索DNS放大" in msg
 
     def test_experiment_message(self):
         from src.main import _build_user_message
@@ -118,6 +153,20 @@ class TestCatalogPrompt:
         prompt = _build_system_prompt(mode="experiment")
         assert "闭环网络实验" in prompt
         assert "攻击能力探索" not in prompt
+
+    def test_explore_direction_rendered_when_set(self, monkeypatch):
+        monkeypatch.setenv("EXPLORE_DIRECTION", "重点探索DNS放大攻击和TCP SYN洪水")
+        prompt = _build_system_prompt(mode="catalog")
+        assert "## 本次探索方向" in prompt
+        assert "重点探索DNS放大攻击和TCP SYN洪水" in prompt
+
+    def test_no_direction_section_when_unset(self, monkeypatch):
+        monkeypatch.delenv("EXPLORE_DIRECTION", raising=False)
+        empty = _build_system_prompt(mode="catalog")
+        assert "本次探索方向" not in empty
+        assert "重点覆盖以下方向" not in empty
+        monkeypatch.setenv("EXPLORE_DIRECTION", "")
+        assert _build_system_prompt(mode="catalog") == empty  # empty renders identically
 
 
 # ── build_graph mode threading ──────────────────────────────────────
