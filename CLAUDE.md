@@ -35,7 +35,7 @@ uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapn
 
 # TRex attack catalog exploration — agent generates ≥10 attack scripts with
 # Chinese annotations (dry-run only: no traffic, no HITL) and saves the catalog
-# summary to output/trex_attack_catalog.md
+# summary to output/trex_attack_catalog_<timestamp>.md
 uv run python src/main.py --trex-explore
 uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 
@@ -62,7 +62,7 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 │  Attack catalog generation: tool set restricted to the 2 TRex   │
 │  tools (write + dry-run syntax check), forced dry-run.          │
 │  Zero traffic, zero HITL — runs fully autonomous; final summary │
-│  saved to output/trex_attack_catalog.md                         │
+│  saved to output/trex_attack_catalog_<timestamp>.md             │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─ Web Console (backend/server.py + backend/experiment.py) ───────┐
@@ -150,7 +150,7 @@ ExperimentManager (backend/experiment.py)
 | Pktgen (added) | 9 | `pktgen_udp_flood`, `pktgen_tcp_flood`, `pktgen_icmp_flood`, `pktgen_arp_flood`, `pktgen_range_scan`, `pktgen_packet_sequence`, `pktgen_pcap_replay`, `pktgen_stats_monitor`, `pktgen_stop_and_reset` |
 | TRex (added) | 2 | `write_python_file`, `run_python_file` |
 
-HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution. `--trex-explore` is a dedicated catalog mode: the agent gets ONLY the 2 TRex tools (write + dry-run check), TRex dry-run is forced (mutually exclusive with `--trex-live`), so the whole loop runs with zero traffic and zero HITL; the final summary is persisted to `output/trex_attack_catalog.md` and scripts land in `trex_scripts/cat_*.py`.
+HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution. `--trex-explore` is a dedicated catalog mode: the agent gets ONLY the 2 TRex tools (write + dry-run check), TRex dry-run is forced (mutually exclusive with `--trex-live`), so the whole loop runs with zero traffic and zero HITL; the final summary is persisted to `output/trex_attack_catalog_<timestamp>.md` (timestamp keeps each run's report from overwriting the previous one) and scripts land in `trex_scripts/cat_*.py`.
 
 ### Pktgen Adapter Architecture
 

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -232,7 +233,8 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="TRex attack catalog exploration mode: the agent only generates "
              "attack scripts with Chinese annotations (dry-run, no traffic, no "
-             "HITL) and saves the catalog summary to output/trex_attack_catalog.md.",
+             "HITL) and saves the catalog summary to "
+             "output/trex_attack_catalog_<timestamp>.md.",
     )
     parser.add_argument(
         "--catalog-target",
@@ -364,8 +366,10 @@ def main() -> None:
     trex_mode = "live" if args.trex_live else ("explore" if args.trex_explore else "dry-run")
     print(f"Trex:       {trex_mode} ({trex_host}:{trex_port})")
     if args.trex_explore:
+        catalog_path = (Path("output")
+                        / f"trex_attack_catalog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
         print(f"Catalog:    ≥{args.catalog_target} attack scripts → "
-              f"output/trex_attack_catalog.md (no traffic, no HITL)")
+              f"{catalog_path} (no traffic, no HITL)")
         if args.explore_direction:
             print(f"Direction:  {args.explore_direction}")
     print()
@@ -449,9 +453,7 @@ def main() -> None:
 
         # Catalog mode: persist the final summary as the deliverable.
         if args.trex_explore and content:
-            out_dir = Path("output")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            catalog_path = out_dir / "trex_attack_catalog.md"
+            catalog_path.parent.mkdir(parents=True, exist_ok=True)
             catalog_path.write_text(str(content), encoding="utf-8")
             print(f"\nAttack catalog saved to: {catalog_path}")
 

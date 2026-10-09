@@ -32,5 +32,3 @@ lua_scripts/
 # TRex generated client scripts
 trex_scripts/
 
-# TRex explore catalog output
-output/
