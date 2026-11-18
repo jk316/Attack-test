@@ -43,6 +43,14 @@ uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 # prompt (no traffic, no HITL; omit for generic exploration)
 uv run python src/main.py --trex-explore --explore-direction "重点探索DNS放大攻击和TCP SYN洪水"
 
+# Named preset — switch a whole parameter group in one flag
+# (see experiment.json "profiles")
+uv run python src/main.py --profile high_pps
+
+# Free-form instruction for experiment mode — injected into user message
+# and system prompt (dry-run by default, no traffic without --pktgen-live)
+uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
+
 # ── Web Console ──────────────────────────────────────────────────
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # Open http://localhost:8000

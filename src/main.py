@@ -92,29 +92,71 @@ DEFAULTS: dict = {
 }
 
 
-def _load_config_defaults() -> dict:
-    """Load experiment defaults from config file, falling back to hardcoded values."""
+# Config sections that a named profile may override (nested, deep-merged).
+_SECTION_KEYS = ("attack", "pktgen", "trex")
+
+
+def _read_config_file() -> dict:
+    """Read experiment.json, returning {} on missing file or parse error."""
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _apply_profile(cfg: dict, data: dict, profile: str) -> dict:
+    """Overlay a named profile (data['profiles'][profile]) onto cfg immutably.
+
+    Scalar keys are replaced; nested sections are shallow-merged so a profile
+    only needs to list the keys it changes.
+    """
+    profiles = data.get("profiles", {})
+    if profile not in profiles:
+        available = ", ".join(sorted(profiles)) or "(none)"
+        raise SystemExit(f"未知 profile: {profile!r}，可用: {available}")
+    overrides = profiles[profile]
+    result = dict(cfg)
+    for key in DEFAULTS:
+        if key in overrides:
+            result[key] = overrides[key]
+    for key in _SECTION_KEYS:
+        if key in overrides:
+            result[key] = {**(result.get(key) or {}), **overrides[key]}
+    return result
+
+
+def _load_config_defaults(profile: str | None = None) -> dict:
+    """Load experiment defaults from config, optionally overlaid with a named profile."""
+    data = _read_config_file()
     merged = dict(DEFAULTS)
-    if CONFIG_PATH.exists():
-        try:
-            with open(CONFIG_PATH, "r") as f:
-                data = json.load(f)
-            for key in DEFAULTS:
-                if key in data:
-                    merged[key] = data[key]
-            # Preserve nested config sections (attack/pktgen/trex) for parse_args().
-            for key in ("attack", "pktgen", "trex"):
-                if key in data:
-                    merged[key] = data[key]
-        except (json.JSONDecodeError, OSError):
-            pass
+    for key in DEFAULTS:
+        if key in data:
+            merged[key] = data[key]
+    for key in _SECTION_KEYS:
+        if key in data:
+            merged[key] = dict(data[key])
+    if profile:
+        merged = _apply_profile(merged, data, profile)
     return merged
 
 
 def parse_args() -> argparse.Namespace:
-    cfg = _load_config_defaults()
+    # Pre-scan --profile so the profile's defaults feed the remaining args' defaults.
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--profile", default=None)
+    pre_args, _ = pre_parser.parse_known_args()
+
+    cfg = _load_config_defaults(profile=pre_args.profile)
     parser = argparse.ArgumentParser(
         description="Closed-Loop Network Experiment Agent"
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="命名预设：一键切换整组参数（定义于 experiment.json 的 profiles）",
     )
     parser.add_argument(
         "--target-ip",
@@ -250,6 +292,11 @@ def parse_args() -> argparse.Namespace:
              "injected into the catalog prompt (free-form text, e.g. "
              '"重点探索DNS放大攻击和TCP SYN洪水")',
     )
+    parser.add_argument(
+        "--instruction",
+        default="",
+        help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
+    )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
         parser.error(
@@ -276,6 +323,11 @@ def _build_user_message(args: argparse.Namespace) -> str:
             "- 模式: dry-run，只生成代码与中文注释，不发送任何流量\n"
             "请严格按照系统提示中的探索协议执行（先规划 → 再生成 → 再总结）。"
         )
+    instruction_line = (
+        f"- 用户指令: {getattr(args, 'instruction', '')}\n"
+        if getattr(args, "instruction", "")
+        else ""
+    )
     pcap_line = (
         f"- PCAP文件路径: {args.pcap_path}\n"
         if args.pcap_path
@@ -283,6 +335,7 @@ def _build_user_message(args: argparse.Namespace) -> str:
     )
     return (
         "请开始闭环网络实验：\n"
+        + instruction_line +
         f"- 目标IP: {args.target_ip}\n"
         f"- 最大迭代次数: {args.max_iters}\n"
         f"- 无改善停止轮数: {args.no_improve_limit}\n"
@@ -340,6 +393,9 @@ def main() -> None:
     if args.pktgen_port is not None:
         os.environ["PKTGEN_PORT"] = str(args.pktgen_port)
 
+    # ── User instruction (experiment mode, injected into prompt) ──
+    os.environ["INSTRUCTION"] = args.instruction
+
     # ── TRex configuration ──
     _apply_mode_env(args)
     if args.trex_live:
@@ -361,6 +417,10 @@ def main() -> None:
     print(f"Log:        {args.log_path}")
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
+    if args.profile:
+        print(f"Profile:    {args.profile}")
+    if args.instruction:
+        print(f"Instruction: {args.instruction}")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"
     print(f"Pktgen:     {pktgen_mode} ({pktgen_host}:{pktgen_port})")
     trex_mode = "live" if args.trex_live else ("explore" if args.trex_explore else "dry-run")

@@ -204,6 +204,12 @@ uv run python src/main.py --target-ip 10.99.80.160 --duration 10 --pps 500 --pkt
 # 带 PCAP 流量画像
 uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapng
 
+# 命名预设 profile —— 一键切换整组参数（定义于 experiment.json 的 profiles）
+uv run python src/main.py --profile high_pps
+
+# 普通模式自由文本指令 —— 注入 user message 和 system prompt
+uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
+
 # TRex 攻击目录探索（可指定数量与探索方向）
 uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 uv run python src/main.py --trex-explore --explore-direction "重点探索DNS放大攻击和TCP SYN洪水"
@@ -230,6 +236,8 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 | `--trex-explore` | `False` | TRex 攻击目录探索模式 |
 | `--catalog-target` | 10 | 探索模式最少生成脚本数 |
 | `--explore-direction` | 空 | 探索方向（自由文本注入提示词） |
+| `--profile` | 无 | 命名预设，一键切换整组参数（定义于 `experiment.json` 的 `profiles`） |
+| `--instruction` | 空 | 普通模式自由文本目标/指令（注入 user message 和 system prompt） |
 
 > `--trex-explore` 与 `--trex-live` 互斥（探索模式绝不发送流量）。
 

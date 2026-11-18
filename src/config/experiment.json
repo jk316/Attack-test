@@ -17,5 +17,17 @@
     },
     "trex": {
         "timeout_s": 30
+    },
+    "profiles": {
+        "high_pps": {
+            "attack": { "pps": 2000, "duration_s": 5 }
+        },
+        "long_run": {
+            "max_iters": 40,
+            "attack": { "duration_s": 20, "pps": 500 }
+        },
+        "pktgen_max": {
+            "pktgen": { "rate": 100, "duration_ms": 30000 }
+        }
     }
 }
