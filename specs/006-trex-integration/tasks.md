@@ -42,8 +42,8 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 **目的**: 回溯式特性没有从零搭建——本阶段确认现有实现与测试基线可信。
 
-- [ ] T001 运行基线测试 `uv run pytest tests/unit/test_trex_tools.py tests/unit/test_trex_catalog_mode.py -v`，记录全绿/已知失败清单（现有约 40 个用例覆盖门控链与探索模式）
-- [ ] T002 确认依赖与环境：`uv sync --extra dev`；确认 `src/trex/config.py` 的 yaml 拓扑读取可用、`sys.executable` 子进程环境可运行测试脚本
+- [x] T001 运行基线测试 `uv run pytest tests/unit/test_trex_tools.py tests/unit/test_trex_catalog_mode.py -v`，记录全绿/已知失败清单（现有约 40 个用例覆盖门控链与探索模式）
+- [x] T002 确认依赖与环境：`uv sync --extra dev`；确认 `src/trex/config.py` 的 yaml 拓扑读取可用、`sys.executable` 子进程环境可运行测试脚本
 
 ---
 
@@ -53,8 +53,8 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 **⚠️ 关键**: 本阶段完成前不得开始任何用户故事工作。
 
-- [ ] T003 [P] 契约现状核对：对照 `specs/006-trex-integration/contracts/trex-script-sandbox.md` 与 `contracts/trex-run-gates.md` 逐项核对 `src/trex/tools.py`、`src/trex/config.py`、`src/main.py` 现状，输出「已满足 / G1 缺口 / G2 缺口 / G3 缺口」核对表，标注现状证据行号（只读核对，不改代码）
-- [ ] T004 [P] main.py 探索分支定位：梳理 `src/main.py` 中探索模式的参数解析区（`--trex-explore`/`--catalog-target`/`--explore-direction` 约 273–291 行）、env 注入（`_apply_trex_explore_env` 约 350 行）、收尾区（目录摘要落盘约 515 行），产出 G1/G2 的精确修改位置清单（只读梳理）。注意：`src/main.py` 与 005 的 T004（PKTGEN_SRC_IP 注入）及 008 的改动同文件，实施前以 git 状态为准避免互相覆盖
+- [x] T003 [P] 契约现状核对：对照 `specs/006-trex-integration/contracts/trex-script-sandbox.md` 与 `contracts/trex-run-gates.md` 逐项核对 `src/trex/tools.py`、`src/trex/config.py`、`src/main.py` 现状，输出「已满足 / G1 缺口 / G2 缺口 / G3 缺口」核对表，标注现状证据行号（只读核对，不改代码）
+- [x] T004 [P] main.py 探索分支定位：梳理 `src/main.py` 中探索模式的参数解析区（`--trex-explore`/`--catalog-target`/`--explore-direction` 约 273–291 行）、env 注入（`_apply_trex_explore_env` 约 350 行）、收尾区（目录摘要落盘约 515 行），产出 G1/G2 的精确修改位置清单（只读梳理）。注意：`src/main.py` 与 005 的 T004（PKTGEN_SRC_IP 注入）及 008 的改动同文件，实施前以 git 状态为准避免互相覆盖
 
 **检查点**: 基线可信、缺口位置明确——用户故事可以开始。
 
@@ -70,16 +70,16 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 > **注意：先写测试，确认失败后再实现（宪法三·测试伴随）**
 
-- [ ] T005 [P] [US1] 失败测试 G3：扩展 `tests/unit/test_trex_tools.py`——用 mock `interrupt` 捕获审批 payload，断言其 `warning` 字段包含「静态 IP 筛查可被混淆绕过，请人工审查脚本内容」类提示（当前 payload 仅含完整权限警告）。写完后运行确认失败
-- [ ] T006 [P] [US1] 契约补测：新建 `tests/unit/test_trex_config.py`——断言 `get_trex_timeout_s()` 钳制语义（0/负数/非法值/超 300 一律回退默认 30、(0,300] 内取配置值）、`get_trex_host()/get_trex_port()` env 优先与拓扑回退、`is_trex_dry_run()` 仅显式 "false" 为 live；断言 `src/trex/tools.py` 的 `_truncate()` 截断 4000 字符并附 `…(+N chars)` 后缀（对应 contracts/trex-run-gates.md 第 4 节）
+- [x] T005 [P] [US1] 失败测试 G3：扩展 `tests/unit/test_trex_tools.py`——用 mock `interrupt` 捕获审批 payload，断言其 `warning` 字段包含「静态 IP 筛查可被混淆绕过，请人工审查脚本内容」类提示（当前 payload 仅含完整权限警告）。写完后运行确认失败
+- [x] T006 [P] [US1] 契约补测：新建 `tests/unit/test_trex_config.py`——断言 `get_trex_timeout_s()` 钳制语义（0/负数/非法值/超 300 一律回退默认 30、(0,300] 内取配置值）、`get_trex_host()/get_trex_port()` env 优先与拓扑回退、`is_trex_dry_run()` 仅显式 "false" 为 live；断言 `src/trex/tools.py` 的 `_truncate()` 截断 4000 字符并附 `…(+N chars)` 后缀（对应 contracts/trex-run-gates.md 第 4 节）
 
 ### 用户故事 1 的实现
 
-- [ ] T007 [US1] 实现 G3：在 `src/trex/tools.py` 的 `_execute_live` 审批 payload（约 177–185 行的 `warning` 字段）补充「脚本内 IP 静态筛查可被混淆绕过，请人工审查脚本内容」提示，与既有「完整权限执行任意 Python」警告并列（依赖 T005）
+- [x] T007 [US1] 实现 G3：在 `src/trex/tools.py` 的 `_execute_live` 审批 payload（约 177–185 行的 `warning` 字段）补充「脚本内 IP 静态筛查可被混淆绕过，请人工审查脚本内容」提示，与既有「完整权限执行任意 Python」警告并列（依赖 T005）
 
 ### 用户故事 1 的验证
 
-- [ ] T008 [US1] US1 全绿验证：运行 `tests/unit/test_trex_tools.py`、`tests/unit/test_trex_config.py` 全量，修复回归；确认 dry-run 零执行零审批（依赖 T005、T006、T007）
+- [x] T008 [US1] US1 全绿验证：运行 `tests/unit/test_trex_tools.py`、`tests/unit/test_trex_config.py` 全量，修复回归；确认 dry-run 零执行零审批（依赖 T005、T006、T007）
 
 **检查点**: 用户故事 1 应完整可用且可独立测试（对应 quickstart 场景 4/5）。
 
@@ -93,11 +93,11 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 ### 用户故事 2 的测试 ⚠️
 
-- [ ] T009 [P] [US2] 回归核对与补齐：核对 `tests/unit/test_trex_catalog_mode.py` 现有用例（`test_explore_with_trex_live_conflicts`、`test_apply_mode_env_forces_dry_run`、`test_catalog_mode_restricts_tools_to_trex`、`test_default_mode_keeps_full_tool_set` 等），补齐缺口断言：互斥时报错且退出码非 0、探索模式强制 `TREX_DRY_RUN=true`、dry-run 下 `run_python_file` 零执行零审批
+- [x] T009 [P] [US2] 回归核对与补齐：核对 `tests/unit/test_trex_catalog_mode.py` 现有用例（`test_explore_with_trex_live_conflicts`、`test_apply_mode_env_forces_dry_run`、`test_catalog_mode_restricts_tools_to_trex`、`test_default_mode_keeps_full_tool_set` 等），补齐缺口断言：互斥时报错且退出码非 0、探索模式强制 `TREX_DRY_RUN=true`、dry-run 下 `run_python_file` 零执行零审批
 
 ### 用户故事 2 的验证
 
-- [ ] T010 [US2] 手动验证：按 `specs/006-trex-integration/quickstart.md` 场景 1 运行 `uv run python src/main.py --trex-explore --trex-live`，确认报错文案与进程退出码非 0（依赖 T009）
+- [x] T010 [US2] 手动验证：按 `specs/006-trex-integration/quickstart.md` 场景 1 运行 `uv run python src/main.py --trex-explore --trex-live`，确认报错文案与进程退出码非 0（依赖 T009）
 
 **检查点**: 用户故事 2 应完整可用且可独立测试。
 
@@ -111,16 +111,16 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 ### 用户故事 3 的测试 ⚠️
 
-- [ ] T011 [P] [US3] 失败测试 G1+G2：新建 `tests/unit/test_trex_catalog_exit.py`——断言 `--catalog-target 0`/`-1` 解析报错且退出码非 0（G1a）；断言达标计数函数：用 tmp_path 构造 `cat_*.py`（含语法错误与正确脚本），语法通过数 ≥target → 退出码 0、未达标 → 退出码 1 且总结仍落盘（G1b）；断言 `--clean-scripts` 仅删除 `cat_*.py`、保留非 `cat_` 文件并打印清理横幅（G2）。写完后运行确认失败
+- [x] T011 [P] [US3] 失败测试 G1+G2：新建 `tests/unit/test_trex_catalog_exit.py`——断言 `--catalog-target 0`/`-1` 解析报错且退出码非 0（G1a）；断言达标计数函数：用 tmp_path 构造 `cat_*.py`（含语法错误与正确脚本），语法通过数 ≥target → 退出码 0、未达标 → 退出码 1 且总结仍落盘（G1b）；断言 `--clean-scripts` 仅删除 `cat_*.py`、保留非 `cat_` 文件并打印清理横幅（G2）。写完后运行确认失败
 
 ### 用户故事 3 的实现
 
-- [ ] T012 [US3] 实现 G1：在 `src/main.py` 参数解析区拒绝 `--catalog-target < 1`（`parser.error` 口径，与互斥报错一致）；在探索收尾区（目录摘要落盘之后）新增达标统计——对 `trex_scripts/cat_*.py` 逐一做 parse-only 语法检查并计数，≥catalog_target → 退出码 0，未达标 → 仍落盘总结（FR-021）但退出码 1（依赖 T011）
-- [ ] T013 [US3] 实现 G2：在 `src/main.py` 新增 `--clean-scripts`（bool，默认 False，仅探索模式生效）：启动时（env 注入前）删除 `trex_scripts/cat_*.py`，绝不动非 `cat_` 文件，并在启动横幅打印清理行为；与 T012 同文件，顺序执行（依赖 T011）
+- [x] T012 [US3] 实现 G1：在 `src/main.py` 参数解析区拒绝 `--catalog-target < 1`（`parser.error` 口径，与互斥报错一致）；在探索收尾区（目录摘要落盘之后）新增达标统计——对 `trex_scripts/cat_*.py` 逐一做 parse-only 语法检查并计数，≥catalog_target → 退出码 0，未达标 → 仍落盘总结（FR-021）但退出码 1（依赖 T011）
+- [x] T013 [US3] 实现 G2：在 `src/main.py` 新增 `--clean-scripts`（bool，默认 False，仅探索模式生效）：启动时（env 注入前）删除 `trex_scripts/cat_*.py`，绝不动非 `cat_` 文件，并在启动横幅打印清理行为；与 T012 同文件，顺序执行（依赖 T011）
 
 ### 用户故事 3 的验证
 
-- [ ] T014 [P] [US3] 渲染回归：运行 `tests/unit/test_trex_catalog_mode.py` 现有 19 个用例，确认 G1/G2 不影响提示词渲染、互斥逻辑与工具集限制；如有失败修复并注明原因（依赖 T012、T013）
+- [x] T014 [P] [US3] 渲染回归：运行 `tests/unit/test_trex_catalog_mode.py` 现有 19 个用例，确认 G1/G2 不影响提示词渲染、互斥逻辑与工具集限制；如有失败修复并注明原因（依赖 T012、T013）
 
 **检查点**: 用户故事 3 应完整可用且可独立测试（对应 quickstart 场景 2/3）。
 
@@ -130,9 +130,9 @@ description: "TRex 集成与攻击目录探索实现任务列表"
 
 **目的**: 影响多个用户故事的文档口径与最终验收。
 
-- [ ] T015 [P] 提示词口径核对：核对 `src/prompts/trex_catalog_prompt.j2` 与退出码/清理参数新口径无矛盾；必要时在「停止条件」段补充「未达标（预算耗尽）的运行会以非 0 退出码结束；可用 `--clean-scripts` 在启动时清空旧 `cat_` 脚本」说明（不改硬性约束语义）
-- [ ] T016 端到端验证：按 `specs/006-trex-integration/quickstart.md` 场景 2/3 运行（`--trex-explore` 默认，及 `--trex-explore --catalog-target 15 --explore-direction "重点探索DNS放大攻击和TCP SYN洪水" --clean-scripts --max-iters 60`），核对：≥N 个语法通过 cat_ 脚本、100% 中文注释块、摘要落盘且互不覆盖、退出码 0、清理行为、全程零流量零 HITL
-- [ ] T017 全量回归 + 契约终核：`uv run pytest tests/ -v` 全绿；逐条核对 `contracts/trex-run-gates.md` 第 6 节不变量与 `contracts/trex-script-sandbox.md` 第 5 节不变量
+- [x] T015 [P] 提示词口径核对：核对 `src/prompts/trex_catalog_prompt.j2` 与退出码/清理参数新口径无矛盾；必要时在「停止条件」段补充「未达标（预算耗尽）的运行会以非 0 退出码结束；可用 `--clean-scripts` 在启动时清空旧 `cat_` 脚本」说明（不改硬性约束语义）
+- [x] T016 端到端验证：按 `specs/006-trex-integration/quickstart.md` 场景 2/3 运行（`--trex-explore` 默认，及 `--trex-explore --catalog-target 15 --explore-direction "重点探索DNS放大攻击和TCP SYN洪水" --clean-scripts --max-iters 60`），核对：≥N 个语法通过 cat_ 脚本、100% 中文注释块、摘要落盘且互不覆盖、退出码 0、清理行为、全程零流量零 HITL
+- [x] T017 全量回归 + 契约终核：`uv run pytest tests/ -v` 全绿；逐条核对 `contracts/trex-run-gates.md` 第 6 节不变量与 `contracts/trex-script-sandbox.md` 第 5 节不变量
 
 ---
 

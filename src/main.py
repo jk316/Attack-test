@@ -23,7 +23,7 @@ from src.agent.state import (  # noqa: E402
     check_stop_condition,
 )
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
-from src.trex.config import get_trex_host, get_trex_port  # noqa: E402
+from src.trex.config import get_trex_host, get_trex_port, get_trex_scripts_dir  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from src.tools.ping_rtt_tool import is_allowlisted  # noqa: E402
 from langgraph.types import Command  # noqa: E402
@@ -298,6 +298,13 @@ def parse_args() -> argparse.Namespace:
              '"重点探索DNS放大攻击和TCP SYN洪水")',
     )
     parser.add_argument(
+        "--clean-scripts",
+        action="store_true",
+        default=False,
+        help="仅 --trex-explore 生效：启动时清空 trex_scripts/cat_*.py 旧脚本"
+             "（绝不动非 cat_ 文件）",
+    )
+    parser.add_argument(
         "--instruction",
         default="",
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
@@ -307,6 +314,11 @@ def parse_args() -> argparse.Namespace:
         parser.error(
             "--trex-explore 与 --trex-live 互斥：目录探索模式绝不执行流量，"
             "两者不能同时指定"
+        )
+    if args.catalog_target < 1:
+        parser.error(
+            f"--catalog-target 必须 ≥ 1（收到 {args.catalog_target}）："
+            "目录探索目标脚本数至少为 1"
         )
     if args.max_iters is None:
         args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
@@ -409,6 +421,70 @@ def _apply_mode_env(args: argparse.Namespace) -> None:
 def _recursion_limit(max_iters: int) -> int:
     """Graph superstep budget — must cover the prompt-level max_iters."""
     return max(25, max_iters + 5)
+
+
+def _count_syntax_ok_catalog_scripts(scripts_dir: Path) -> int:
+    """G1（006-T012）：对 trex_scripts/cat_*.py 逐一 parse-only 语法检查并计数。
+
+    与 write_python_file 的语法检查口径一致（仅解析、绝不执行）；非 cat_
+    前缀文件与不可读文件不参与计数。
+    """
+    if not scripts_dir.is_dir():
+        return 0
+    passed = 0
+    for script in sorted(scripts_dir.glob("cat_*.py")):
+        try:
+            compile(script.read_text(encoding="utf-8"), str(script), "exec")
+        except (SyntaxError, OSError, UnicodeDecodeError, ValueError):
+            continue
+        passed += 1
+    return passed
+
+
+def _catalog_exit_code(passed: int, catalog_target: int) -> int:
+    """G1（006-T012）：达标 → 退出码 0，未达标 → 退出码 1。"""
+    return 0 if passed >= catalog_target else 1
+
+
+def _clean_catalog_scripts(scripts_dir: Path) -> int:
+    """G2（006-T013）：仅删除 trex_scripts/cat_*.py（绝不递归、绝不动非 cat_ 文件）。
+
+    返回删除数量；目录不存在返回 0。
+    """
+    if not scripts_dir.is_dir():
+        return 0
+    removed = 0
+    for script in sorted(scripts_dir.glob("cat_*.py")):
+        try:
+            script.unlink()
+        except OSError:
+            continue
+        removed += 1
+    return removed
+
+
+def _finalize_catalog_run(
+    catalog_path: Path,
+    scripts_dir: Path,
+    catalog_target: int,
+    content: str,
+) -> int:
+    """G1（006-T012）：落盘目录摘要（FR-021）并返回达标退出码。
+
+    无论达标与否，最终总结均写入 catalog_path（空 content 不写文件，
+    与既有边界口径一致）；随后统计语法通过的 cat_*.py 数量：
+    ≥ catalog_target → 0，否则 1。
+    """
+    if content:
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(str(content), encoding="utf-8")
+        print(f"\nAttack catalog saved to: {catalog_path}")
+    else:
+        print("\n（目录探索最终消息为空，未写入摘要文件）")
+    passed = _count_syntax_ok_catalog_scripts(scripts_dir)
+    exit_code = _catalog_exit_code(passed, catalog_target)
+    print(f"[达标判定] 语法通过的 cat_*.py: {passed}（目标 ≥{catalog_target}）→ 退出码 {exit_code}")
+    return exit_code
 
 
 def _extract_hitl_payload(gs) -> dict | None:
@@ -542,9 +618,20 @@ def _inject_pcap_profile_env(args: argparse.Namespace) -> None:
     os.environ["PCAP_PROFILE_IDLE_TIMEOUT_S"] = str(pp.get("idle_timeout_s", 30))
 
 
-def main() -> None:
+def main() -> int | None:
+    """CLI 入口：实验模式返回 None（退出码 0），探索模式返回达标退出码 0/1。"""
     args = parse_args()
     _run_preflight(args)
+
+    # G2（006-T013）：--clean-scripts 仅探索模式生效，启动时（env 注入前）
+    # 清空 trex_scripts/cat_*.py 旧脚本，绝不动非 cat_ 文件。
+    if args.trex_explore and args.clean_scripts:
+        removed = _clean_catalog_scripts(get_trex_scripts_dir())
+        if removed:
+            print(f"[clean-scripts] 已删除 {removed} 个旧 cat_*.py 脚本"
+                  "（仅 trex_scripts/cat_*.py）")
+        else:
+            print("[clean-scripts] trex_scripts/ 无旧 cat_*.py 脚本可清理")
 
     # 画像映射种子（004-T016）：先于 env 注入，使映射值经 env 进入工具默认
     _apply_profile_seeds(args)
@@ -731,14 +818,13 @@ def main() -> None:
                     print("(no summary output)")
 
         # Catalog mode: persist the final summary as the deliverable.
+        # G1（006-T012）：达标统计（parse-only 语法检查）与退出码判定——
+        # 无论达标与否总结均落盘；未达标退出码 1。
+        catalog_exit = None
         if args.trex_explore:
-            if content:
-                catalog_path.parent.mkdir(parents=True, exist_ok=True)
-                catalog_path.write_text(str(content), encoding="utf-8")
-                print(f"\nAttack catalog saved to: {catalog_path}")
-            else:
-                # 边界情况：最终消息为空 → 不写摘要文件，正常结束并提示
-                print("\n（目录探索最终消息为空，未写入摘要文件）")
+            catalog_exit = _finalize_catalog_run(
+                catalog_path, get_trex_scripts_dir(), args.catalog_target, content,
+            )
 
         print(f"\nResults logged to: {args.log_path}")
     finally:
@@ -750,7 +836,8 @@ def main() -> None:
                 monitor.stop()
         except Exception:
             pass
+    return catalog_exit
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

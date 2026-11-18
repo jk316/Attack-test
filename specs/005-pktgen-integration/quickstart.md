@@ -39,8 +39,14 @@ uv run pytest tests/unit/test_pktgen_adapter.py -v
 **操作**: 调用 `pktgen_packet_sequence`，序列条目含 `"eth_dst_addr": "00:00:00:00:00:01"`。
 
 **预期结果**:
-- 编译产物中该条目 MAC 为 `topology.yaml` 的 `dst_mac`（`f0:c4:78:4c:a5:55`）。
-- 结果含 `replaced_mac` 明细（G5 实现后）；真实 MAC 不被替换。
+- 结果含 `replaced_mac` 明细（`[{index, from, to}]`，G5 已实现）；真实 MAC 不被替换。
+- 替换后的真实 MAC（`topology.yaml` 的 `dst_mac`，`f0:c4:78:4c:a5:55`）体现在转发给
+  编译器的参数序列中（`params.sequences[i].eth_dst_addr`），由
+  `tests/unit/test_pktgen_adapter.py` 的参数级断言锁定。
+- ⚠️ 口径说明（R10 修订）：vendored 编译器对 seqTable 数据只发占位注释
+  （`-- table data from $params.sequences[...]`），因此**编译产物 Lua 文件本身
+  不含逐条目 MAC**——替换的可观测证据在适配器结果（`replaced_mac`）与转发参数，
+  而非产物文件内容（vendored 代码保持与上游同步，不修改）。
 
 ## 场景 4：live 门控链（模拟端点）
 

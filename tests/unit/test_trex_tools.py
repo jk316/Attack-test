@@ -119,12 +119,14 @@ class TestRunPythonFile:
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
         monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: True)
         self._write(tmp_path)
-        with patch("src.trex.tools.subprocess.run") as mock_run:
+        with patch("src.trex.tools.subprocess.run") as mock_run, \
+             patch("src.trex.tools.interrupt") as mock_interrupt:
             result = run_python_file.invoke(
                 {"filename": "s.py", "target_ip": ALLOWLISTED_IP}
             )
         assert result["mode"] == "dry_run"
         mock_run.assert_not_called()
+        mock_interrupt.assert_not_called()  # dry-run 零审批（SC-001）
 
     def test_live_blocks_non_allowlisted_ip_in_code(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
@@ -229,3 +231,33 @@ class TestStaticIpGuard:
         with patch("src.trex.tools.get_trex_host", return_value="10.99.80.222"):
             code = f"x = '{NOT_ALLOWLISTED_IP}'\n"
             assert _static_ip_guard(code) == [NOT_ALLOWLISTED_IP]
+
+
+# ── G3（006-T005/T007）：HITL 审批材料风险披露 ──────────────────────
+
+class TestHitlPayloadWarningG3:
+    def test_hitl_payload_warns_static_scan_is_bypassable(self, tmp_path, monkeypatch):
+        """审批材料 warning 必须披露「静态 IP 筛查可被混淆绕过」。"""
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
+        (tmp_path / "s.py").write_text(
+            f"target = '{ALLOWLISTED_IP}'\n", encoding="utf-8",
+        )
+
+        captured: dict = {}
+
+        def fake_interrupt(payload):
+            captured.update(payload)
+            return False  # 拒绝 → 零执行，便于纯断言 payload
+
+        with patch("src.trex.tools.interrupt", side_effect=fake_interrupt):
+            result = run_python_file.invoke(
+                {"filename": "s.py", "target_ip": ALLOWLISTED_IP}
+            )
+
+        warning = (captured.get("params") or {}).get("warning", "")
+        assert "IP 静态筛查" in warning
+        assert "混淆" in warning
+        # 既有「完整权限/无执行沙箱」警告并列保留
+        assert "完整权限" in warning
+        assert result["success"] is False  # 被拒绝，未执行

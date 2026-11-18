@@ -181,7 +181,8 @@ def _execute_live(
             "target_ip": target_ip,
             "detected_ips": detected_ips,
             "code_preview": code[:CODE_PREVIEW_CHARS],
-            "warning": "此脚本将以本机当前用户完整权限执行任意 Python（无执行沙箱），请确认脚本内容。",
+            "warning": "此脚本将以本机当前用户完整权限执行任意 Python（无执行沙箱），请确认脚本内容。"
+                       "脚本内 IP 静态筛查可被混淆绕过，请人工审查脚本内容。",
         },
     })
     if not approval:

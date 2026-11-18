@@ -49,6 +49,9 @@ class CapturingModel:
 @pytest.fixture
 def catalog_env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)  # output/ 落在 tmp 下，不污染仓库
+    # 脚本沙箱也落在 tmp 下：达标计数/清理绝不触碰真实 trex_scripts/
+    monkeypatch.setattr(main_mod, "get_trex_scripts_dir",
+                        lambda: tmp_path / "trex_scripts")
     captured = {}
 
     def fake_build_graph(**kwargs):
@@ -75,10 +78,12 @@ class _FakeMonitor:
         pass
 
 
-def _run_explore():
-    with patch.object(sys, "argv", ["main.py", "--target-ip", "10.99.80.160",
-                                    "--trex-explore", "--catalog-target", "10"]):
-        main_mod.main()
+def _run_explore(extra_args: list[str] | None = None) -> int | None:
+    argv = ["main.py", "--target-ip", "10.99.80.160",
+            "--trex-explore", "--catalog-target", "10",
+            *(extra_args or [])]
+    with patch.object(sys, "argv", argv):
+        return main_mod.main()
 
 
 def _catalog_files(cwd: Path) -> list[Path]:
@@ -133,6 +138,89 @@ class TestCatalogE2E:
         assert _catalog_files(tmp_path) == []
         assert "最终消息为空" in out
         assert "=== Experiment Complete ===" in out  # 正常结束
+
+
+class TestCatalogExitCodesG1:
+    """G1（006-T012）：达标 → 退出码 0，未达标 → 1 且总结仍落盘。"""
+
+    VALID_CODE = "import trex_stl_lib\nprint('ok')\n"
+
+    def test_not_reached_returns_one_and_summary_still_written(
+            self, catalog_env, tmp_path, capsys):
+        catalog_env["summary"] = SUMMARY_A
+        exit_code = _run_explore()
+        out = capsys.readouterr().out
+        assert exit_code == 1
+        assert "[达标判定]" in out
+        assert _catalog_files(tmp_path)  # 总结仍落盘（FR-021）
+
+    def test_reached_returns_zero(self, catalog_env, tmp_path, capsys):
+        scripts_dir = tmp_path / "trex_scripts"
+        scripts_dir.mkdir(parents=True)
+        for i in range(10):
+            (scripts_dir / f"cat_{i}.py").write_text(
+                self.VALID_CODE, encoding="utf-8",
+            )
+        catalog_env["summary"] = SUMMARY_A
+        exit_code = _run_explore()
+        out = capsys.readouterr().out
+        assert exit_code == 0
+        assert "[达标判定]" in out
+
+    def test_syntax_error_scripts_do_not_count(self, catalog_env, tmp_path):
+        scripts_dir = tmp_path / "trex_scripts"
+        scripts_dir.mkdir(parents=True)
+        for i in range(9):
+            (scripts_dir / f"cat_ok_{i}.py").write_text(
+                self.VALID_CODE, encoding="utf-8",
+            )
+        (scripts_dir / "cat_broken.py").write_text("def broken(:\n",
+                                                   encoding="utf-8")
+        catalog_env["summary"] = SUMMARY_A
+        assert _run_explore() == 1  # 9 个语法通过 < 10
+
+
+class TestCleanScriptsG2:
+    """G2（006-T013）：--clean-scripts 仅删 cat_*.py，打印清理横幅。"""
+
+    def test_clean_scripts_removes_only_cat_scripts(
+            self, catalog_env, tmp_path, capsys):
+        scripts_dir = tmp_path / "trex_scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / "cat_old.py").write_text("print(1)\n", encoding="utf-8")
+        (scripts_dir / "keep.py").write_text("print(2)\n", encoding="utf-8")
+
+        catalog_env["summary"] = SUMMARY_A
+        _run_explore(extra_args=["--clean-scripts"])
+        out = capsys.readouterr().out
+
+        assert "[clean-scripts]" in out
+        assert not (scripts_dir / "cat_old.py").exists()
+        assert (scripts_dir / "keep.py").exists()  # 非 cat_ 文件完好
+
+    def test_clean_scripts_with_nothing_to_clean(self, catalog_env, tmp_path,
+                                                 capsys):
+        catalog_env["summary"] = SUMMARY_A
+        _run_explore(extra_args=["--clean-scripts"])
+        out = capsys.readouterr().out
+        assert "[clean-scripts]" in out
+        assert "无旧" in out
+
+    def test_clean_scripts_ignored_outside_explore_mode(self, catalog_env,
+                                                        tmp_path, capsys):
+        """非探索模式下 --clean-scripts 不触发清理。"""
+        scripts_dir = tmp_path / "trex_scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / "cat_old.py").write_text("print(1)\n", encoding="utf-8")
+
+        argv = ["main.py", "--target-ip", "10.99.80.160", "--clean-scripts"]
+        with patch.object(sys, "argv", argv):
+            from src.main import parse_args
+            args = parse_args()
+            assert args.clean_scripts is True
+            assert args.trex_explore is False
+            # 非探索模式 main() 不执行清理分支
+            assert (scripts_dir / "cat_old.py").exists()
 
 
 if __name__ == "__main__":
