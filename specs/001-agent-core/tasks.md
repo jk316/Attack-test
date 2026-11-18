@@ -86,7 +86,7 @@
 
 ### 用户故事 1 的实现
 
-- [ ] T014 [US1] 在 `tests/e2e/test_cli_loop_e2e.py` 写 e2e 测试（G8、FR-002/014、SC-007）：mock 模型与工具序列驱动完整 CLI 循环（启动→预检→审批→发送→观测→总结），断言最终总结输出、`data/agent.log` 有 LLM I/O 记录、结束后无残留 ping 监控进程（依赖 T012、T013）
+- [x] T014 [US1] 在 `tests/e2e/test_cli_loop_e2e.py` 写 e2e 测试（G8、FR-002/014、SC-007）：mock 模型与工具序列驱动完整 CLI 循环（启动→预检→审批→发送→观测→总结），断言最终总结输出、`data/agent.log` 有 LLM I/O 记录、结束后无残留 ping 监控进程（依赖 T012、T013）——4 用例全绿（两轮审批批准/拒绝/EOF、agent.log 含 [LLM INPUT]/[LLM OUTPUT]、mock 监控 stop 断言、预检拒绝不建图）；注：T014 勾选状态由 Lead 复核提醒补记（提交 191c4aa 时漏勾）
 
 **检查点**: 用户故事 1 应完整可用且可独立测试（MVP）
 
@@ -136,7 +136,7 @@
 
 **目的**: 端到端验证、文档真实性、全量回归门禁
 
-- [x] T023 [P] 按 `specs/001-agent-core/quickstart.md` 场景 A（实验+HITL）/ B（auto-approve）/ C（目录探索）逐场景验证运行与预期结果，把每场景的实际输出对照 SC 判据表记录到本任务说明——受限说明：.env 的 DEEPSEEK_API_KEY 无效（Lead 已确认真实 API 401），真实 LLM 驱动的场景 A/B/C 无法完整运行（不重试消耗配额，已报 Lead）；验证方式 = ①真实 CLI 安全路径（零 LLM 零流量）：预检拒绝 `--target-ip 192.168.1.99` → stderr 中文「不在 allowlist…拒绝启动」exit=1；互斥组合 → 「互斥」exit=2；未知 profile → 列出可用项 exit=1（SC-008 判据满足，均 <1s）②mock 驱动 e2e 等价验证：场景 A/B → tests/e2e/test_cli_loop_e2e.py + tests/integration/test_hitl_cli.py（审批弹窗/批准/EOF 默认拒绝/0 报文/日志/清理，SC-004/SC-007）；场景 C → tests/e2e/test_trex_explore_e2e.py（零审批、工具集 2 个、带时间戳摘要互不覆盖、空摘要不写文件，SC-006）；SC 判据对照：SC-002→test_reasoning_patch、SC-003→test_budget_e2e、SC-005→test_config_chain、SC-001→e2e 构建+首请求 <1s
+- [x] T023 [P] 按 `specs/001-agent-core/quickstart.md` 场景 A（实验+HITL）/ B（auto-approve）/ C（目录探索）逐场景验证运行与预期结果，把每场景的实际输出对照 SC 判据表记录到本任务说明——**R5 裁定（Lead 接受本验证方式）：真实 LLM 三场景验证待 .env 密钥有效后补验（用户正在处理密钥），届时由 Lead 安排复验**。本次验证 = ①真实 CLI 安全路径（零 LLM 零流量）：预检拒绝 `--target-ip 192.168.1.99` → stderr 中文「不在 allowlist…拒绝启动」exit=1；互斥组合 → 「互斥」exit=2；未知 profile → 列出可用项 exit=1（SC-008 判据满足，均 <1s）②mock 驱动 e2e 等价验证：场景 A/B → tests/e2e/test_cli_loop_e2e.py + tests/integration/test_hitl_cli.py（审批弹窗/批准/EOF 默认拒绝/0 报文/日志/清理，SC-004/SC-007）；场景 C → tests/e2e/test_trex_explore_e2e.py（零审批、工具集 2 个、带时间戳摘要互不覆盖、空摘要不写文件，SC-006）；SC 判据对照：SC-002→test_reasoning_patch、SC-003→test_budget_e2e、SC-005→test_config_chain、SC-001→e2e 构建+首请求 <1s
 - [x] T024 [P] 更新文档真实性：`CLAUDE.md` 的「Convergence / early-stop」段落改为硬裁决语义、`src/agent/state.py` 相关描述；若发现其他文档与 G1/G2/G3 落地不符一并修正（不涉及任何行为代码）——CLAUDE.md 收敛段改为运行时硬裁决全文（_extract_observation/compute_reward/update_best/apply_observation/check_stop_condition、D5 跳过、目录豁免、预检）+ state.py 表格行更新；README.md「核心闭环」公式 `avg − penalty(loss)` → 统一公式；PLAN.md / task.md 遗留旧公式文本一并修正
 - [x] T025 运行全量门禁：`uv run pytest tests/unit/ -v`、`uv run pytest tests/integration/ -v`、`uv run pytest tests/e2e/ -v`、`uv run pytest --cov=src --cov-report=term-missing`，确认全部通过且无既有基线回归（宪法原则三：宣称完成前测试必须实际运行并通过）——实测：`bash .dsh/run-tests.sh tests/unit/ tests/integration/ tests/e2e/ -q` → **447 passed / 9 failed**（74.7s）：9 个失败与 T001 基线完全一致（17 工具过期断言×2 + Pktgen 真实设备连接×7），无新增回归；相对基线 346 passed 净增 101 个通过用例；覆盖率 `--cov=src` → TOTAL 86%，src/agent/state.py 100%、src/agent/graph.py 95%、src/main.py 94%
 
