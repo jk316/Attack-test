@@ -315,6 +315,14 @@ def parse_args() -> argparse.Namespace:
     args.iat_jitter_ms = int(attack_cfg.get("iat_jitter_ms", 0))
     # ping 监控配置节（003-G-001/G-002：经配置链注入，无 CLI 参数）
     args.ping_monitor = dict(cfg.get("ping_monitor") or {})
+    # PCAP 画像配置节（004-T003：经配置链注入，无 CLI 参数）
+    args.pcap_profile = dict(cfg.get("pcap_profile") or {})
+    # 显式出现的 CLI 参数（004-T016：人工覆盖优先级——CLI > 映射 > 配置默认）
+    args._explicit_flags = {
+        flag.lstrip("-").replace("-", "_")
+        for flag in ("--pps", "--packet-size", "--flow-count", "--duration")
+        if any(a == flag or a.startswith(flag + "=") for a in sys.argv[1:])
+    }
     return args
 
 
@@ -364,6 +372,14 @@ def _build_user_message(args: argparse.Namespace) -> str:
         if args.pcap_path
         else "- PCAP文件路径: 无（使用默认初始参数）\n"
     )
+    seed_line = ""
+    seeds = getattr(args, "profile_seeds", None)
+    if seeds:
+        seed_line = (
+            f"- 画像映射初始参数: dst_port={seeds['dst_port']}, "
+            f"packet_size={seeds['packet_size']}, flow_count={seeds['flow_count']}, "
+            f"pps={seeds['pps']}\n"
+        )
     return (
         "请开始闭环网络实验：\n"
         + instruction_line +
@@ -371,8 +387,9 @@ def _build_user_message(args: argparse.Namespace) -> str:
         f"- 最大迭代次数: {args.max_iters}\n"
         f"- 无改善停止轮数: {args.no_improve_limit}\n"
         f"- 日志文件路径: {args.log_path}\n"
-        + pcap_line +
-        "\n请严格按照系统提示中的实验协议执行。"
+        + pcap_line
+        + seed_line
+        + "\n请严格按照系统提示中的实验协议执行。"
         "如果提供了PCAP文件，先用 pcap_profile 工具分析流量特征。"
     )
 
@@ -476,13 +493,63 @@ def _inject_ping_monitor_env(args: argparse.Namespace) -> None:
     os.environ["PING_MONITOR_MAX_SAMPLES"] = str(pm.get("max_samples", 4000))
 
 
+def _apply_profile_seeds(args: argparse.Namespace) -> dict | None:
+    """004-T016：提供 --pcap-path 时画像映射注入未显式指定参数。
+
+    优先级（research 决策 1）：CLI 显式参数 > 映射值 > experiment.json 默认。
+    映射值仅作为「未显式指定时」的初始种子；画像失败回退配置默认并提示。
+    返回映射 dict（含 dst_port 种子）或 None（未应用）。
+    """
+    if not args.pcap_path or args.trex_explore:
+        return None
+    try:
+        from src.tools.pcap_profile_tool import pcap_profile_tool
+        from src.tools.profile_to_params import profile_to_params
+        profile = pcap_profile_tool(pcap_path=args.pcap_path)
+    except Exception as e:
+        print(f"[画像] 画像失败，使用配置默认参数: {e}", file=sys.stderr)
+        return None
+    mapped = profile_to_params(profile, defaults={
+        "dst_port": 8080,
+        "packet_size": args.packet_size,
+        "pps": args.pps,
+        "flow_count": args.flow_count,
+        "duration_s": args.duration,
+    })
+    explicit = getattr(args, "_explicit_flags", set())
+    if "pps" not in explicit:
+        args.pps = mapped["pps"]
+    if "packet_size" not in explicit:
+        args.packet_size = mapped["packet_size"]
+    if "flow_count" not in explicit:
+        args.flow_count = mapped["flow_count"]
+    if "duration" not in explicit:
+        args.duration = mapped["duration_s"]
+    args.profile_seeds = mapped
+    return mapped
+
+
+def _inject_pcap_profile_env(args: argparse.Namespace) -> None:
+    """注入 PCAP 画像默认值 env（004-T004；工具调用时读取）。
+
+    来源：experiment.json 的 pcap_profile 节 → env PCAP_PROFILE_*。
+    """
+    pp = dict(getattr(args, "pcap_profile", {}) or {})
+    os.environ["PCAP_PROFILE_MAX_PACKETS"] = str(pp.get("max_packets", 50000))
+    os.environ["PCAP_PROFILE_IDLE_TIMEOUT_S"] = str(pp.get("idle_timeout_s", 30))
+
+
 def main() -> None:
     args = parse_args()
     _run_preflight(args)
 
+    # 画像映射种子（004-T016）：先于 env 注入，使映射值经 env 进入工具默认
+    _apply_profile_seeds(args)
+
     # ── Inject defaults as env vars (tools read these at call time) ──
     _inject_attack_env(args)
     _inject_ping_monitor_env(args)
+    _inject_pcap_profile_env(args)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
 

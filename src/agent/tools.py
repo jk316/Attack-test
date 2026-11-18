@@ -111,7 +111,7 @@ def traffic_send(
 
 
 @tool
-def pcap_profile(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> dict[str, Any]:
+def pcap_profile(pcap_path: str, count: int | None = None) -> dict[str, Any]:
     """Analyze a PCAP/PCAPng file and return traffic profile.
 
     Extracts: top destination IPs/ports, packet size histogram, inter-arrival
@@ -120,7 +120,8 @@ def pcap_profile(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> dict[str, 
 
     Args:
         pcap_path: Path to the pcap or pcapng file.
-        count: Maximum number of packets to read (default 50000).
+        count: Maximum number of packets to read (None reads env
+               PCAP_PROFILE_MAX_PACKETS, default 50000).
 
     Returns:
         Dict with top_dst_ips, top_dst_ports, packet_size_hist, iat_ms_stats,

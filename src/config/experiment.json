@@ -25,6 +25,10 @@
         "stats_window_s": 5.0,
         "max_samples": 4000
     },
+    "pcap_profile": {
+        "max_packets": 50000,
+        "idle_timeout_s": 30
+    },
     "profiles": {
         "high_pps": {
             "attack": { "pps": 2000, "duration_s": 5 }

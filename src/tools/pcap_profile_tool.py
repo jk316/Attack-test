@@ -1,5 +1,6 @@
 """PCAP Profile Tool - Analyzes pcap files and generates traffic profile"""
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 from collections import defaultdict
@@ -15,6 +16,15 @@ except ImportError:
 
 # Default count limit to avoid memory issues
 DEFAULT_COUNT_LIMIT = 50000
+DEFAULT_IDLE_TIMEOUT_S = 30
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to *default* on missing/invalid."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def calculate_iat(packets: List) -> List[float]:
@@ -49,7 +59,7 @@ def calculate_iat(packets: List) -> List[float]:
     return iats
 
 
-def calculate_flow_count(packets: List, idle_timeout: int = 30) -> int:
+def calculate_flow_count(packets: List, idle_timeout: int | None = None) -> int:
     """
     Calculate approximate flow count.
 
@@ -58,11 +68,15 @@ def calculate_flow_count(packets: List, idle_timeout: int = 30) -> int:
 
     Args:
         packets: List of packets
-        idle_timeout: Timeout in seconds to distinguish flows
+        idle_timeout: Timeout in seconds to distinguish flows; None reads env
+            ``PCAP_PROFILE_IDLE_TIMEOUT_S`` (default 30，004-G-003).
 
     Returns:
         Approximate flow count
     """
+    if idle_timeout is None:
+        idle_timeout = _env_int("PCAP_PROFILE_IDLE_TIMEOUT_S", DEFAULT_IDLE_TIMEOUT_S)
+
     flows = defaultdict[Any, list](list)
 
     for pkt in packets:
@@ -74,8 +88,8 @@ def calculate_flow_count(packets: List, idle_timeout: int = 30) -> int:
         src_port = pkt[UDP].sport
         dst_port = pkt[UDP].dport
 
-        # Create flow key
-        flow_key = (src_ip, src_ip, dst_ip, dst_port, 'UDP')
+        # Create flow key — 严格 5 元组（G-001 修正后语义）
+        flow_key = (src_ip, src_port, dst_ip, dst_port, 'UDP')
 
         flows[flow_key].append(pkt.time)
 
@@ -122,13 +136,14 @@ def percentile(data: List[float], p: float) -> float:
     return sorted_data[idx]
 
 
-def pcap_profile_tool(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> Dict[str, Any]:
+def pcap_profile_tool(pcap_path: str, count: int | None = None) -> Dict[str, Any]:
     """
     Read pcap/pcapng file and output traffic profile as structured JSON.
 
     Args:
         pcap_path: Path to pcap file
-        count: Maximum number of packets to read (default 50000)
+        count: Maximum number of packets to read; None reads env
+            ``PCAP_PROFILE_MAX_PACKETS`` (default 50000，004-G-003)
 
     Returns:
         Dict containing:
@@ -140,12 +155,16 @@ def pcap_profile_tool(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> Dict[
         - payload_len_stats: Payload length statistics
         - notes: Any parsing issues or notes
     """
+    if count is None:
+        count = _env_int("PCAP_PROFILE_MAX_PACKETS", DEFAULT_COUNT_LIMIT)
+    idle_timeout = _env_int("PCAP_PROFILE_IDLE_TIMEOUT_S", DEFAULT_IDLE_TIMEOUT_S)
+
     result = {
         "top_dst_ips": [],
         "top_dst_ports": [],
         "packet_size_hist": {},
         "iat_ms_stats": {"mean": 0.0, "p50": 0.0, "p90": 0.0},
-        "flow_stats": {"approx_flow_count": 0, "timeout_s": 30},
+        "flow_stats": {"approx_flow_count": 0, "timeout_s": idle_timeout},
         "payload_len_stats": {"mean": 0.0, "p50": 0.0, "p90": 0.0},
         "notes": "UDP-only traffic profile. IAT calculated per (dst_ip, dst_port) flow."
     }
@@ -206,6 +225,8 @@ def pcap_profile_tool(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> Dict[
         result["notes"] = " ".join(notes_parts)
 
         if not udp_packets:
+            # G-002：无任何 UDP 包时显式说明（契约 notes 内容契约）
+            result["notes"] += " 未发现 UDP 流量。"
             return result
 
         # Calculate top destination IPs
@@ -255,10 +276,11 @@ def pcap_profile_tool(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> Dict[
                 "p90": round(percentile(iats, 90), 4)
             }
 
-        # Flow statistics
+        # Flow statistics（timeout 用实际生效值——env 可配置，G-003）
         result["flow_stats"] = {
-            "approx_flow_count": calculate_flow_count(udp_packets, idle_timeout=30),
-            "timeout_s": 30
+            "approx_flow_count": calculate_flow_count(udp_packets,
+                                                      idle_timeout=idle_timeout),
+            "timeout_s": idle_timeout
         }
 
         # Payload length statistics

@@ -260,7 +260,7 @@ class TestPcapProfile:
             result = graph.invoke(state, config)
 
         mock_profile_fn.assert_called_once_with(
-            pcap_path="data/game.pcapng", count=50000,
+            pcap_path="data/game.pcapng", count=None,
         )
         assert "28763" in result["messages"][-1].content
 
