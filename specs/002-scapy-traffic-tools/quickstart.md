@@ -11,14 +11,15 @@
 ## 场景 A：工具函数直接验证（无 Agent、无 HITL）
 
 ```bash
-# traffic_send：CLI 冒烟（内部直接调用，绕过 HITL 封装层）
-uv run python src/tools/traffic_send_tool.py 10.99.80.160 8080 100 2
+# traffic_send：CLI 冒烟（内部直接调用，绕过 HITL 封装层；-m 模块形式，
+# 包内相对导入在模块形式下可正常解析——R6 修复）
+uv run python -m src.tools.traffic_send_tool 10.99.80.160 8080 100 2
 
 # ping_rtt：单次探测冒烟
-uv run python src/tools/ping_rtt_tool.py 10.99.80.160
+uv run python -m src.tools.ping_rtt_tool 10.99.80.160
 
 # log_tool：JSONL 追加冒烟
-uv run python src/tools/log_tool.py data/test-experiment.jsonl
+uv run python -m src.tools.log_tool data/test-experiment.jsonl
 ```
 
 **预期结果**:

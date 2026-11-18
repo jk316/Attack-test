@@ -18,6 +18,13 @@
     "trex": {
         "timeout_s": 30
     },
+    "ping_monitor": {
+        "probes_per_sec": 10,
+        "summary_interval_s": 1,
+        "fallback_interval_s": 1.0,
+        "stats_window_s": 5.0,
+        "max_samples": 4000
+    },
     "profiles": {
         "high_pps": {
             "attack": { "pps": 2000, "duration_s": 5 }

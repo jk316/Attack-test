@@ -313,6 +313,8 @@ def parse_args() -> argparse.Namespace:
     # 攻击抖动默认值（R4：无 CLI 参数；经配置链 attack.iat_jitter_ms /
     # profile 注入，供 _inject_attack_env 使用——配置单一来源）
     args.iat_jitter_ms = int(attack_cfg.get("iat_jitter_ms", 0))
+    # ping 监控配置节（003-G-001/G-002：经配置链注入，无 CLI 参数）
+    args.ping_monitor = dict(cfg.get("ping_monitor") or {})
     return args
 
 
@@ -461,12 +463,26 @@ def _inject_attack_env(args: argparse.Namespace) -> None:
     os.environ["ATK_IAT_JITTER_MS"] = str(args.iat_jitter_ms)
 
 
+def _inject_ping_monitor_env(args: argparse.Namespace) -> None:
+    """注入 ping 监控默认值 env（003-G-001/G-002；工具调用时读取）。
+
+    来源：experiment.json 的 ping_monitor 节 → env PING_MONITOR_*。
+    """
+    pm = dict(getattr(args, "ping_monitor", {}) or {})
+    os.environ["PING_MONITOR_PROBES_PER_SEC"] = str(pm.get("probes_per_sec", 10))
+    os.environ["PING_MONITOR_SUMMARY_INTERVAL_S"] = str(pm.get("summary_interval_s", 1))
+    os.environ["PING_MONITOR_FALLBACK_INTERVAL_S"] = str(pm.get("fallback_interval_s", 1.0))
+    os.environ["PING_MONITOR_STATS_WINDOW_S"] = str(pm.get("stats_window_s", 5.0))
+    os.environ["PING_MONITOR_MAX_SAMPLES"] = str(pm.get("max_samples", 4000))
+
+
 def main() -> None:
     args = parse_args()
     _run_preflight(args)
 
     # ── Inject defaults as env vars (tools read these at call time) ──
     _inject_attack_env(args)
+    _inject_ping_monitor_env(args)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
 

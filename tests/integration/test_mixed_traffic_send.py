@@ -28,8 +28,8 @@ def _two_stream_spec():
 def _send(spec, **kwargs):
     from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
 
-    # pps=20000 + duration=2s → mock 网络下约 1.1 万包（MagicMock 开销限制实际速率）
-    opts = {"pps": 20000, "duration_s": 2}
+    # pps=20000 + duration=3s → mock 网络下 ≥1.5 万包（MagicMock 开销限制实际速率）
+    opts = {"pps": 20000, "duration_s": 3}
     opts.update(kwargs)
     with patch("src.tools.mixed_traffic_tool._create_raw_socket",
                return_value=MagicMock()), \

@@ -330,19 +330,24 @@ class TestRttSampling:
     """RTT 采样附加测试。"""
 
     def test_rtt_attached_when_monitor_running(self):
-        """PingMonitor 运行时，RTT 采样应附加到结果中。"""
+        """PingMonitor 运行时，RTT 采样应附加到结果中。
+
+        攻击窗口 ≥1s（t0 取 5 秒前）——契约不变式：短窗口（<1s）时
+        rtt_during 为 null（003 contracts/rtt-observation.md §5）。
+        """
         from src.pktgen.adapter import _sample_rtt
         import time
 
+        t0 = time.time() - 5.0
         mock_monitor = MagicMock()
         mock_monitor.is_running.return_value = True
         mock_monitor.get_samples_since.return_value = [
-            {"ts": time.time(), "rtt_ms": 10.0, "sent": 1, "received": 1},
-            {"ts": time.time(), "rtt_ms": 20.0, "sent": 1, "received": 1},
+            {"ts": t0 + 1, "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": 20.0, "sent": 1, "received": 1},
         ]
 
         with patch("src.pktgen.adapter.get_ping_monitor", return_value=mock_monitor):
-            result = _sample_rtt({"success": True}, time.time())
+            result = _sample_rtt({"success": True}, t0)
 
         assert "rtt_during" in result
         assert result["rtt_during"]["avg_rtt_ms"] == 15.0
@@ -472,21 +477,32 @@ class TestRunTrafficToolIntegration:
     """_run_traffic_tool 集成流程测试。"""
 
     def test_full_live_flow_calls_all_steps(self):
-        """live 模式完整流程：allowlist → HITL → execute → RTT。"""
+        """live 模式完整流程：allowlist → HITL → execute → RTT。
+
+        mock 执行的攻击窗口 ≈0s（短窗口）——按 003 契约不变式
+        rtt_during 为 null，故此处注入合成观测验证「执行 → 采样 → 合并」
+        流程；真实 _sample_rtt 行为由 test_rtt_attached_* 覆盖。
+        """
         from src.pktgen.adapter import _run_traffic_tool
+
+        synthetic_observation = {
+            "rtt_during": {"avg_rtt_ms": 30.0, "samples": [], "loss_pct": 0.0},
+            "attack_window": {"mode": "live", "start": {}, "end": {}},
+            "observation_window": {"covers_attack_window": True},
+        }
+
+        def fake_sample(result, t0):
+            result.update(synthetic_observation)
+            return result
 
         with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.validate_target") as mock_val, \
              patch("src.pktgen.adapter.interrupt", return_value=True) as mock_int, \
              patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
-             patch("src.pktgen.adapter.get_ping_monitor") as mock_pm:
+             patch("src.pktgen.adapter.get_ping_monitor"), \
+             patch("src.pktgen.adapter._sample_rtt", side_effect=fake_sample):
             mock_exec = MagicMock(return_value={"success": True, "mode": "live"})
             mock_imp.return_value = (MagicMock(), mock_exec)
-
-            mock_monitor = MagicMock()
-            mock_monitor.is_running.return_value = True
-            mock_monitor.get_samples_since.return_value = [{"ts": 1.0, "rtt_ms": 30.0, "sent": 1, "received": 1}]
-            mock_pm.return_value = mock_monitor
 
             result = _run_traffic_tool(
                 "udp_flood",

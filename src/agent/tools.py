@@ -214,7 +214,7 @@ def mixed_traffic_send(
 # ── Continuous ping monitor tools ──────────────────────────────────
 
 @tool
-def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
+def start_ping_monitor(ip: str, interval_s: float | None = None) -> dict[str, Any]:
     """Start a continuous background ping to monitor RTT in real-time.
 
     Call this ONCE at the beginning of the experiment. A background ping
@@ -223,8 +223,9 @@ def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
 
     Args:
         ip: Target IP address (must be in allowlist).
-        interval_s: Interval between pings in seconds (default 1.0).
-                    Windows ignores this and pings as fast as possible.
+        interval_s: Interval between pings in seconds (default from config
+                    ping_monitor.fallback_interval_s, 1.0). Windows ignores
+                    this and pings as fast as possible.
 
     Returns:
         Dict with success, message, target_ip.
@@ -242,7 +243,7 @@ def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
 
 
 @tool
-def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
+def read_ping_stats(window_s: float | None = None) -> dict[str, Any]:
     """Read the latest RTT statistics from the background ping monitor.
 
     Call this before and after traffic_send to observe RTT changes caused
@@ -250,7 +251,8 @@ def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
     seconds.
 
     Args:
-        window_s: Time window in seconds for stats computation (default 5.0).
+        window_s: Time window in seconds for stats computation (default from
+                  config ping_monitor.stats_window_s, 5.0).
 
     Returns:
         Dict with monitor_active, latest_rtt_ms, avg_rtt_ms, min_rtt_ms,

@@ -17,6 +17,7 @@ Two backends, auto-selected at ``start()``:
 
 from __future__ import annotations
 
+import os
 import re
 import logging
 import shutil
@@ -31,6 +32,22 @@ from typing import Callable, Optional
 from src.tools.ping_rtt_tool import validate_target
 
 logger = logging.getLogger("agent")
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to *default* on missing/invalid."""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, falling back to *default* on missing/invalid."""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 # ── Per-line RTT pattern (system ping, handles Unix and Windows) ────
 _UNIX_RTT_RE = re.compile(r"time[<=](\d+\.?\d*)\s*ms", re.IGNORECASE)
@@ -54,7 +71,8 @@ _NON_RTT_PATTERNS = [
 _LOSS_PATTERNS = [
     re.compile(r"Request\s+timed\s+out", re.IGNORECASE),
     re.compile(r"Destination\s+host\s+unreachable", re.IGNORECASE),
-    re.compile(r"请求超时"),  # Windows Chinese locale
+    re.compile(r"请求超时"),          # Windows Chinese locale
+    re.compile(r"无法访问目标主机"),   # Windows Chinese locale (unreachable)
 ]
 
 # ── fping output parsing ────────────────────────────────────────────
@@ -124,7 +142,9 @@ class PingMonitor:
         self._process: Optional[subprocess.Popen] = None  # type: ignore[type-arg]
         self._reader_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._samples: deque[MonitorSample] = deque(maxlen=self._MAX_SAMPLES)
+        # 缓冲上限可配置（003-G-002，research 决策 3）：实例化时读 env
+        max_samples = _env_int("PING_MONITOR_MAX_SAMPLES", self._MAX_SAMPLES)
+        self._samples: deque[MonitorSample] = deque(maxlen=max(max_samples, 1))
         self._running = False
         self._target_ip: Optional[str] = None
         self._stop_event = threading.Event()
@@ -141,17 +161,22 @@ class PingMonitor:
         """Return True if the background ping subprocess is active."""
         return self._running and self._process is not None and self._process.poll() is None
 
-    def start(self, ip: str, interval_s: float = 1.0) -> None:
+    def start(self, ip: str, interval_s: float | None = None) -> None:
         """Start continuous ping to *ip*.
 
         If a previous monitor was running it is stopped first.
         *interval_s* controls the per-ping interval (fping and Linux native);
-        Windows ``ping -t`` ignores it.
+        Windows ``ping -t`` ignores it. ``None`` reads the configured fallback
+        interval (env ``PING_MONITOR_FALLBACK_INTERVAL_S``, default 1.0).
         """
         validate_target(ip)
 
         if self.is_running():
             self.stop()
+
+        # 回退后端探测间隔：缺省读配置（003-G-001，调用时读取）
+        if interval_s is None:
+            interval_s = _env_float("PING_MONITOR_FALLBACK_INTERVAL_S", 1.0)
 
         self._target_ip = ip
         self._stop_event.clear()
@@ -213,10 +238,12 @@ class PingMonitor:
         self._reader_thread = None
         self._target_ip = None
 
-    def get_stats(self, window_s: float = 5.0) -> dict:
+    def get_stats(self, window_s: float | None = None) -> dict:
         """Return aggregate RTT + loss stats for the last *window_s* seconds.
 
-        Returns a dict suitable for the agent to consume::
+        ``None`` reads the configured stats window (env
+        ``PING_MONITOR_STATS_WINDOW_S``, default 5.0). Returns a dict suitable
+        for the agent to consume::
 
             {
                 "monitor_active": bool,
@@ -232,6 +259,8 @@ class PingMonitor:
                 "backend": str,           # "fping" | "ping"
             }
         """
+        if window_s is None:
+            window_s = _env_float("PING_MONITOR_STATS_WINDOW_S", 5.0)
         if not self.is_running():
             return {
                 "monitor_active": False,
@@ -409,10 +438,18 @@ class PingMonitor:
         """Build fping loop + periodic summary command.
 
         ``-l``: loop mode (continuous until killed)
-        ``-Q 1``: emit a summary line every 1 second
-        ``-p 100``: send one probe every 100 ms (10 probes/sec)
+        ``-Q <s>``: emit a summary line every ``s`` seconds (env
+            ``PING_MONITOR_SUMMARY_INTERVAL_S``, default 1)
+        ``-p <ms>``: probe period in ms = 1000 / probes_per_sec (env
+            ``PING_MONITOR_PROBES_PER_SEC``, default 10; 频率下限 0.1 s，
+            超出被钳制；非正数拒绝——003-G-001）
         """
-        return ["fping", "-l", "-Q", "1", "-p", "100", ip]
+        probes_per_sec = _env_int("PING_MONITOR_PROBES_PER_SEC", 10)
+        if probes_per_sec <= 0:
+            raise ValueError(f"probes_per_sec must be > 0, got {probes_per_sec}")
+        period_ms = max(int(1000 / probes_per_sec), 100)  # 频率下限 0.1 s
+        summary_s = max(_env_float("PING_MONITOR_SUMMARY_INTERVAL_S", 1), 0.1)
+        return ["fping", "-l", "-Q", str(int(summary_s)), "-p", str(period_ms), ip]
 
     @staticmethod
     def _parse_fping_summary_line(line: str) -> Optional[MonitorSample]:

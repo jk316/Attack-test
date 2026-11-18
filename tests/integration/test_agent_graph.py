@@ -561,7 +561,8 @@ class TestPingMonitorTools:
             result = graph.invoke(state, config)
 
         # All tools called in correct order
-        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=1.0)
+        # 003-G-001：interval_s 缺省透传 None，由 PingMonitor 读配置回退间隔
+        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=None)
         assert mock_monitor.get_stats.call_count == 2  # baseline + after
         mock_send.assert_called_once()
         mock_monitor.stop.assert_called_once()

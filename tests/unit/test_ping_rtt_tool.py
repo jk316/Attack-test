@@ -220,3 +220,91 @@ class TestPingErrorPaths:
         assert result["success"] is True
         assert result["avg_rtt_ms"] == float('inf')
         assert result["loss_pct"] == 100.0
+
+
+class TestRejectionDualEntry:
+    """T015：拒绝路径双入口（G-007、SC-005）。
+
+    ping_rtt_tool 与 PingMonitor.start 对非 allowlist/广播/组播/非法格式
+    均拒绝，且不构造/启动任何探测进程。
+    """
+
+    REJECT_CASES = [
+        ("192.168.1.99", "not in allowlist"),
+        ("192.168.1.255", "Broadcast"),
+        ("224.0.0.1", "Multicast"),
+        ("999.1.1.1", "Invalid IP format"),
+    ]
+
+    def test_ping_rtt_tool_rejects_without_probe(self):
+        from src.tools.ping_rtt_tool import ping_rtt_tool
+
+        for ip, reason in self.REJECT_CASES:
+            with patch('subprocess.run') as mock_run:
+                result = ping_rtt_tool(ip, count=1)
+            assert result["success"] is False, ip
+            assert reason in result["error"], ip
+            mock_run.assert_not_called()  # 零探测
+
+    def test_monitor_start_rejects_without_process(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        for ip, reason in self.REJECT_CASES:
+            m = PingMonitor()
+            with patch("src.tools.ping_monitor.subprocess.Popen") as mock_popen:
+                with pytest.raises(ValueError, match=reason):
+                    m.start(ip)
+            mock_popen.assert_not_called()  # 未构造探测进程
+
+
+class TestStatsSectionParsing:
+    """T016：全丢与跨平台统计段解析（Unix/Windows 两种格式）。"""
+
+    def test_unix_stats_section(self):
+        from src.tools.ping_rtt_tool import parse_ping_output
+
+        output = (
+            "3 packets transmitted, 2 packets received, 33% packet loss\n"
+            "round-trip min/avg/max = 1.0/2.5/4.0 ms"
+        )
+        r = parse_ping_output(output)
+        assert r["success"] is True
+        assert r["packets_transmitted"] == 3
+        assert r["packets_received"] == 2
+        assert r["loss_pct"] == 33.0
+        assert r["avg_rtt_ms"] == 2.5
+
+    def test_windows_stats_section(self):
+        from src.tools.ping_rtt_tool import parse_ping_output
+
+        output = (
+            "    Packets: Sent = 4, Received = 3, Lost = 1 (25% loss),\n"
+            "Approximate round trip times in milli-seconds:\n"
+            "    Minimum = 2ms, Maximum = 10ms, Average = 6ms"
+        )
+        r = parse_ping_output(output)
+        assert r["success"] is True
+        assert r["packets_transmitted"] == 4
+        assert r["packets_received"] == 3
+        assert r["loss_pct"] == 25.0
+        assert r["avg_rtt_ms"] == 6.0
+
+    def test_unix_full_loss(self):
+        from src.tools.ping_rtt_tool import parse_ping_output
+
+        output = "3 packets transmitted, 0 packets received, 100% packet loss"
+        r = parse_ping_output(output)
+        assert r["success"] is True
+        assert r["avg_rtt_ms"] == float('inf')
+        assert r["loss_pct"] == 100.0
+
+    def test_windows_full_loss(self):
+        from src.tools.ping_rtt_tool import parse_ping_output
+
+        output = (
+            "    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss),"
+        )
+        r = parse_ping_output(output)
+        assert r["success"] is True
+        assert r["avg_rtt_ms"] == float('inf')
+        assert r["loss_pct"] == 100.0

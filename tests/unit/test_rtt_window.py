@@ -59,7 +59,11 @@ class TestCoversAttackWindow:
         assert "覆盖" in ow["note"]
 
     def test_short_window_flags_misalignment_even_with_samples(self):
-        """duration=0 / dry-run 场景：窗口过短，即便有样本也应告警。"""
+        """duration=0 / dry-run 场景：窗口过短，即便有样本也应告警。
+
+        契约不变式：rtt_during != null ⇒ covers_attack_window == true——
+        未覆盖的观测不得携带可被误用的聚合数据，故 rtt_during 为 null。
+        """
         t0 = time.time()  # 窗口 ≈ 0s
         monitor = _make_monitor(samples=[{"ts": t0, "rtt_ms": 12.0}])
 
@@ -69,8 +73,7 @@ class TestCoversAttackWindow:
         assert result["attack_window"]["duration_s"] < MIN_MEANINGFUL_WINDOW_S
         assert ow["covers_attack_window"] is False
         assert "过短" in ow["note"]
-        # 样本仍保留在 rtt_during 中（不丢数据，仅告警）
-        assert result["rtt_during"]["avg_rtt_ms"] == 12.0
+        assert result["rtt_during"] is None  # 不变式（contracts/rtt-observation.md §5）
 
 
 class TestNoObservation:
@@ -160,3 +163,133 @@ class TestLossPct:
         assert result["observation_window"]["covers_attack_window"] is True
         assert result["rtt_during"]["loss_pct"] >= 50.0
         assert "丢包严重" in result["observation_window"]["note"]
+
+
+class TestFiveClassCoverage:
+    """T012：五类 covers 判定（G-005，对照 contracts/rtt-observation.md §5）。"""
+
+    def test_class_not_running(self):
+        t0 = time.time() - 5.0
+        result = build_rtt_observation(_make_monitor(running=False), t0,
+                                       mode="scapy")
+        ow = result["observation_window"]
+        assert result["rtt_during"] is None
+        assert ow["covers_attack_window"] is False
+        assert "先调用 start_ping_monitor" in ow["note"]
+        assert "不可用于规划" in ow["note"]
+
+    def test_class_no_samples(self):
+        t0 = time.time() - 5.0
+        result = build_rtt_observation(_make_monitor(samples=[]), t0, mode="scapy")
+        ow = result["observation_window"]
+        assert result["rtt_during"] is None
+        assert ow["covers_attack_window"] is False
+        assert ("增大 duration" in ow["note"] or "无 ping 探测结果" in ow["note"])
+
+    def test_class_all_lost(self):
+        t0 = time.time() - 5.0
+        samples = [{"ts": t0 + 1, "rtt_ms": None, "sent": 1, "received": 0}] * 3
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="scapy")
+        ow = result["observation_window"]
+        assert result["rtt_during"] is None
+        assert ow["covers_attack_window"] is False
+        assert "均丢失" in ow["note"]
+
+    def test_class_short_window(self):
+        t0 = time.time()
+        samples = [{"ts": t0, "rtt_ms": 5.0, "sent": 1, "received": 1}]
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="dry_run")
+        ow = result["observation_window"]
+        assert ow["covers_attack_window"] is False
+        assert "过短" in ow["note"]
+        assert result["rtt_during"] is None  # 不变式
+
+    def test_class_normal_cover(self):
+        t0 = time.time() - 5.0
+        samples = [
+            {"ts": t0 + 1, "rtt_ms": 4.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": 8.0, "sent": 1, "received": 1},
+            {"ts": t0 + 3, "rtt_ms": None, "sent": 1, "received": 0},
+        ]
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="scapy")
+        ow = result["observation_window"]
+        assert ow["covers_attack_window"] is True
+        assert result["rtt_during"] is not None
+        assert "覆盖" in ow["note"]
+
+    def test_class_normal_cover_high_loss_appends_signal(self):
+        t0 = time.time() - 5.0
+        samples = [
+            {"ts": t0 + 1, "rtt_ms": 4.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": None, "sent": 1, "received": 0},
+            {"ts": t0 + 3, "rtt_ms": None, "sent": 1, "received": 0},
+        ]
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="scapy")
+        assert result["observation_window"]["covers_attack_window"] is True
+        assert "丢包严重" in result["observation_window"]["note"]
+
+
+class TestRttDuringAggregation:
+    """T013：rtt_during 聚合口径与不变式（contracts/rtt-observation.md §4/§5）。"""
+
+    def test_weighted_aggregation_matches_manual(self):
+        t0 = time.time() - 5.0
+        # fping_q 风格加权样本：cycle(10 sent, 8 recv, avg 5.0) + 单探测(1/1, 20.0)
+        samples = [
+            {"ts": t0 + 1, "rtt_ms": 5.0, "sent": 10, "received": 8},
+            {"ts": t0 + 2, "rtt_ms": 20.0, "sent": 1, "received": 1},
+        ]
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="scapy")
+        rd = result["rtt_during"]
+        assert rd["avg_rtt_ms"] == round((5.0 * 8 + 20.0 * 1) / 9, 3)
+        assert rd["min_rtt_ms"] == 5.0
+        assert rd["max_rtt_ms"] == 20.0
+        assert rd["loss_pct"] == round((1 - 9 / 11) * 100, 1)
+        assert rd["total_sent"] == 11
+        assert rd["total_received"] == 9
+
+    def test_invariant_non_null_implies_covered(self):
+        """不变式：rtt_during != null ⇒ covers_attack_window == true。"""
+        t0_long = time.time() - 5.0
+        good = build_rtt_observation(_make_monitor(samples=[
+            {"ts": t0_long + 1, "rtt_ms": 10.0}]), t0_long, mode="scapy")
+        if good["rtt_during"] is not None:
+            assert good["observation_window"]["covers_attack_window"] is True
+
+        # 反例：未覆盖的各类观测 rtt_during 必须为 null
+        not_running = build_rtt_observation(_make_monitor(running=False),
+                                            t0_long, mode="scapy")
+        assert not_running["rtt_during"] is None
+        no_samples = build_rtt_observation(_make_monitor(samples=[]),
+                                           t0_long, mode="scapy")
+        assert no_samples["rtt_during"] is None
+        all_lost = build_rtt_observation(_make_monitor(samples=[
+            {"ts": t0_long + 1, "rtt_ms": None, "sent": 1, "received": 0}]),
+            t0_long, mode="scapy")
+        assert all_lost["rtt_during"] is None
+        short = build_rtt_observation(_make_monitor(samples=[
+            {"ts": time.time(), "rtt_ms": 10.0}]), time.time(), mode="dry_run")
+        assert short["rtt_during"] is None
+
+    def test_window_timepoints_correct(self):
+        t0 = time.time() - 5.0
+        first_ts, last_ts = t0 + 1, t0 + 4
+        samples = [
+            {"ts": first_ts, "rtt_ms": 1.0, "sent": 1, "received": 1},
+            {"ts": last_ts, "rtt_ms": 2.0, "sent": 1, "received": 1},
+        ]
+        result = build_rtt_observation(_make_monitor(samples=samples), t0,
+                                       mode="scapy")
+        aw, ow = result["attack_window"], result["observation_window"]
+        assert aw["start"]["ts"] == round(t0, 3)
+        assert aw["end"]["ts"] >= aw["start"]["ts"]
+        assert aw["mode"] == "scapy"
+        # 两端点各自取整后再相减可能有 ±0.001 舍入差，用容差断言
+        assert abs(aw["duration_s"] - (aw["end"]["ts"] - aw["start"]["ts"])) < 0.002
+        assert ow["first_sample"]["ts"] == round(first_ts, 3)
+        assert ow["last_sample"]["ts"] == round(last_ts, 3)
