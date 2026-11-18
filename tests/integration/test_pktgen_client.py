@@ -110,8 +110,19 @@ class TestConnectionErrors:
         with pytest.raises(PktgenConnectionError, match="Not connected"):
             client.execute('printf("test\\n")\n')
 
-    def test_connect_bad_host_raises(self):
-        """Connecting to a non-existent host raises."""
+    def test_connect_bad_host_raises(self, monkeypatch):
+        """Connecting to a non-existent host raises.
+
+        005 修复（基线失败②）：本机网络劫持 TEST-NET 地址（192.0.2.1 实测
+        connect 成功），真实直连不可复现——改为 mock socket.connect 抛
+        TimeoutError（OSError 子类），确定性验证 client 的错误包装。
+        """
+        import socket
+
+        def fake_connect(self, address):
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr(socket.socket, "connect", fake_connect)
         client = PktgenClient(host="192.0.2.1", port=22022, timeout=2.0)
         with pytest.raises(PktgenConnectionError, match="Failed to connect"):
             client.connect()

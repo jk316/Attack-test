@@ -317,6 +317,9 @@ def parse_args() -> argparse.Namespace:
     args.ping_monitor = dict(cfg.get("ping_monitor") or {})
     # PCAP 画像配置节（004-T003：经配置链注入，无 CLI 参数）
     args.pcap_profile = dict(cfg.get("pcap_profile") or {})
+    # Pktgen 合法源地址配置节（005-T004/D9：经配置链注入，无 CLI 参数；
+    # 适配器 T009 消费，覆盖 vendored 默认伪造源 192.168.1.1/24）
+    args.pktgen_src_ip = str(pktgen_cfg.get("src_ip") or "")
     # 显式出现的 CLI 参数（004-T016：人工覆盖优先级——CLI > 映射 > 配置默认）
     args._explicit_flags = {
         flag.lstrip("-").replace("-", "_")
@@ -552,6 +555,8 @@ def main() -> None:
     _inject_pcap_profile_env(args)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
+    # 合法源地址（005-T004/D9）：适配器在编译前填入，覆盖 vendored 伪造默认
+    os.environ["PKTGEN_SRC_IP"] = str(args.pktgen_src_ip)
 
     # ── Pktgen-DPDK configuration ──
     if args.pktgen_live:

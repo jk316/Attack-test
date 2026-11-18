@@ -46,8 +46,8 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 **目的**: 回溯式特性没有从零搭建——本阶段确认现有实现与测试基线可信，后续任务只补缺口。
 
-- [ ] T001 运行基线测试 `uv run pytest tests/unit/ -v && uv run pytest tests/integration/ -v`，记录当前全绿/已知失败清单；确认 `tests/integration/conftest.py` 的 session 级 Pktgen 可用性检测在硬件不可达时自动跳过（跳过不得误判为失败）
-- [ ] T002 确认依赖与环境：`uv sync --extra dev`；验证 `pyyaml` 可用、项目根在 `sys.path`（vendored `pktgen_agent` 可被 `src/pktgen/adapter.py` 导入）
+- [x] T001 运行基线测试 `uv run pytest tests/unit/ -v && uv run pytest tests/integration/ -v`，记录当前全绿/已知失败清单；确认 `tests/integration/conftest.py` 的 session 级 Pktgen 可用性检测在硬件不可达时自动跳过（跳过不得误判为失败）
+- [x] T002 确认依赖与环境：`uv sync --extra dev`；验证 `pyyaml` 可用、项目根在 `sys.path`（vendored `pktgen_agent` 可被 `src/pktgen/adapter.py` 导入）
 
 ---
 
@@ -57,8 +57,8 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 **⚠️ 关键**: 本阶段完成前不得开始任何用户故事工作。
 
-- [ ] T003 [P] 契约现状核对：对照 `specs/005-pktgen-integration/contracts/pktgen-skill-params.md` 与 `contracts/pktgen-adapter-results.md` 逐项核对 `src/pktgen/adapter.py` 现状，输出「已满足/缺口」核对表——G1（duration 上限）、G2（arp dst_ip allowlist）、G3/D9（src_ip）、G5（replaced_mac）各标注现状证据行号，作为 T007–T015 的实现依据（只读核对，不改代码）
-- [ ] T004 D9 配置注入基础：在 `src/config/experiment.json` 的 `pktgen` 节新增 `src_ip` 字段（默认取授权实验环境真实源地址，替换 vendored 默认 `192.168.1.1/24`）；在 `src/main.py` 的 env 注入段（`_apply_pktgen_env` 附近）新增 `PKTGEN_SRC_IP`（沿用 `PKTGEN_*` 命名族）。**仅注入配置与环境变量**，适配器消费在 T009 实现。注意：`src/main.py` 与 006 的 G1/G2、008 的 G4 同文件，实施前以 git 状态为准避免互相覆盖
+- [x] T003 [P] 契约现状核对：对照 `specs/005-pktgen-integration/contracts/pktgen-skill-params.md` 与 `contracts/pktgen-adapter-results.md` 逐项核对 `src/pktgen/adapter.py` 现状，输出「已满足/缺口」核对表——G1（duration 上限）、G2（arp dst_ip allowlist）、G3/D9（src_ip）、G5（replaced_mac）各标注现状证据行号，作为 T007–T015 的实现依据（只读核对，不改代码）
+- [x] T004 D9 配置注入基础：在 `src/config/experiment.json` 的 `pktgen` 节新增 `src_ip` 字段（默认取授权实验环境真实源地址，替换 vendored 默认 `192.168.1.1/24`）；在 `src/main.py` 的 env 注入段（`_apply_pktgen_env` 附近）新增 `PKTGEN_SRC_IP`（沿用 `PKTGEN_*` 命名族）。**仅注入配置与环境变量**，适配器消费在 T009 实现。注意：`src/main.py` 与 006 的 G1/G2、008 的 G4 同文件，实施前以 git 状态为准避免互相覆盖
 
 **检查点**: 基线可信、契约核对表完成、PKTGEN_SRC_IP 已注入——用户故事可以开始。
 
@@ -74,15 +74,15 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 > **注意：先写测试，确认失败后再实现（宪法三·测试伴随）**
 
-- [ ] T005 [P] [US1] 失败测试 G1+G3/D9：新建 `tests/unit/test_pktgen_safety_gates.py`——断言 `duration=120000` 的 flood 调用被拒绝且零编译零流量（G1）；断言传入 `src_ip` 参数被拒绝（G3）；断言未传 `src_ip` 时编译参数采用 `PKTGEN_SRC_IP` 注入的合法源、覆盖 vendored 默认 `192.168.1.1/24`（D9，用 monkeypatch 设 env）。写完后运行确认失败
-- [ ] T006 [P] [US1] 失败测试 G2：扩展 `tests/unit/test_pktgen_adapter.py`——断言 `pktgen_arp_flood(dst_ip="192.168.1.99")` 被拒绝（非白名单）、`dst_ip="10.99.80.160"` 通过且触发 RTT 采样、不提供 `dst_ip` 时正常执行且跳过采样。写完后运行确认失败
+- [x] T005 [P] [US1] 失败测试 G1+G3/D9：新建 `tests/unit/test_pktgen_safety_gates.py`——断言 `duration=120000` 的 flood 调用被拒绝且零编译零流量（G1）；断言传入 `src_ip` 参数被拒绝（G3）；断言未传 `src_ip` 时编译参数采用 `PKTGEN_SRC_IP` 注入的合法源、覆盖 vendored 默认 `192.168.1.1/24`（D9，用 monkeypatch 设 env）。写完后运行确认失败
+- [x] T006 [P] [US1] 失败测试 G2：扩展 `tests/unit/test_pktgen_adapter.py`——断言 `pktgen_arp_flood(dst_ip="192.168.1.99")` 被拒绝（非白名单）、`dst_ip="10.99.80.160"` 通过且触发 RTT 采样、不提供 `dst_ip` 时正常执行且跳过采样。写完后运行确认失败
 
 ### 用户故事 1 的实现
 
-- [ ] T007 [US1] 实现 G1：在 `src/pktgen/adapter.py` 新增 duration 上限校验（>60000 拒绝、=0 保留永久发包语义），按 `contracts/pktgen-skill-params.md` 的 DURATION_LIMIT 口径返回 `success=false` 参数错误；接入 `_run_traffic_tool` 执行前（依赖 T005）
-- [ ] T008 [US1] 实现 G2：在 `src/pktgen/adapter.py` 的 `pktgen_arp_flood` 增加「提供 dst_ip 时必须通过 `validate_target`」分支；不并入 `_SKILLS_WITH_DST_IP`，保持「ARP 无 IP 仍可执行、仅跳过 RTT 采样」的可选语义（依赖 T006）
-- [ ] T009 [US1] 实现 G3+D9：在 `src/pktgen/adapter.py` 对 udp/tcp/icmp flood 拒绝 LLM 传入的 `src_ip`（G3，与 Scapy 工具「src_ip 必须为空」口径一致）；未传入时把 `PKTGEN_SRC_IP`（env 优先，回退 T004 配置默认）填入参数覆盖 vendored 默认（D9）（依赖 T004、T005）
-- [ ] T010 [US1] US1 全绿验证：运行 `tests/unit/test_pktgen_adapter.py`、`tests/unit/test_pktgen_safety_gates.py`、`tests/integration/test_pktgen_integration.py`，修复回归；确认四件套 dry-run 零流量、live 模拟端点下发链路（FR-003）不受影响
+- [x] T007 [US1] 实现 G1：在 `src/pktgen/adapter.py` 新增 duration 上限校验（>60000 拒绝、=0 保留永久发包语义），按 `contracts/pktgen-skill-params.md` 的 DURATION_LIMIT 口径返回 `success=false` 参数错误；接入 `_run_traffic_tool` 执行前（依赖 T005）
+- [x] T008 [US1] 实现 G2：在 `src/pktgen/adapter.py` 的 `pktgen_arp_flood` 增加「提供 dst_ip 时必须通过 `validate_target`」分支；不并入 `_SKILLS_WITH_DST_IP`，保持「ARP 无 IP 仍可执行、仅跳过 RTT 采样」的可选语义（依赖 T006）
+- [x] T009 [US1] 实现 G3+D9：在 `src/pktgen/adapter.py` 对 udp/tcp/icmp flood 拒绝 LLM 传入的 `src_ip`（G3，与 Scapy 工具「src_ip 必须为空」口径一致）；未传入时把 `PKTGEN_SRC_IP`（env 优先，回退 T004 配置默认）填入参数覆盖 vendored 默认（D9）（依赖 T004、T005）
+- [x] T010 [US1] US1 全绿验证：运行 `tests/unit/test_pktgen_adapter.py`、`tests/unit/test_pktgen_safety_gates.py`、`tests/integration/test_pktgen_integration.py`，修复回归；确认四件套 dry-run 零流量、live 模拟端点下发链路（FR-003）不受影响
 
 **检查点**: 用户故事 1 应完整可用且可独立测试（对应 quickstart 场景 1/2/4）。
 
@@ -96,7 +96,7 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 ### 用户故事 2 的测试 ⚠️
 
-- [ ] T011 [P] [US2] 回归测试（现状验证+防回归）：扩展 `tests/unit/test_pktgen_adapter.py`——断言 live 下同步等待时长 = min(duration, 60000)ms（monkeypatch `time.sleep` 记录入参）、`duration=0` 不等待、结果含 `attack_window`/`observation_window`/`covers_attack_window` 且 `mode` 标注正确（dry_run/live）
+- [x] T011 [P] [US2] 回归测试（现状验证+防回归）：扩展 `tests/unit/test_pktgen_adapter.py`——断言 live 下同步等待时长 = min(duration, 60000)ms（monkeypatch `time.sleep` 记录入参）、`duration=0` 不等待、结果含 `attack_window`/`observation_window`/`covers_attack_window` 且 `mode` 标注正确（dry_run/live）
 - [ ] T012 [P] [US2] G4 验证测试（**依赖 008 完成**）：扩展 `tests/integration/test_config_pipeline.py`——现有 `test_pktgen_defaults_flow_to_adapter` 只断言 env 已设置，需补「工具调用消费」断言：适配器工具未显式传 rate/duration 时采用 `PKTGEN_RATE`/`PKTGEN_DURATION_MS`。⚠️ 实现归属 008（008-G4），本任务在 008 完成后仅补验证测试；008 未完成前本任务阻塞
 
 ### 用户故事 2 的验证
@@ -115,16 +115,16 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 ### 用户故事 3 的测试 ⚠️
 
-- [ ] T014 [P] [US3] 失败测试 G5：扩展 `tests/unit/test_pktgen_adapter.py`——断言 `pktgen_packet_sequence` 中伪造 MAC（`00:00:00:00:00:01`、缺失、空串）触发替换且结果含 `replaced_mac` 明细（`[{index, from, to}]` 结构），真实 MAC（如 `f0:c4:78:4c:a5:55`）零误替换。写完后运行确认失败
-- [ ] T015 [P] [US3] 回归测试（五工具契约）：新建 `tests/unit/test_pktgen_skills_regression.py`——range_scan 参数传递与 dst_ip allowlist（FR-005）、packet_sequence 非法 JSON 拒绝（FR-013）与 ≤16 条目语义、pcap_replay 免 allowlist 且需 HITL（FR-005/006）、stats_monitor 与 stop_and_reset 免 HITL 且任意模式可调用（FR-007）、dry-run 下 stop/stats 仅编译不连接硬件（决策 005-2）
+- [x] T014 [P] [US3] 失败测试 G5：扩展 `tests/unit/test_pktgen_adapter.py`——断言 `pktgen_packet_sequence` 中伪造 MAC（`00:00:00:00:00:01`、缺失、空串）触发替换且结果含 `replaced_mac` 明细（`[{index, from, to}]` 结构），真实 MAC（如 `f0:c4:78:4c:a5:55`）零误替换。写完后运行确认失败
+- [x] T015 [P] [US3] 回归测试（五工具契约）：新建 `tests/unit/test_pktgen_skills_regression.py`——range_scan 参数传递与 dst_ip allowlist（FR-005）、packet_sequence 非法 JSON 拒绝（FR-013）与 ≤16 条目语义、pcap_replay 免 allowlist 且需 HITL（FR-005/006）、stats_monitor 与 stop_and_reset 免 HITL 且任意模式可调用（FR-007）、dry-run 下 stop/stats 仅编译不连接硬件（决策 005-2）
 
 ### 用户故事 3 的实现
 
-- [ ] T016 [US3] 实现 G5：在 `src/pktgen/adapter.py` 的 `pktgen_packet_sequence` 收集 MAC 替换明细（条目下标、替换前/后值）并写入结果 `replaced_mac` 字段，与 logger 记录保持一致（依赖 T014）
+- [x] T016 [US3] 实现 G5：在 `src/pktgen/adapter.py` 的 `pktgen_packet_sequence` 收集 MAC 替换明细（条目下标、替换前/后值）并写入结果 `replaced_mac` 字段，与 logger 记录保持一致（依赖 T014）
 
 ### 用户故事 3 的验证
 
-- [ ] T017 [US3] US3 全绿验证：运行 `tests/unit/test_pktgen_skills_regression.py`、`tests/unit/test_pktgen_adapter.py` 全量，修复回归（依赖 T014、T015、T016）
+- [x] T017 [US3] US3 全绿验证：运行 `tests/unit/test_pktgen_skills_regression.py`、`tests/unit/test_pktgen_adapter.py` 全量，修复回归（依赖 T014、T015、T016）
 
 **检查点**: 用户故事 3 应完整可用且可独立测试（对应 quickstart 场景 3）。
 
@@ -134,10 +134,10 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 
 **目的**: 影响多个用户故事的文档口径与最终验收。
 
-- [ ] T018 [P] G6a 文档口径：更新 `src/pktgen/adapter.py` 中 9 个工具的 docstring，与实现一致——duration>60000 拒绝、arp dst_ip 必须过 allowlist、src_ip 禁止自定义（合法源来自配置）、dry-run 下 stop/stats 仅编译
-- [ ] T019 [P] G6b 提示词口径：更新 `src/prompts/system_prompt.j2` Pktgen 段（约 138 行起工具表与约束说明）对齐同一口径：duration 上限、arp dst_ip allowlist、src_ip 政策、dry-run 止损语义
-- [ ] T020 端到端验证：按 `specs/005-pktgen-integration/quickstart.md` 场景 1–6 逐条执行并核对预期结果（含 `--pktgen-rate/--pktgen-duration` 生效、MAC 替换明细、live 模拟端点门控）
-- [ ] T021 全量回归 + 契约终核：`uv run pytest tests/ -v` 全绿；逐条核对 `contracts/pktgen-skill-params.md` 第 3 节与 `contracts/pktgen-adapter-results.md` 第 5 节不变量
+- [x] T018 [P] G6a 文档口径：更新 `src/pktgen/adapter.py` 中 9 个工具的 docstring，与实现一致——duration>60000 拒绝、arp dst_ip 必须过 allowlist、src_ip 禁止自定义（合法源来自配置）、dry-run 下 stop/stats 仅编译
+- [x] T019 [P] G6b 提示词口径：更新 `src/prompts/system_prompt.j2` Pktgen 段（约 138 行起工具表与约束说明）对齐同一口径：duration 上限、arp dst_ip allowlist、src_ip 政策、dry-run 止损语义
+- [x] T020 端到端验证：按 `specs/005-pktgen-integration/quickstart.md` 场景 1–6 逐条执行并核对预期结果（含 `--pktgen-rate/--pktgen-duration` 生效、MAC 替换明细、live 模拟端点门控）
+- [x] T021 全量回归 + 契约终核：`uv run pytest tests/ -v` 全绿；逐条核对 `contracts/pktgen-skill-params.md` 第 3 节与 `contracts/pktgen-adapter-results.md` 第 5 节不变量
 
 ---
 
