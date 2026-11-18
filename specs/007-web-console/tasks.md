@@ -49,9 +49,9 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 **目的**: 确认现状测试基线；backend 当前无任何测试，先建立最小可运行的 backend 测试通路
 
-- [ ] T001 在项目根运行 `uv run pytest tests/ -v`，记录基线结果；若存在失败，仅做最小修复使基线全绿（不得借机改产品逻辑），并把结果记入本任务的提交说明
-- [ ] T002 确认 backend 可测试通路：验证 `uv run python -c "import backend.experiment, backend.server"` 在项目根可执行；核对 tests/unit/conftest.py 已将项目根加入 sys.path（按 CLAUDE.md「Test Organization」约定），如缺则补齐该 conftest（文件：tests/unit/conftest.py）
-- [ ] T003 [P] 在 tests/unit/test_experiment_msg.py 为 backend/experiment.py 的 `_msg_to_dict` 写基线单元测试：给定含 tool_calls 的 LangChain 消息，断言输出含 role/content/tool_calls（name+args）；给定无 tool_calls 消息断言 tool_calls 为 None。先跑一次记录现状结果（预期通过，若失败记入缺口）
+- [x] T001 在项目根运行 `uv run pytest tests/ -v`，记录基线结果；若存在失败，仅做最小修复使基线全绿（不得借机改产品逻辑），并把结果记入本任务的提交说明
+- [x] T002 确认 backend 可测试通路：验证 `uv run python -c "import backend.experiment, backend.server"` 在项目根可执行；核对 tests/unit/conftest.py 已将项目根加入 sys.path（按 CLAUDE.md「Test Organization」约定），如缺则补齐该 conftest（文件：tests/unit/conftest.py）
+- [x] T003 [P] 在 tests/unit/test_experiment_msg.py 为 backend/experiment.py 的 `_msg_to_dict` 写基线单元测试：给定含 tool_calls 的 LangChain 消息，断言输出含 role/content/tool_calls（name+args）；给定无 tool_calls 消息断言 tool_calls 为 None。先跑一次记录现状结果（预期通过，若失败记入缺口）
 
 **检查点**: 基线全绿、backend 可被 pytest 导入
 
@@ -61,9 +61,9 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 **⚠️ 关键**: 本阶段完成前不得开始任何用户故事工作
 
-- [ ] T004 将 backend/experiment.py 的 ExperimentManager 由进程级单例重构为 per-client_id 会话注册表（映射 client_id → 会话对象，会话内持实验运行/审批队列/所有者）；保留 `graph.ainvoke` 桥接、`_push_new_messages`、`_extract_hitl`、`approve`/`stop` 既有逻辑；同一 client_id 已有运行实验时再次 start 返回「实验已在运行中」（FR-009 按会话粒度）。对照 data-model.md「控制台会话/实验运行」字段与状态流转（idle→starting→running→done/stopped/error）
-- [ ] T005 在 backend/server.py 的 websocket_endpoint 中为 hitl_response 与 stop_experiment 增加会话所有者校验：非发起实验的 client_id 发送这两类消息时返回 error（"非会话所有者"）且不改变实验状态（007-2 决议、contracts/ws-messages.md 总则第 3 条）。依赖 T004
-- [ ] T006 在 tests/unit/test_experiment_sessions.py 写会话模型单元测试：同 client_id 二次 start 被拒；B 客户端的 hitl_response/stop_experiment 对 A 会话无效且收到 error；A 客户端自己的决定生效。依赖 T004/T005
+- [x] T004 将 backend/experiment.py 的 ExperimentManager 由进程级单例重构为 per-client_id 会话注册表（映射 client_id → 会话对象，会话内持实验运行/审批队列/所有者）；保留 `graph.ainvoke` 桥接、`_push_new_messages`、`_extract_hitl`、`approve`/`stop` 既有逻辑；同一 client_id 已有运行实验时再次 start 返回「实验已在运行中」（FR-009 按会话粒度）。对照 data-model.md「控制台会话/实验运行」字段与状态流转（idle→starting→running→done/stopped/error）
+- [x] T005 在 backend/server.py 的 websocket_endpoint 中为 hitl_response 与 stop_experiment 增加会话所有者校验：非发起实验的 client_id 发送这两类消息时返回 error（"非会话所有者"）且不改变实验状态（007-2 决议、contracts/ws-messages.md 总则第 3 条）。依赖 T004
+- [x] T006 在 tests/unit/test_experiment_sessions.py 写会话模型单元测试：同 client_id 二次 start 被拒；B 客户端的 hitl_response/stop_experiment 对 A 会话无效且收到 error；A 客户端自己的决定生效。依赖 T004/T005
 
 **检查点**: 会话模型就绪——用户故事可以开始并行实现
 
@@ -77,14 +77,14 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 > **注意：先写测试，确认失败后再实现**
 
-- [ ] T007 [P] [US1] 在 tests/integration/test_hitl_flow.py 写 HITL 审批闭环集成测试：构造最小执行（mock LLM 触发一次含 interrupt 的工具调用，参照 tests/e2e 现有模式），断言 ① hitl_request 推送（data 含 message+params，契约见 contracts/hitl-payload.md）② 队列回填后 resume 决定送达 ③ 拒绝时该工具结果标记「被操作员拒绝」且无流量（FR-011~FR-014、SC-004/005）
-- [ ] T008 [P] [US1] 在 tests/unit/test_experiment_stream.py 写消息流顺序/类型单测：mock graph 状态快照，断言 `_push_new_messages(since)` 从 since 起无遗漏、tool 角色映射为 tool_result、其余映射为 messages、最终推送 experiment_done（FR-004~FR-006）
+- [x] T007 [P] [US1] 在 tests/integration/test_hitl_flow.py 写 HITL 审批闭环集成测试：构造最小执行（mock LLM 触发一次含 interrupt 的工具调用，参照 tests/e2e 现有模式），断言 ① hitl_request 推送（data 含 message+params，契约见 contracts/hitl-payload.md）② 队列回填后 resume 决定送达 ③ 拒绝时该工具结果标记「被操作员拒绝」且无流量（FR-011~FR-014、SC-004/005）
+- [x] T008 [P] [US1] 在 tests/unit/test_experiment_stream.py 写消息流顺序/类型单测：mock graph 状态快照，断言 `_push_new_messages(since)` 从 since 起无遗漏、tool 角色映射为 tool_result、其余映射为 messages、最终推送 experiment_done（FR-004~FR-006）
 
 ### 用户故事 1 的实现
 
-- [ ] T009 [US1] 在 backend/experiment.py 确认并适配 `_extract_hitl` 与统一审批结构（contracts/hitl-payload.md）兼容：定位规则保持「dict 且含 message 键」；hitl_request.data 透传 message/params/scope 原样（scope 为 008 新增字段，兼容旧 payload 无 scope 的情况，不报错）
-- [ ] T010 [US1] 在 frontend/app.js 完善审批闭环展示：① 审批弹窗展示 message + params 明细（含 scope 字段）② 拒绝后面板明确显示「HITL 审批拒绝」（核验现状并补全）③ experiment_done 携带 summary 时渲染摘要文本（现状只显示「实验完成」）；对照 contracts/ws-messages.md 的渲染与截断约束（内容转义、AI≤1000/工具结果≤300/摘要≤2000 字符）
-- [ ] T011 [P] [US1] 在 tests/unit/test_hitl_semantics.py 写 resume=False 零流量语义单测：对 ExperimentManager 会话的 approve(False) 路径断言注入的决定为 False（`Command(resume=False)` 语义），并在工具层断言拒绝返回 `{"success": false, "error": "HITL rejected by operator"}`（与 008 契约一致）
+- [x] T009 [US1] 在 backend/experiment.py 确认并适配 `_extract_hitl` 与统一审批结构（contracts/hitl-payload.md）兼容：定位规则保持「dict 且含 message 键」；hitl_request.data 透传 message/params/scope 原样（scope 为 008 新增字段，兼容旧 payload 无 scope 的情况，不报错）
+- [x] T010 [US1] 在 frontend/app.js 完善审批闭环展示：① 审批弹窗展示 message + params 明细（含 scope 字段）② 拒绝后面板明确显示「HITL 审批拒绝」（核验现状并补全）③ experiment_done 携带 summary 时渲染摘要文本（现状只显示「实验完成」）；对照 contracts/ws-messages.md 的渲染与截断约束（内容转义、AI≤1000/工具结果≤300/摘要≤2000 字符）
+- [x] T011 [P] [US1] 在 tests/unit/test_hitl_semantics.py 写 resume=False 零流量语义单测：对 ExperimentManager 会话的 approve(False) 路径断言注入的决定为 False（`Command(resume=False)` 语义），并在工具层断言拒绝返回 `{"success": false, "error": "HITL rejected by operator"}`（与 008 契约一致）
 
 **检查点**: 用户故事 1 完整可用且可独立测试（quickstart 场景 1/5/6 通过）
 
@@ -96,15 +96,15 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 ### 用户故事 2 的测试（先写测试，确认失败后再实现）⚠️
 
-- [ ] T012 [P] [US2] 在 tests/unit/test_upload_validation.py 写 PCAP 上传校验测试（对照 contracts/rest-api.md POST /api/upload/pcap）：扩展名白名单 .pcap/.pcapng/.cap（大小写不敏感）、>100MB 拒绝（413 语义）、空文件名拒绝（400）、成功时 file_path 形如 data/uploads/<8位前缀>_<原名>。先跑一次确认现状失败（当前无服务端校验）
-- [ ] T013 [P] [US2] 在 tests/unit/test_defaults_endpoint.py 写默认值接口测试（对照 contracts/rest-api.md GET /api/experiment/defaults）：返回 experiment.json 的 target_ip/max_iters/no_improve_limit；配置修改后（测试内临时写读）重启进程读取生效。先跑一次确认现状失败（接口尚不存在）
+- [x] T012 [P] [US2] 在 tests/unit/test_upload_validation.py 写 PCAP 上传校验测试（对照 contracts/rest-api.md POST /api/upload/pcap）：扩展名白名单 .pcap/.pcapng/.cap（大小写不敏感）、>100MB 拒绝（413 语义）、空文件名拒绝（400）、成功时 file_path 形如 data/uploads/<8位前缀>_<原名>。先跑一次确认现状失败（当前无服务端校验）
+- [x] T013 [P] [US2] 在 tests/unit/test_defaults_endpoint.py 写默认值接口测试（对照 contracts/rest-api.md GET /api/experiment/defaults）：返回 experiment.json 的 target_ip/max_iters/no_improve_limit；配置修改后（测试内临时写读）重启进程读取生效。先跑一次确认现状失败（接口尚不存在）
 
 ### 用户故事 2 的实现
 
-- [ ] T014 [US2] 在 backend/server.py 实现上传服务端校验（G3）：扩展名白名单 + 100MB 上限 + 结构化错误响应（400/413，错误文案按 contracts/rest-api.md）；校验失败不落盘；成功响应含 file_path/file_name/size_bytes（007-3 决议、FR-015/FR-016）。依赖 T012 测试先行
-- [ ] T015 [US2] 在 backend/server.py 实现默认值单一来源（G4）：新增 `GET /api/experiment/defaults`（启动时从 src/config/experiment.json 读取 target_ip/max_iters/no_improve_limit）；StartRequest 兜底默认改为同一来源；为 StartRequest 增加 max_iters/no_improve_limit ≥1 校验（data-model「实验运行」约束字段）。依赖 T013 测试先行
-- [ ] T016 [US2] 在 frontend/app.js、frontend/index.html 接入默认值（G4 前端部分）：页面加载时请求 /api/experiment/defaults 填充表单初值，移除 index.html 中的硬编码 value（保留 placeholder）；start_experiment 收到 error（"实验已在运行中…"）时回滚运行态为就绪（G5 部分，FR-009 前端语义）
-- [ ] T017 [US2] 在 tests/integration/test_status_stop.py 写状态/停止会话语义集成测试：GET /api/experiment/status 的 running 值与面板一致；POST /api/experiment/stop 受理后实验结束消息推送且状态复位（FR-017/FR-018、SC-008/009）
+- [x] T014 [US2] 在 backend/server.py 实现上传服务端校验（G3）：扩展名白名单 + 100MB 上限 + 结构化错误响应（400/413，错误文案按 contracts/rest-api.md）；校验失败不落盘；成功响应含 file_path/file_name/size_bytes（007-3 决议、FR-015/FR-016）。依赖 T012 测试先行
+- [x] T015 [US2] 在 backend/server.py 实现默认值单一来源（G4）：新增 `GET /api/experiment/defaults`（启动时从 src/config/experiment.json 读取 target_ip/max_iters/no_improve_limit）；StartRequest 兜底默认改为同一来源；为 StartRequest 增加 max_iters/no_improve_limit ≥1 校验（data-model「实验运行」约束字段）。依赖 T013 测试先行
+- [x] T016 [US2] 在 frontend/app.js、frontend/index.html 接入默认值（G4 前端部分）：页面加载时请求 /api/experiment/defaults 填充表单初值，移除 index.html 中的硬编码 value（保留 placeholder）；start_experiment 收到 error（"实验已在运行中…"）时回滚运行态为就绪（G5 部分，FR-009 前端语义）
+- [x] T017 [US2] 在 tests/integration/test_status_stop.py 写状态/停止会话语义集成测试：GET /api/experiment/status 的 running 值与面板一致；POST /api/experiment/stop 受理后实验结束消息推送且状态复位（FR-017/FR-018、SC-008/009）
 
 **检查点**: 用户故事 2 完整可用且可独立测试（quickstart 场景 2/3/4/7 通过）
 
@@ -116,13 +116,13 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 ### 用户故事 3 的测试（先写测试，确认失败后再实现）⚠️
 
-- [ ] T018 [P] [US3] 在 tests/unit/test_ws_errors.py 写断线与错误消息测试：无效 JSON → error（"无效的 JSON"）；未知消息类型 → error（"未知消息类型: …"）且实验状态不变；WebSocketDisconnect 后会话标记断开、服务不崩溃、实验继续（FR-019/FR-020）
+- [x] T018 [P] [US3] 在 tests/unit/test_ws_errors.py 写断线与错误消息测试：无效 JSON → error（"无效的 JSON"）；未知消息类型 → error（"未知消息类型: …"）且实验状态不变；WebSocketDisconnect 后会话标记断开、服务不崩溃、实验继续（FR-019/FR-020）
 
 ### 用户故事 3 的实现
 
-- [ ] T019 [US3] 在 frontend/app.js 完善断线体验：ws.onclose 显示「未连接」徽章并给出「刷新页面重新连接」提示（可加一次自动重连尝试）；连接成功/断开文案对照 FR-003（含 client_id 展示）
-- [ ] T020 [US3] 在 frontend/app.js、frontend/index.html 处理统计卡数据源（G5）：为「当前轮次/最佳 RTT/最近 RTT」确定数据来源（v1 从 tool_result/experiment_done 解析，解析不到时明确显示「暂未采集」而非常显 "-"）；依赖 T019（同文件 app.js，避免冲突）
-- [ ] T021 [P] [US3] 在 frontend/index.html、frontend/style.css 增加「仅限可信内网使用」声明横幅（G1 前端部分；样式沿用暗色主题变量）
+- [x] T019 [US3] 在 frontend/app.js 完善断线体验：ws.onclose 显示「未连接」徽章并给出「刷新页面重新连接」提示（可加一次自动重连尝试）；连接成功/断开文案对照 FR-003（含 client_id 展示）
+- [x] T020 [US3] 在 frontend/app.js、frontend/index.html 处理统计卡数据源（G5）：为「当前轮次/最佳 RTT/最近 RTT」确定数据来源（v1 从 tool_result/experiment_done 解析，解析不到时明确显示「暂未采集」而非常显 "-"）；依赖 T019（同文件 app.js，避免冲突）
+- [x] T021 [P] [US3] 在 frontend/index.html、frontend/style.css 增加「仅限可信内网使用」声明横幅（G1 前端部分；样式沿用暗色主题变量）
 
 **检查点**: 用户故事 3 完整可用且可独立测试（quickstart 场景 1/7/8 通过）
 
@@ -130,8 +130,8 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 **目的**: 影响多个用户故事的改进与最终收敛
 
-- [ ] T022 [P] 在 README.md 增加 Web 控制台安全声明段落：仅限已授权可信内网、无认证说明、HITL 审批要求（007-1 决议；与现有「合规与安全声明」节衔接）
-- [ ] T023 [P] 在 backend/server.py 增加启动日志输出内网限定警告（logging，一条 WARNING 级声明；007-1 决议）
+- [x] T022 [P] 在 README.md 增加 Web 控制台安全声明段落：仅限已授权可信内网、无认证说明、HITL 审批要求（007-1 决议；与现有「合规与安全声明」节衔接）
+- [x] T023 [P] 在 backend/server.py 增加启动日志输出内网限定警告（logging，一条 WARNING 级声明；007-1 决议）
 - [ ] T024 在项目根执行 `uv run pytest tests/ -v` 全量回归；按 quickstart.md 8 个场景手工验收；对照 spec.md FR-001~FR-020 与 SC-001~SC-010 逐项打勾，未满足项记入收敛任务清单（宪法二）；复查宪法七项原则（重点：四 HITL 不可绕过、六 默认值单一来源）
 
 ## 依赖与执行顺序

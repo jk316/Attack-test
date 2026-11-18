@@ -22,15 +22,21 @@ def _make_state(next_nodes, msg_list, tasks=None):
 
 @pytest.mark.asyncio
 async def test_run_loop_single_hitl_cycle():
-    """Agent calls traffic_send → interrupt → approve → agent finishes."""
+    """Agent calls traffic_send → interrupt → approve → agent finishes.
+
+    007-T004 重构后按会话粒度驱动：manager._get_session(client_id) 的
+    _run_loop 与 approve 路径（与旧单例 API 等价）。
+    """
     from backend.experiment import ExperimentManager
 
     manager = ExperimentManager()
+    session = manager._get_session("clientA")
+    session._running = True  # approve 需要会话处于运行态（模拟 start 已置位）
 
     fake_graph = MagicMock()
     fake_graph.ainvoke = AsyncMock()
     fake_graph.get_state = MagicMock()
-    manager._graph = fake_graph
+    session._graph = fake_graph
 
     paused = _make_state(
         ("tools",),
@@ -56,15 +62,16 @@ async def test_run_loop_single_hitl_cycle():
         async def send_json(self, data):
             sent.append(data)
 
-    manager._ws = FakeWS()
-    manager._config = {"configurable": {"thread_id": "test"}}
+    session._ws = FakeWS()
+    session._connected = True
+    session._config = {"configurable": {"thread_id": "test"}}
 
     async def approve_soon():
         await asyncio.sleep(0.3)
-        await manager.approve(True)
+        await session.approve(True)
 
     task_run = asyncio.create_task(
-        manager._run_loop({"messages": [{"role": "user", "content": "start"}]})
+        session._run_loop({"messages": [{"role": "user", "content": "start"}]})
     )
     asyncio.create_task(approve_soon())
 
@@ -82,11 +89,12 @@ async def test_run_loop_no_hitl_just_completes():
     from backend.experiment import ExperimentManager
 
     manager = ExperimentManager()
+    session = manager._get_session("clientA")
 
     fake_graph = MagicMock()
     fake_graph.ainvoke = AsyncMock()
     fake_graph.get_state = MagicMock()
-    manager._graph = fake_graph
+    session._graph = fake_graph
 
     done = _make_state(
         (),
@@ -100,10 +108,11 @@ async def test_run_loop_no_hitl_just_completes():
         async def send_json(self, data):
             sent.append(data)
 
-    manager._ws = FakeWS()
-    manager._config = {"configurable": {"thread_id": "test"}}
+    session._ws = FakeWS()
+    session._connected = True
+    session._config = {"configurable": {"thread_id": "test"}}
 
-    await manager._run_loop({"messages": [{"role": "user", "content": "start"}]})
+    await session._run_loop({"messages": [{"role": "user", "content": "start"}]})
 
     types = [m["type"] for m in sent if "type" in m]
     print("Types:", types)
@@ -112,19 +121,19 @@ async def test_run_loop_no_hitl_just_completes():
 
 
 def test_extract_hitl_from_tasks():
-    from backend.experiment import ExperimentManager
+    from backend.experiment import ExperimentSession
     fake_intr = MagicMock()
     fake_intr.value = {"message": "[HITL]", "params": {}}
     fake_task = MagicMock()
     fake_task.interrupts = [fake_intr]
     fake_gs = MagicMock()
     fake_gs.tasks = [fake_task]
-    assert ExperimentManager._extract_hitl(fake_gs) is not None
+    assert ExperimentSession._extract_hitl(fake_gs) is not None
 
 
 def test_extract_hitl_returns_none_for_no_tasks():
-    from backend.experiment import ExperimentManager
-    assert ExperimentManager._extract_hitl(MagicMock(tasks=[])) is None
+    from backend.experiment import ExperimentSession
+    assert ExperimentSession._extract_hitl(MagicMock(tasks=[])) is None
 
 
 def test_msg_to_dict_conversions():
