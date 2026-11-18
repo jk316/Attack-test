@@ -61,8 +61,7 @@ description: "功能实现任务列表：Ping 监控与 RTT 观测"
 
 **⚠️ 关键**: 本阶段完成前不得开始任何用户故事工作
 
-- [ ] T003 [P] 在 src/config/experiment.json 新增 `"ping_monitor"` 配置节：`probes_per_sec=10`、`summary_interval_s=1`、`fallback_interval_s=1.0`、`stats_window_s=5.0`、`max_samples=4000`（键名与默认值见 research.md 决策 2/3；文件：src/config/experiment.json）
-- [ ] T004 在 src/main.py 读取 `ping_monitor` 节并注入环境变量：`PING_MONITOR_PROBES_PER_SEC`、`PING_MONITOR_SUMMARY_INTERVAL_S`、`PING_MONITOR_FALLBACK_INTERVAL_S`、`PING_MONITOR_STATS_WINDOW_S`、`PING_MONITOR_MAX_SAMPLES`（沿用既有「experiment.json → env → 调用时读取」模式，参考 main.py 中 ATK_* 的注入方式；依赖 T003；文件：src/main.py）
+（T003/T004 已完成，见上节同号条目——补勾由 Lead 复核提醒，2026-11-19）
 
 **检查点**: 配置注入链路就绪——用户故事可以开始
 
