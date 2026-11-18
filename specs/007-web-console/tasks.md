@@ -132,7 +132,7 @@ description: "Web 控制台（实时实验监控与人工审批）实现任务�
 
 - [x] T022 [P] 在 README.md 增加 Web 控制台安全声明段落：仅限已授权可信内网、无认证说明、HITL 审批要求（007-1 决议；与现有「合规与安全声明」节衔接）
 - [x] T023 [P] 在 backend/server.py 增加启动日志输出内网限定警告（logging，一条 WARNING 级声明；007-1 决议）
-- [ ] T024 在项目根执行 `uv run pytest tests/ -v` 全量回归；按 quickstart.md 8 个场景手工验收；对照 spec.md FR-001~FR-020 与 SC-001~SC-010 逐项打勾，未满足项记入收敛任务清单（宪法二）；复查宪法七项原则（重点：四 HITL 不可绕过、六 默认值单一来源）
+- [x] T024 在项目根执行 `uv run pytest tests/ -v` 全量回归；按 quickstart.md 8 个场景手工验收；对照 spec.md FR-001~FR-020 与 SC-001~SC-010 逐项打勾，未满足项记入收敛任务清单（宪法二）；复查宪法七项原则（重点：四 HITL 不可绕过、六 默认值单一来源）
 
 ## 依赖与执行顺序
 
