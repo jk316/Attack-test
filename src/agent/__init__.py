@@ -1,6 +1,7 @@
 """Closed-Loop Network Experiment Agent"""
 from .state import (
     AgentState,
+    apply_observation,
     compute_reward,
     check_stop_condition,
     update_best,
@@ -9,6 +10,7 @@ from .graph import build_graph
 
 __all__ = [
     "AgentState",
+    "apply_observation",
     "compute_reward",
     "check_stop_condition",
     "update_best",

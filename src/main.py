@@ -18,9 +18,14 @@ MSG_PREVIEW_LEN = 500
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
+from src.agent.state import (  # noqa: E402
+    apply_observation,
+    check_stop_condition,
+)
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
 from src.trex.config import get_trex_host, get_trex_port  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
+from src.tools.ping_rtt_tool import is_allowlisted  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
@@ -300,12 +305,33 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
         parser.error(
-            "--trex-explore cannot be combined with --trex-live: "
-            "explore mode never executes traffic"
+            "--trex-explore 与 --trex-live 互斥：目录探索模式绝不执行流量，"
+            "两者不能同时指定"
         )
     if args.max_iters is None:
         args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
     return args
+
+
+def _run_preflight(args: argparse.Namespace) -> None:
+    """启动前预检（G3、FR-017、data-model 校验规则，research.md D3）。
+
+    必须在 build_graph 之前调用：目标 IP 必须位于 allowlist（复用
+    ``src/tools/ping_rtt_tool.py`` 的 ``is_allowlisted``，不引入第二套
+    allowlist 逻辑）、``max_iters ≥ 1``、``no_improve_limit ≥ 1``。
+    任一不合规打印明确中文错误并以非零退出码退出，不发起模型请求。
+    """
+    errors: list[str] = []
+    if not is_allowlisted(args.target_ip):
+        errors.append(f"目标 IP {args.target_ip!r} 不在 allowlist 中")
+    if args.max_iters is None or args.max_iters < 1:
+        errors.append(f"max_iters 必须 ≥ 1（当前 {args.max_iters!r}）")
+    if args.no_improve_limit is None or args.no_improve_limit < 1:
+        errors.append(f"no_improve_limit 必须 ≥ 1（当前 {args.no_improve_limit!r}）")
+    if errors:
+        for msg in errors:
+            print(f"[启动预检失败] {msg}，拒绝启动。", file=sys.stderr)
+        sys.exit(1)
 
 
 def _build_user_message(args: argparse.Namespace) -> str:
@@ -374,8 +400,55 @@ def _extract_hitl_payload(gs) -> dict | None:
     return None
 
 
+def _extract_observation(messages) -> dict | None:
+    """从工具结果消息提取本轮实测观测（G1/D5 硬裁决数据来源）。
+
+    优先 ``rtt_during.avg_rtt_ms`` / ``rtt_during.loss_pct``（003 规格观测
+    字段），回退顶层 ``avg_rtt_ms`` / ``loss_pct``（``read_ping_stats`` /
+    ``ping_rtt`` 字段）。``covers_attack_window`` 取自 ``observation_window``；
+    无该字段（如 read_ping_stats）默认视为可靠。返回归一化观测
+    ``{avg_rtt_ms, loss_pct, covers_attack_window}`` 或 None（无可用观测）。
+    """
+    for msg in reversed(list(messages)):
+        content = getattr(msg, "content", "")
+        if not isinstance(content, str):
+            continue
+        stripped = content.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            data = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        avg = None
+        loss = None
+        rtt_during = data.get("rtt_during")
+        if isinstance(rtt_during, dict):
+            avg = rtt_during.get("avg_rtt_ms")
+            loss = rtt_during.get("loss_pct")
+        if avg is None and isinstance(data.get("avg_rtt_ms"), (int, float)):
+            avg = data["avg_rtt_ms"]
+        if loss is None and isinstance(data.get("loss_pct"), (int, float)):
+            loss = data["loss_pct"]
+        if avg is None:
+            continue
+        covers = True
+        ow = data.get("observation_window")
+        if isinstance(ow, dict) and "covers_attack_window" in ow:
+            covers = bool(ow["covers_attack_window"])
+        return {
+            "avg_rtt_ms": float(avg),
+            "loss_pct": float(loss or 0.0),
+            "covers_attack_window": covers,
+        }
+    return None
+
+
 def main() -> None:
     args = parse_args()
+    _run_preflight(args)
 
     # ── Inject defaults as env vars (tools read these at call time) ──
     os.environ["ATK_DURATION_S"] = str(args.duration)
@@ -426,8 +499,9 @@ def main() -> None:
     trex_mode = "live" if args.trex_live else ("explore" if args.trex_explore else "dry-run")
     print(f"Trex:       {trex_mode} ({trex_host}:{trex_port})")
     if args.trex_explore:
+        # 时间戳精确到微秒：连续多次运行的文件名互不相同（SC-006 互不覆盖）
         catalog_path = (Path("output")
-                        / f"trex_attack_catalog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+                        / f"trex_attack_catalog_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md")
         print(f"Catalog:    ≥{args.catalog_target} attack scripts → "
               f"{catalog_path} (no traffic, no HITL)")
         if args.explore_direction:
@@ -435,7 +509,10 @@ def main() -> None:
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
-    log_fh = logging.FileHandler("data/agent.log", encoding="utf-8")
+    # 确保日志目录存在（fresh checkout 下 data/ 可能不存在，T010 暴露的偏差）
+    log_file = Path("data/agent.log")
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = logging.FileHandler(log_file, encoding="utf-8")
     log_fh.setLevel(logging.DEBUG)
     log_fh.setFormatter(logging.Formatter("%(message)s"))
     log_ch = logging.StreamHandler()
@@ -449,9 +526,10 @@ def main() -> None:
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
 
     verbose = VerboseCallback()
+    mode = "catalog" if args.trex_explore else "experiment"
     graph = build_graph(
         max_iters=args.max_iters, no_improve_limit=args.no_improve_limit,
-        mode="catalog" if args.trex_explore else "experiment",
+        mode=mode,
     )
     thread_id = str(uuid4())[:8]
     config = {
@@ -465,6 +543,13 @@ def main() -> None:
     print(f"Thread: {thread_id}")
     print()
 
+    # ── 运行时硬裁决状态（G1/D1/D5；仅实验模式生效，目录模式豁免 D6）──
+    verdict_state: dict = {"best_reward": 0.0, "consecutive_no_improve": 0}
+    iteration = 0
+    last_approved: bool | None = None
+    seen_count = 0
+    forced_stop_reason: str | None = None
+
     try:
         # Start the agent — runs until first interrupt (HITL on traffic_send)
         graph.invoke(initial_state, config)
@@ -474,6 +559,28 @@ def main() -> None:
             gs = graph.get_state(config)
             if not gs or not gs.next:
                 break  # graph completed
+
+            messages = (gs.values or {}).get("messages", [])
+            # ── 运行时硬裁决：结算上一轮实测观测并检查停止条件 ──
+            if mode == "experiment":
+                if last_approved is True:
+                    iteration += 1
+                    obs = _extract_observation(messages[seen_count:])
+                    verdict_state = apply_observation(verdict_state, obs)
+                    if check_stop_condition(
+                        iteration,
+                        verdict_state["consecutive_no_improve"],
+                        args.max_iters,
+                        args.no_improve_limit,
+                    ):
+                        forced_stop_reason = (
+                            f"达到最大轮数 {args.max_iters}"
+                            if iteration >= args.max_iters
+                            else f"连续 {args.no_improve_limit} 轮无改善"
+                        )
+                        print(f"\n[硬裁决] {forced_stop_reason}，强制停止实验。")
+                        break
+                seen_count = len(messages)
 
             # Display the interrupt payload so the operator sees what is approved
             payload = _extract_hitl_payload(gs)
@@ -492,6 +599,7 @@ def main() -> None:
                 approved = response == "y"
                 print(f"  {'Approved' if approved else 'Rejected'}")
             graph.invoke(Command(resume=approved), config)
+            last_approved = approved
             print()
 
         # Get final state
@@ -500,22 +608,37 @@ def main() -> None:
 
         print("=== Experiment Complete ===")
 
-        # Extract final AI message for summary
-        messages = result.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            content = getattr(last_msg, "content", str(last_msg))
-            if content:
-                # Print the last meaningful content (excluding tool results)
-                print("\n" + str(content))
-            else:
-                print("(no summary output)")
+        if forced_stop_reason:
+            # 硬裁决强制停止：输出系统总结（模型未主动总结）
+            print(f"\n[实验总结] 因「{forced_stop_reason}」由运行时硬裁决强制停止。")
+            print(
+                f"共执行 {iteration} 轮；历史最优奖励 best_reward="
+                f"{verdict_state.get('best_reward', 0.0):.2f}；"
+                f"连续无改善 {verdict_state.get('consecutive_no_improve', 0)} 轮。"
+            )
+            content = ""
+        else:
+            # Extract final AI message for summary
+            messages = result.get("messages", [])
+            content = ""
+            if messages:
+                last_msg = messages[-1]
+                content = getattr(last_msg, "content", str(last_msg))
+                if content:
+                    # Print the last meaningful content (excluding tool results)
+                    print("\n" + str(content))
+                else:
+                    print("(no summary output)")
 
         # Catalog mode: persist the final summary as the deliverable.
-        if args.trex_explore and content:
-            catalog_path.parent.mkdir(parents=True, exist_ok=True)
-            catalog_path.write_text(str(content), encoding="utf-8")
-            print(f"\nAttack catalog saved to: {catalog_path}")
+        if args.trex_explore:
+            if content:
+                catalog_path.parent.mkdir(parents=True, exist_ok=True)
+                catalog_path.write_text(str(content), encoding="utf-8")
+                print(f"\nAttack catalog saved to: {catalog_path}")
+            else:
+                # 边界情况：最终消息为空 → 不写摘要文件，正常结束并提示
+                print("\n（目录探索最终消息为空，未写入摘要文件）")
 
         print(f"\nResults logged to: {args.log_path}")
     finally:

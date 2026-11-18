@@ -114,7 +114,7 @@ state = {
 ```
 RED: test_agent_loop.py
 - 测试参数探索策略
-- 测试 reward = avg_rtt_ms - penalty(loss_pct)
+- 测试 reward = avg_rtt_ms + loss_pct × 10（统一公式）
 - 测试停止条件 (max_iters=20, 连续5轮无提升)
 - 测试 HITL 审批流程
 

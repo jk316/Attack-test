@@ -96,7 +96,7 @@ flowchart TD
     CFG --> PKG
 ```
 
-**核心闭环**：LLM 推理 → 调用流量工具（HITL 审批）→ 采集 RTT 观测 → 依据 `reward = avg_rtt_ms − penalty(loss)` 调参 → 重复，直到 `max_iters` 或连续 `no_improve_limit` 轮无提升。
+**核心闭环**：LLM 推理 → 调用流量工具（HITL 审批）→ 采集 RTT 观测 → 依据统一奖励 `reward = avg_rtt_ms + loss_pct × 10` 调参 → 重复，直到 `max_iters` 或连续 `no_improve_limit` 轮无提升（运行时硬裁决强制停止）。
 
 ---
 

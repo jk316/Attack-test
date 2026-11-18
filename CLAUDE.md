@@ -97,7 +97,7 @@ User Request → LangChain V1.0 Agent (LangGraph StateGraph)
                  └─ HITL: interrupt() on traffic tools → Command(resume=...)
 ```
 
-**Convergence / early-stop**: the loop stops after `no_improve_limit` (default 5) consecutive rounds without RTT improvement. This value is threaded through `main.py` (CLI `--no-improve-limit` / `experiment.json`) → `build_graph(max_iters, no_improve_limit)` → `system_prompt.j2`; it is not hardcoded in the tools.
+**Convergence / early-stop (runtime hard verdict)**: after every approved traffic round, `main.py`'s polling loop extracts the measured `avg_rtt_ms`/`loss_pct` from tool results (preferring `rtt_during`, falling back to `read_ping_stats` fields via `_extract_observation`), computes the unified reward `reward = avg_rtt_ms + loss_pct × 10` (`src/agent/state.py::compute_reward`), and maintains `best_reward`/`consecutive_no_improve` via `update_best`/`apply_observation`. When `check_stop_condition` fires (`iteration >= max_iters` or `consecutive_no_improve >= no_improve_limit`), the loop force-stops and prints a system summary; the prompt-level stop text only guides the model to summarize early (dual assurance, hard verdict wins). Rounds whose observation does not cover the attack window (`covers_attack_window=false`) are skipped in the no-improve counter (D5). The verdict only applies in experiment mode (catalog mode is exempt). Budgets are threaded through `main.py` (CLI `--no-improve-limit` / `--max-iters` / `experiment.json`) → `build_graph(max_iters, no_improve_limit)` → `system_prompt.j2`; they are not hardcoded in the tools. `main.py` also runs a startup preflight (target ∈ allowlist, budgets ≥ 1, mutex flags) before building the graph.
 
 ### Web Console Architecture
 
@@ -125,7 +125,7 @@ ExperimentManager (backend/experiment.py)
 |------|------|
 | `src/agent/graph.py` | Builds agent via `create_agent()`, model config, system prompt rendering with template variables, DeepSeek reasoning_content monkey-patch |
 | `src/agent/tools.py` | 19 `@tool`-decorated LangChain tools (8 Scapy + 9 Pktgen via `*PKTGEN_TOOLS` + 2 TRex via `*TREX_TOOLS`); HITL gates via `interrupt()` |
-| `src/agent/state.py` | Agent state definition |
+| `src/agent/state.py` | Agent state + unified reward functions used by the main-loop hard verdict: `compute_reward` (`avg_rtt_ms + loss_pct × 10`, inf → 0.0), `update_best` (`best_reward` + `consecutive_no_improve`), `check_stop_condition`, `apply_observation` (skips rounds with `covers_attack_window=false`) |
 | `src/pktgen/adapter.py` | Pktgen adapter — wraps vendored `pktgen_agent` execution functions as `@tool` functions; enforces allowlist, HITL, RTT sampling, synchronous wait (`_wait_for_attack`), and **auto-fills eth_dst_addr** in `pktgen_packet_sequence` from `topology.yaml` |
 | `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts |
 | `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`, re-reading env each call |
