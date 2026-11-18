@@ -192,3 +192,29 @@ class TestLogTool:
 
         assert result["success"] is False
         assert "error" in result
+
+    def test_timestamp_is_utc(self):
+        """timestamp 必须是 UTC ISO 8601（契约 §5：UTC ISO 8601）。"""
+        from src.tools.log_tool import log_tool
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+            log_path = f.name
+
+        try:
+            log_tool(log_path, {"params": {}, "rtt": 0, "loss": 0})
+            with open(log_path, "r") as fh:
+                ts = json.loads(fh.readline())["timestamp"]
+            assert ts.endswith("+00:00"), f"expected UTC offset, got {ts}"
+        finally:
+            os.unlink(log_path)
+
+    def test_nonexistent_directory_creates_no_file(self):
+        """父目录不存在 → success=false 且不创建文件（契约 §5）。"""
+        from src.tools.log_tool import log_tool
+
+        log_path = "/nonexistent_dir_12345/log.jsonl"
+        result = log_tool(log_path, {"params": {}, "rtt": 0, "loss": 0})
+
+        assert result["success"] is False
+        assert "Directory does not exist" in result["error"]
+        assert not os.path.exists(log_path)

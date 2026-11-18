@@ -591,3 +591,197 @@ class TestMixedTrafficRawSocket:
             # IP total length field (bytes 2-3) should match actual length
             declared_len = int.from_bytes(data[2:4], "big")
             assert declared_len == len(data)
+
+
+class TestPercentageEdgeCases:
+    """T007：percentage 越界（0 与 101）必须拒绝（1–100 区间）。"""
+
+    @staticmethod
+    def _spec(pct):
+        return {"streams": [{
+            "stream_id": "s1",
+            "protocol_stack": ["IP", "UDP"],
+            "fields": {},
+            "percentage": pct,
+        }]}
+
+    def test_percentage_zero_rejected(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        with pytest.raises(ValueError, match="percentage"):
+            validate_traffic_spec(self._spec(0))
+
+    def test_percentage_101_rejected(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        with pytest.raises(ValueError, match="percentage"):
+            validate_traffic_spec(self._spec(101))
+
+
+class TestInjectionPatterns:
+    """T007：注入模式拒绝矩阵（eval( / open( 等白名单外模式）。"""
+
+    @staticmethod
+    def _spec_with_value(value):
+        return {"streams": [{
+            "stream_id": "s1",
+            "protocol_stack": ["IP", "UDP"],
+            "fields": {"UDP": {"dport": value}},
+            "percentage": 100,
+        }]}
+
+    def test_eval_pattern_rejected(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        with pytest.raises(ValueError, match="forbidden pattern 'eval\\('"):
+            validate_traffic_spec(self._spec_with_value("eval('1+1')"))
+
+    def test_open_pattern_rejected(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        with pytest.raises(ValueError, match="forbidden pattern 'open\\('"):
+            validate_traffic_spec(self._spec_with_value("open('/etc/passwd')"))
+
+
+class TestAutofillRemainder:
+    """T007：percentage 缺失平均补齐，余数 +1 分支。"""
+
+    def test_remainder_distributed_plus_one(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        spec = {"streams": [
+            {"stream_id": f"s{i}", "protocol_stack": ["IP", "UDP"],
+             "fields": {}}
+            for i in range(3)
+        ]}
+        streams = validate_traffic_spec(spec)
+        pcts = [s["percentage"] for s in streams]
+        assert sorted(pcts) == [33, 33, 34]  # 100 // 3 = 33，余 1 → 首个 +1
+        assert sum(pcts) == 100
+
+    def test_exact_division_no_remainder(self):
+        from src.tools.mixed_traffic_tool import validate_traffic_spec
+
+        spec = {"streams": [
+            {"stream_id": f"s{i}", "protocol_stack": ["IP", "UDP"],
+             "fields": {}}
+            for i in range(4)
+        ]}
+        streams = validate_traffic_spec(spec)
+        assert [s["percentage"] for s in streams] == [25, 25, 25, 25]
+
+
+def _one_stream_spec(pct=100):
+    return {
+        "streams": [{
+            "stream_id": "s1",
+            "protocol_stack": ["IP", "UDP"],
+            "fields": {},
+            "percentage": pct,
+        }]
+    }
+
+
+class TestMixedJitterParam:
+    """T014：混合工具抖动参数化（G2、002-2、FR-014；契约 §3）。"""
+
+    @staticmethod
+    def _send(spec, **kwargs):
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True):
+            return mixed_traffic_send_tool(
+                ALLOWLISTED_IP, json.dumps(spec),
+                pps=10, duration_s=1, **kwargs,
+            )
+
+    def test_jitter_param_takes_effect(self):
+        result = self._send(_one_stream_spec(), iat_jitter_ms=5)
+        assert result["params"]["iat_jitter_ms"] == 5
+
+    def test_jitter_99_clamped_to_20(self):
+        from src.tools.mixed_traffic_tool import MAX_IAT_JITTER_MS
+
+        result = self._send(_one_stream_spec(), iat_jitter_ms=99)
+        assert result["params"]["iat_jitter_ms"] == MAX_IAT_JITTER_MS
+
+    def test_negative_jitter_rejected(self):
+        with pytest.raises(ValueError, match="iat_jitter_ms"):
+            self._send(_one_stream_spec(), iat_jitter_ms=-1)
+
+    def test_env_default_when_omitted(self, monkeypatch):
+        monkeypatch.setenv("ATK_IAT_JITTER_MS", "7")
+        result = self._send(_one_stream_spec())
+        assert result["params"]["iat_jitter_ms"] == 7
+
+    def test_builtin_zero_without_env(self, monkeypatch):
+        monkeypatch.delenv("ATK_IAT_JITTER_MS", raising=False)
+        result = self._send(_one_stream_spec())
+        assert result["params"]["iat_jitter_ms"] == 0
+
+
+class TestMixedAnnotations:
+    """T017：mixed 钳制/截断标注（契约 tool-result-json.md §3）。"""
+
+    @staticmethod
+    def _send(spec, **kwargs):
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        opts = {"pps": 10, "duration_s": 1}
+        opts.update(kwargs)
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True):
+            return mixed_traffic_send_tool(
+                ALLOWLISTED_IP, json.dumps(spec), **opts,
+            )
+
+    def test_clamped_annotations(self):
+        from src.tools.mixed_traffic_tool import MAX_PPS, MAX_DURATION_S
+
+        result = self._send(_one_stream_spec(),
+                            pps=999999, duration_s=999, iat_jitter_ms=99)
+        assert result["params"]["pps"] == MAX_PPS
+        assert result["params"]["duration_s"] == MAX_DURATION_S
+        assert result["params"]["iat_jitter_ms"] == 20
+        assert {"pps", "duration_s", "iat_jitter_ms"} <= set(result["clamped"])
+        assert result["requested_params"]["pps"] == 999999
+        assert result["requested_params"]["duration_s"] == 999
+        assert result["requested_params"]["iat_jitter_ms"] == 99
+
+    def test_no_clamp_when_compliant(self):
+        result = self._send(_one_stream_spec(), pps=10, duration_s=1,
+                            iat_jitter_ms=0)
+        assert result["clamped"] == []
+        assert result["completed"] is True
+
+    def test_keyboard_interrupt_marks_incomplete(self):
+        from src.tools.mixed_traffic_tool import mixed_traffic_send_tool
+
+        mock_sock = MagicMock()
+        calls = {"n": 0}
+
+        def interrupt_sendto(data, addr):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise KeyboardInterrupt
+
+        mock_sock.sendto.side_effect = interrupt_sendto
+
+        with patch("src.tools.mixed_traffic_tool._create_raw_socket",
+                   return_value=mock_sock), \
+             patch("src.tools.mixed_traffic_tool.HAS_SCAPY", True):
+            result = mixed_traffic_send_tool(
+                ALLOWLISTED_IP, json.dumps(_one_stream_spec()),
+                pps=10, duration_s=1,
+            )
+
+        assert result["completed"] is False
+        assert result["interrupt_reason"] == "keyboard_interrupt"
+        assert result["packets_sent"]["total"] >= 1  # 已发部分保留
+
+    def test_normal_completion_has_no_reason(self):
+        result = self._send(_one_stream_spec())
+        assert "interrupt_reason" not in result

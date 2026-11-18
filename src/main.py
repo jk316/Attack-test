@@ -310,6 +310,9 @@ def parse_args() -> argparse.Namespace:
         )
     if args.max_iters is None:
         args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
+    # 攻击抖动默认值（R4：无 CLI 参数；经配置链 attack.iat_jitter_ms /
+    # profile 注入，供 _inject_attack_env 使用——配置单一来源）
+    args.iat_jitter_ms = int(attack_cfg.get("iat_jitter_ms", 0))
     return args
 
 
@@ -446,15 +449,24 @@ def _extract_observation(messages) -> dict | None:
     return None
 
 
+def _inject_attack_env(args: argparse.Namespace) -> None:
+    """注入 Scapy 攻击默认值 env（工具在调用时读取；配置单一来源链）。
+
+    含 ATK_IAT_JITTER_MS（R4：mixed_traffic_send 抖动参数化读取该 env）。
+    """
+    os.environ["ATK_DURATION_S"] = str(args.duration)
+    os.environ["ATK_PPS"] = str(args.pps)
+    os.environ["ATK_PACKET_SIZE"] = str(args.packet_size)
+    os.environ["ATK_FLOW_COUNT"] = str(args.flow_count)
+    os.environ["ATK_IAT_JITTER_MS"] = str(args.iat_jitter_ms)
+
+
 def main() -> None:
     args = parse_args()
     _run_preflight(args)
 
     # ── Inject defaults as env vars (tools read these at call time) ──
-    os.environ["ATK_DURATION_S"] = str(args.duration)
-    os.environ["ATK_PPS"] = str(args.pps)
-    os.environ["ATK_PACKET_SIZE"] = str(args.packet_size)
-    os.environ["ATK_FLOW_COUNT"] = str(args.flow_count)
+    _inject_attack_env(args)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
 

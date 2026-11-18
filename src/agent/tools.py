@@ -57,14 +57,15 @@ def traffic_send(
     Args:
         dst_ip: Target IP address (must be in allowlist).
         dst_port: Target port (1-65535).
-        duration_s: Send duration in seconds (max 10).
-        pps: Packets per second (max 200).
-        packet_size: Payload size in bytes (max 512).
-        flow_count: Number of concurrent flows with unique sport (max 50).
+        duration_s: Send duration in seconds (max 20).
+        pps: Packets per second (max 20000).
+        packet_size: Payload size in bytes (max 1024).
+        flow_count: Number of concurrent flows with unique sport (max 100).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
 
     Returns:
-        Dict with success, params, packets_sent, elapsed_s, effective_pps.
+        Dict with success, params, requested_params, clamped, packets_sent,
+        elapsed_s, effective_pps, completed.
     """
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
     duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
@@ -152,6 +153,7 @@ def mixed_traffic_send(
     traffic_spec_json: str,
     duration_s: int | None = None,
     pps: int | None = None,
+    iat_jitter_ms: int | None = None,
 ) -> dict[str, Any]:
     """Send mixed-protocol traffic to a target using a traffic specification.
     REQUIRES HUMAN APPROVAL.
@@ -167,8 +169,10 @@ def mixed_traffic_send(
         traffic_spec_json: JSON string describing traffic streams. See the
                 system prompt for the exact schema (streams, protocol_stack,
                 fields, percentage).
-        duration_s: Send duration in seconds (max 10).
-        pps: Total packets per second across all streams (max 200).
+        duration_s: Send duration in seconds (max 20).
+        pps: Total packets per second across all streams (max 20000).
+        iat_jitter_ms: Random jitter on inter-packet interval in ms (0-20).
+                None reads env ATK_IAT_JITTER_MS (default 0).
 
     Returns:
         Dict with success, params, packets_sent (total + per_stream),
@@ -177,11 +181,13 @@ def mixed_traffic_send(
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
     duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
     pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
+    iat_jitter_ms = iat_jitter_ms if iat_jitter_ms is not None else int(os.environ.get("ATK_IAT_JITTER_MS", "0"))
 
     params_display = {
         "dst_ip": dst_ip,
         "duration_s": duration_s,
         "pps": pps,
+        "iat_jitter_ms": iat_jitter_ms,
     }
     approval = interrupt({
         "message": "[HITL] Approve mixed traffic send?",
@@ -196,6 +202,7 @@ def mixed_traffic_send(
         traffic_spec_json=traffic_spec_json,
         duration_s=duration_s,
         pps=pps,
+        iat_jitter_ms=iat_jitter_ms,
     )
 
     # Collect RTT samples during the attack window (if monitor is running).

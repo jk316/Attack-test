@@ -156,8 +156,12 @@ def ping_rtt_tool(ip: str, count: int = 4, timeout: int = 10) -> Dict[str, Any]:
         Dict with keys: success, avg_rtt_ms, loss_pct, packets_transmitted,
                         packets_received, raw_output
     """
-    # Security validation
-    validate_target(ip)
+    # Security validation（契约 §4：非 allowlist → success:false + 校验错误，
+    # 不执行探测；安全语义不变——仍拒绝一切违规目标）
+    try:
+        validate_target(ip)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
     # Build platform-appropriate ping command
     cmd = build_ping_cmd(ip, count, timeout)

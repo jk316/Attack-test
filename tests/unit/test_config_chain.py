@@ -163,3 +163,37 @@ class TestTrexExploreBudget:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestJitterConfigInjection:
+    """R4（Lead 裁定，归属 002）：ATK_IAT_JITTER_MS 经配置链注入。
+
+    parse_args 从 attack.iat_jitter_ms（profile 感知、无新 CLI 参数）暴露
+    args.iat_jitter_ms；_inject_attack_env 注入 env 供工具调用时读取。
+    """
+
+    def test_parse_exposes_jitter_from_config(self, config_file):
+        args = _parse([])
+        assert args.iat_jitter_ms == 0  # BASE_CONFIG attack.iat_jitter_ms=0
+
+    def test_jitter_profile_overlay(self, config_file):
+        # 在临时配置上追加带 jitter 的 profile，验证 profile 链生效
+        from src.main import CONFIG_PATH
+
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        data["profiles"]["jitter_hard"] = {"attack": {"iat_jitter_ms": 12}}
+        CONFIG_PATH.write_text(json.dumps(data), encoding="utf-8")
+
+        args = _parse(["--profile", "jitter_hard"])
+        assert args.iat_jitter_ms == 12
+
+    def test_inject_attack_env_sets_jitter(self, config_file, monkeypatch):
+        import os
+
+        from src.main import _inject_attack_env
+
+        monkeypatch.delenv("ATK_IAT_JITTER_MS", raising=False)
+        args = _parse([])
+        _inject_attack_env(args)
+        assert os.environ["ATK_IAT_JITTER_MS"] == "0"
+        assert os.environ["ATK_PPS"] == "700"  # 其余注入键不受影响

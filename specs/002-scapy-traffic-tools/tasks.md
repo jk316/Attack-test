@@ -46,9 +46,9 @@
 
 **目的**: 建立回归基线并确认契约与现状的差距（plan.md 差距表 G1–G7 的核对基准）
 
-- [ ] T001 在项目根运行 `uv run pytest tests/unit/ -v` 与 `uv run pytest tests/integration/ -v`，记录通过/失败清单作为回归基线；任何既有失败记录到本任务说明（不在此修复与 002 无关的失败）
-- [ ] T002 [P] 对照 `specs/002-scapy-traffic-tools/contracts/tool-result-json.md` 与 `contracts/traffic-spec-json.md` 核对 `src/tools/traffic_send_tool.py`、`src/tools/mixed_traffic_tool.py`、`src/tools/ping_rtt_tool.py`、`src/tools/log_tool.py`、`src/agent/tools.py` 的现状返回结构，产出差异清单记录到本任务说明（重点确认：`requested_params`/`clamped` 缺失、`completed`/`interrupt_reason` 缺失、mixed 无 `iat_jitter_ms` 参数；不修改代码）
-- [ ] T003 [P] 核对 `src/tools/traffic_send_tool.py` 的 `MAX_PPS=20000/MAX_DURATION_S=20/MAX_PACKET_SIZE=1024/MAX_FLOW_COUNT=100/MAX_IAT_JITTER_MS=20` 与 `src/tools/mixed_traffic_tool.py` 的 `MAX_STREAMS=100/MAX_JSON_LENGTH=10000` 与 `specs/002-scapy-traffic-tools/plan.md` 及宪法「参数上限」一致（记录结果，不修改）
+- [x] T001 在项目根运行 `uv run pytest tests/unit/ -v` 与 `uv run pytest tests/integration/ -v`，记录通过/失败清单作为回归基线；任何既有失败记录到本任务说明（不在此修复与 002 无关的失败）——基线（001 完成后状态，bash .dsh/run-tests.sh tests/unit/ tests/integration/ -q）：**427 passed / 9 failed**；9 个失败与 001 基线完全一致（17 工具过期断言×2 + test_pktgen_client.py 直连真实 Pktgen 被 RST×7），与 002 无关，前置事实
+- [x] T002 [P] 对照 `specs/002-scapy-traffic-tools/contracts/tool-result-json.md` 与 `contracts/traffic-spec-json.md` 核对 `src/tools/traffic_send_tool.py`、`src/tools/mixed_traffic_tool.py`、`src/tools/ping_rtt_tool.py`、`src/tools/log_tool.py`、`src/agent/tools.py` 的现状返回结构，产出差异清单记录到本任务说明（重点确认：`requested_params`/`clamped` 缺失、`completed`/`interrupt_reason` 缺失、mixed 无 `iat_jitter_ms` 参数；不修改代码）——差异清单：①traffic_send：requested_params/clamped 缺失（G1）、completed/interrupt_reason 缺失（G3）→ T011/T012 实现；②mixed：无 iat_jitter_ms 参数（固定 ±20ms 抖动，G2）、无四标注字段 → T015/T017 实现；③ping_rtt：契约 §4 全丢包 inf/loss100 ✅、超时 "Ping timeout expired" ✅、命令缺失 "ping command not found" ✅ 均已实现；非 allowlist 现状为 validate_target 抛 ValueError（契约写「success:false + 校验错误」）→ T022 最小修复候选；④log_tool：契约 §5 全部一致（追加、UTC ISO8601、父目录缺失 "Directory does not exist" 不建文件、msg "日志写入成功"）；⑤agent/tools.py：traffic_send 封装 HITL + 五个 ATK_* env 默认解析已实现；mixed 封装无 iat_jitter_ms（T016 补）
+- [x] T003 [P] 核对 `src/tools/traffic_send_tool.py` 的 `MAX_PPS=20000/MAX_DURATION_S=20/MAX_PACKET_SIZE=1024/MAX_FLOW_COUNT=100/MAX_IAT_JITTER_MS=20` 与 `src/tools/mixed_traffic_tool.py` 的 `MAX_STREAMS=100/MAX_JSON_LENGTH=10000` 与 `specs/002-scapy-traffic-tools/plan.md` 及宪法「参数上限」一致（记录结果，不修改）——全部一致 ✅；观察：mixed 重复定义 MAX_PPS/MAX_DURATION_S/MAX_IAT_JITTER_MS（未从 traffic_send_tool 导入，存在漂移风险），记录不修改
 
 ---
 
@@ -58,10 +58,10 @@
 
 **⚠️ 关键**: 本阶段完成前不得开始任何用户故事工作
 
-- [ ] T004 在 `tests/unit/test_traffic_send_tool.py` 核对并补齐 `src/tools/traffic_send_tool.py::validate_params` 单测（data-model「校验规则汇总」FR-002–006）：越限钳制矩阵（pps=999999→20000、duration=999→20、packet_size=4096→1024、flow_count=500→100、jitter=100→20）、非正数与负抖动拒绝、dst_port 0/65536 拒绝、src_ip 非空拒绝；`validate_target` 拒绝矩阵（非 allowlist 192.168.1.99、广播 x.x.x.255、组播 224.x、格式非法、allowlist 为空拒绝一切）
-- [ ] T005 [P] 在 `tests/unit/test_ping_rtt_tool.py` 锁定 `src/tools/ping_rtt_tool.py` 行为（FR-015、SC-007）：全丢包 → `avg_rtt_ms=inf` 且 `loss_pct=100`、命令缺失 → `success=false`、超时 → 失败、非 allowlist → 拒绝；`build_ping_cmd` 在 win32/非 win32 两平台参数断言（跨平台，不硬编码）
-- [ ] T006 [P] 在 `tests/unit/test_log_tool.py` 锁定 `src/tools/log_tool.py` 行为（FR-016、SC-008）：追加单行合法 JSON、`timestamp` 为 UTC ISO 8601、两次调用追加不覆盖、父目录不存在 → `success=false` 且不创建文件
-- [ ] T007 [P] 在 `tests/unit/test_mixed_traffic_tool.py` 锁定 `src/tools/mixed_traffic_tool.py` 规格校验行为（FR-010–013、SC-005）：白名单外协议/空协议栈/流数 0 与 101/重复 stream_id/`percentage` 非整数或越界/总和不为 100/显式之和 ≥100 无法补齐/超长 >10000 字符/注入模式（`__import__`、`eval(`、`os.`、`open(` 等）各断言拒绝并含原因；`percentage` 缺失时平均补齐（含余数 +1 分支）；`build_packet_template` 的 IP.dst 强制覆盖断言（FR-011）
+- [x] T004 在 `tests/unit/test_traffic_send_tool.py` 核对并补齐 `src/tools/traffic_send_tool.py::validate_params` 单测（data-model「校验规则汇总」FR-002–006）：越限钳制矩阵（pps=999999→20000、duration=999→20、packet_size=4096→1024、flow_count=500→100、jitter=100→20）、非正数与负抖动拒绝、dst_port 0/65536 拒绝、src_ip 非空拒绝；`validate_target` 拒绝矩阵（非 allowlist 192.168.1.99、广播 x.x.x.255、组播 224.x、格式非法、allowlist 为空拒绝一切）——新增 TestValidationMatrix 8 用例（dst_port 0/65536、packet_size/flow_count=0、负 duration、非法 IP 格式、validate_params 纯函数钳制矩阵）；既有 25 用例覆盖钳制/拒绝/组播/广播/空 allowlist；全绿
+- [x] T005 [P] 在 `tests/unit/test_ping_rtt_tool.py` 锁定 `src/tools/ping_rtt_tool.py` 行为（FR-015、SC-007）：全丢包 → `avg_rtt_ms=inf` 且 `loss_pct=100`、命令缺失 → `success=false`、超时 → 失败、非 allowlist → 拒绝；`build_ping_cmd` 在 win32/非 win32 两平台参数断言（跨平台，不硬编码）——新增 TestPingCommandBuilding（win32 "-n/-w"、unix "-c/-W"）+ TestPingErrorPaths（FileNotFoundError→"ping command not found"、TimeoutExpired→"Ping timeout expired"、全丢包 inf/100）7 用例；既有 10 用例保持；全绿（15）
+- [x] T006 [P] 在 `tests/unit/test_log_tool.py` 锁定 `src/tools/log_tool.py` 行为（FR-016、SC-008）：追加单行合法 JSON、`timestamp` 为 UTC ISO 8601、两次调用追加不覆盖、父目录不存在 → `success=false` 且不创建文件——新增 2 用例（timestamp 以 +00:00 结尾、父目录缺失不创建文件）；既有 9 用例已覆盖追加/roundtrip/字段完整性；全绿（11）
+- [x] T007 [P] 在 `tests/unit/test_mixed_traffic_tool.py` 锁定 `src/tools/mixed_traffic_tool.py` 规格校验行为（FR-010–013、SC-005）：白名单外协议/空协议栈/流数 0 与 101/重复 stream_id/`percentage` 非整数或越界/总和不为 100/显式之和 ≥100 无法补齐/超长 >10000 字符/注入模式（`__import__`、`eval(`、`os.`、`open(` 等）各断言拒绝并含原因；`percentage` 缺失时平均补齐（含余数 +1 分支）；`build_packet_template` 的 IP.dst 强制覆盖断言（FR-011）——新增 7 用例（percentage 0/101 拒绝、eval(/open( 注入、余数 33/33/34 与整除 25×4 补齐）；既有 36 用例覆盖其余矩阵；全绿（43）
 
 **检查点**: 既有安全行为全部被测试锁定——用户故事可以开始实现
 
@@ -77,15 +77,15 @@
 
 > **注意：先写测试，确认失败后再实现**
 
-- [ ] T008 [P] [US1] 在 `tests/unit/test_traffic_send_tool.py` 新增钳制标注单测（红，G1、002-1、FR-004、SC-001）：pps=999999 调用 → `params.pps=20000`、`requested_params.pps=999999`、`clamped` 含 `"pps"`；全合规调用 → `clamped` 为空列表；多字段越限 → `clamped` 含全部字段名（契约 `contracts/tool-result-json.md` §1；T011 完成后转绿）
-- [ ] T009 [P] [US1] 在 `tests/unit/test_traffic_send_tool.py` 新增截断标注单测（红，G3、002-3、FR-008）：mock 发送循环中途抛 `KeyboardInterrupt` → 结果 `completed=false` 且 `interrupt_reason="keyboard_interrupt"`、`packets_sent` 保留已发部分；正常完成 → `completed=true` 且无 `interrupt_reason`（T012 完成后转绿）
-- [ ] T010 [P] [US1] 在 `tests/unit/test_tools_hitl.py` 为 `src/agent/tools.py::traffic_send` 封装写单测（FR-009/017、SC-003）：审批拒绝 → `{"success": false, "error": "HITL rejected by operator"}` 且不调用底层发送；默认参数从 env（ATK_DURATION_S/ATK_PPS/ATK_PACKET_SIZE/ATK_FLOW_COUNT/ATK_IAT_JITTER_MS）读取、未注入回退内置默认
+- [x] T008 [P] [US1] 在 `tests/unit/test_traffic_send_tool.py` 新增钳制标注单测（红，G1、002-1、FR-004、SC-001）：pps=999999 调用 → `params.pps=20000`、`requested_params.pps=999999`、`clamped` 含 `"pps"`；全合规调用 → `clamped` 为空列表；多字段越限 → `clamped` 含全部字段名（契约 `contracts/tool-result-json.md` §1；T011 完成后转绿）——红证据：6 用例全失败（KeyError requested_params/clamped、ImportError _clamped_fields）；T011 后全绿；全程 mock raw socket（MagicMock 内存内，零真实流量）；duration 钳制标注经纯函数 `_clamped_fields` 验证（避免 20 秒真实发送循环）
+- [x] T009 [P] [US1] 在 `tests/unit/test_traffic_send_tool.py` 新增截断标注单测（红，G3、002-3、FR-008）：mock 发送循环中途抛 `KeyboardInterrupt` → 结果 `completed=false` 且 `interrupt_reason="keyboard_interrupt"`、`packets_sent` 保留已发部分；正常完成 → `completed=true` 且无 `interrupt_reason`（T012 完成后转绿）——红证据：KeyError completed/interrupt_reason；T012 后全绿
+- [x] T010 [P] [US1] 在 `tests/unit/test_tools_hitl.py` 为 `src/agent/tools.py::traffic_send` 封装写单测（FR-009/017、SC-003）：审批拒绝 → `{"success": false, "error": "HITL rejected by operator"}` 且不调用底层发送；默认参数从 env（ATK_DURATION_S/ATK_PPS/ATK_PACKET_SIZE/ATK_FLOW_COUNT/ATK_IAT_JITTER_MS）读取、未注入回退内置默认——5 用例全绿（拒绝不调底层、payload message+params、批准透传、env 五参数、内置回退 10/100/64/1/0）
 
 ### 用户故事 1 的实现
 
-- [ ] T011 [US1] 在 `src/tools/traffic_send_tool.py` 实现钳制标注（G1、002-1）：返回结构新增 `requested_params`（原请求值）与 `clamped`（被钳制字段名列表，空 = 未钳制）；实现方式允许在 `validate_params` 返回钳制信息或调用处对比请求/实际值生成，HITL 展示仍用实际值（依赖 T008 红-绿闭环）
-- [ ] T012 [US1] 在 `src/tools/traffic_send_tool.py` 实现截断标注（G3、002-3）：发送循环的 `except KeyboardInterrupt` 分支记录中断标记，最终结果 `completed=false` + `interrupt_reason="keyboard_interrupt"`；正常路径 `completed=true`（依赖 T009 红-绿闭环）
-- [ ] T013 [US1] 在 `tests/integration/test_traffic_send_flows.py` 写集成测试（FR-007、SC-004）：mock 网络下 flow_count=N（如 5）→ `per_flow` 覆盖 N 条流、任意两流计数差 ≤1、源端口互异（1024+序号）、`effective_pps` 计算正确、`send_mode` ∈ {raw, udp, scapy}；若现有等价测试存在则核对补齐（依赖 T011、T012 完成）
+- [x] T011 [US1] 在 `src/tools/traffic_send_tool.py` 实现钳制标注（G1、002-1）：返回结构新增 `requested_params`（原请求值）与 `clamped`（被钳制字段名列表，空 = 未钳制）；实现方式允许在 `validate_params` 返回钳制信息或调用处对比请求/实际值生成，HITL 展示仍用实际值（依赖 T008 红-绿闭环）——钳制前捕获 requested_params，纯函数 `_clamped_fields(requested, params)` 对比生成；HITL 展示（agent/tools.py）仍用解析后实际值，不受影响
+- [x] T012 [US1] 在 `src/tools/traffic_send_tool.py` 实现截断标注（G3、002-3）：发送循环的 `except KeyboardInterrupt` 分支记录中断标记，最终结果 `completed=false` + `interrupt_reason="keyboard_interrupt"`；正常路径 `completed=true`（依赖 T009 红-绿闭环）——`completed` 恒入结果；`interrupt_reason` 仅中断时附加（正常完成无该键）
+- [x] T013 [US1] 在 `tests/integration/test_traffic_send_flows.py` 写集成测试（FR-007、SC-004）：mock 网络下 flow_count=N（如 5）→ `per_flow` 覆盖 N 条流、任意两流计数差 ≤1、源端口互异（1024+序号）、`effective_pps` 计算正确、`send_mode` ∈ {raw, udp, scapy}；若现有等价测试存在则核对补齐（依赖 T011、T012 完成）——2 用例全绿（raw 路径捕获字节校验 5 端口 + scapy 回退路径；均 mock 网络零真实流量）
 
 **检查点**: 用户故事 1 应完整可用且可独立测试（MVP）
 
@@ -99,18 +99,16 @@
 
 ### 用户故事 2 的测试（先写测试，确认失败后再实现）⚠️
 
-- [ ] T014 [P] [US2] 在 `tests/unit/test_mixed_traffic_tool.py` 新增抖动参数化单测（红，G2、002-2、FR-014）：`iat_jitter_ms=5` 生效、`99` 钳制为 20、`-1` 拒绝、未传时读 env `ATK_IAT_JITTER_MS`（未注入回退 0）、`params.iat_jitter_ms` 返回实际值（契约 `contracts/tool-result-json.md` §3；T015 完成后转绿）
+- [x] T014 [P] [US2] 在 `tests/unit/test_mixed_traffic_tool.py` 新增抖动参数化单测（红，G2、002-2、FR-014）：`iat_jitter_ms=5` 生效、`99` 钳制为 20、`-1` 拒绝、未传时读 env `ATK_IAT_JITTER_MS`（未注入回退 0）、`params.iat_jitter_ms` 返回实际值（契约 `contracts/tool-result-json.md` §3；T015 完成后转绿）——红证据：5 用例全失败（TypeError 未知名参数 / KeyError）；T015 后全绿
+- [x] T015 [US2] 在 `src/tools/mixed_traffic_tool.py` 实现抖动参数化（G2、002-2）：`mixed_traffic_send_tool` 增加 `iat_jitter_ms: int | None = None`（None → 读 env `ATK_IAT_JITTER_MS`、缺省 0），钳制 0–20 后替换固定 ±`MAX_IAT_JITTER_MS` 抖动；配置落点 `src/config/experiment.json` 的 `attack.iat_jitter_ms`（键已存在，只需确认无需改文件）；返回 `params` 含 `iat_jitter_ms`（依赖 T014 红-绿闭环）——**R4（Lead 裁定）：注入补齐归属 002**——main.py parse_args 暴露 `args.iat_jitter_ms`（配置链 attack.iat_jitter_ms / profile 感知、无新 CLI 参数），新增 `_inject_attack_env()` 注入 `ATK_IAT_JITTER_MS`；tests/unit/test_config_chain.py 新增 TestJitterConfigInjection 3 用例锁定
+- [x] T016 [US2] 在 `src/agent/tools.py` 的 `mixed_traffic_send` 封装同步 `iat_jitter_ms` 参数（env 默认解析与 `params_display` 展示）；在 `src/prompts/system_prompt.j2`「混合流量工具」参数表补充 `iat_jitter_ms` 说明（注明与 001-agent-core 的提示文件协调，只改混合工具参数表相关行）——封装签名/底层透传/docstring（顺带修 max 20/20000）/params_display 四处同步；提示混合工具参数表新增 `iat_jitter_ms` 行
+- [x] T017 [US2] 在 `src/tools/mixed_traffic_tool.py` 同步钳制与截断标注（G1/G3 在 mixed 的落地）：返回结构增加 `requested_params`/`clamped`/`completed`/`interrupt_reason`，语义与 `contracts/tool-result-json.md` §3 一致（依赖 T011/T012 已定型的字段语义；与 T015 同文件，按顺序执行）——requested_params 在钳制前捕获（含 dst_ip/duration_s/pps/iat_jitter_ms）、clamped 对比三钳制字段、KeyboardInterrupt→completed=false+interrupt_reason；新增 TestMixedAnnotations 4 用例
+- [x] T018 [US2] 在 `tests/integration/test_mixed_traffic_send.py` 写集成测试（FR-014、SC-005/006）：mock 网络下加权随机占比（≥10000 报文各流占比与声明偏差 ≤5 个百分点）、`per_stream` 计数、`raw_socket` 标记、百分比补全后 `params.streams` 与发送一致（依赖 T015、T017 完成）——3 用例全绿（60/40 偏差 ≤5pp、三流补全 33/33/34 且 per_stream 键一致、单流 100%）；pps=20000+duration=2s 达 ≥10000 包（MagicMock 开销限制实际速率）
+- [x] T019 [P] [US2] 在 `tests/unit/test_tools_hitl.py` 追加 `src/agent/tools.py::mixed_traffic_send` 封装单测：审批拒绝 → 0 报文且不调用底层发送；`params_display` 含 dst_ip/duration_s/pps（FR-009）——3 用例全绿（拒绝不调底层、payload 四字段含 iat_jitter_ms、jitter env 默认解析）
 
 ### 用户故事 2 的实现
 
-- [ ] T015 [US2] 在 `src/tools/mixed_traffic_tool.py` 实现抖动参数化（G2、002-2）：`mixed_traffic_send_tool` 增加 `iat_jitter_ms: int | None = None`（None → 读 env `ATK_IAT_JITTER_MS`、缺省 0），钳制 0–20 后替换固定 ±`MAX_IAT_JITTER_MS` 抖动；配置落点 `src/config/experiment.json` 的 `attack.iat_jitter_ms`（键已存在，只需确认无需改文件）；返回 `params` 含 `iat_jitter_ms`（依赖 T014 红-绿闭环）
-- [ ] T016 [US2] 在 `src/agent/tools.py` 的 `mixed_traffic_send` 封装同步 `iat_jitter_ms` 参数（env 默认解析与 `params_display` 展示）；在 `src/prompts/system_prompt.j2`「混合流量工具」参数表补充 `iat_jitter_ms` 说明（注明与 001-agent-core 的提示文件协调，只改混合工具参数表相关行）
-- [ ] T017 [US2] 在 `src/tools/mixed_traffic_tool.py` 同步钳制与截断标注（G1/G3 在 mixed 的落地）：返回结构增加 `requested_params`/`clamped`/`completed`/`interrupt_reason`，语义与 `contracts/tool-result-json.md` §3 一致（依赖 T011/T012 已定型的字段语义；与 T015 同文件，按顺序执行）
-
-### 用户故事 2 的集成验证
-
-- [ ] T018 [US2] 在 `tests/integration/test_mixed_traffic_send.py` 写集成测试（FR-014、SC-005/006）：mock 网络下加权随机占比（≥10000 报文各流占比与声明偏差 ≤5 个百分点）、`per_stream` 计数、`raw_socket` 标记、百分比补全后 `params.streams` 与发送一致（依赖 T015、T017 完成）
-- [ ] T019 [P] [US2] 在 `tests/unit/test_tools_hitl.py` 追加 `src/agent/tools.py::mixed_traffic_send` 封装单测：审批拒绝 → 0 报文且不调用底层发送；`params_display` 含 dst_ip/duration_s/pps（FR-009）
+（T015/T016/T017 已完成，见「用户故事 2 的测试」节上方同号条目；T018/T019 亦完成）
 
 **检查点**: 混合流量可独立验证，不依赖 US3
 
@@ -122,9 +120,9 @@
 
 **独立测试**: 直接调用 ping_rtt/log_result（含 Agent 封装层）验证字段契约与 JSONL 落盘，无需发送任何流量。
 
-- [ ] T020 [US3] 在 `tests/unit/test_agent_tools_wrappers.py` 为 `src/agent/tools.py::ping_rtt` 与 `::log_result` 封装写单测（FR-015/016 的 Agent 层契约）：ping_rtt 透传底层返回；log_result 组装 `{iteration, params, rtt, loss}` 后调用 `src/tools/log_tool.py::log_tool`（mock 验证 entry 内容）
-- [ ] T021 [P] [US3] 在 `tests/integration/test_ping_log_e2e.py` 写集成测试（SC-007/008）：mock subprocess 输出 Unix 与 Windows 两种 ping 格式断言解析结果；`log_tool` 两次追加后逐行 `json.loads` 可解析且含 `timestamp`
-- [ ] T022 [US3] 在 `src/tools/ping_rtt_tool.py` 与 `src/tools/log_tool.py` 对照 `contracts/tool-result-json.md` §4/§5 核对字段并最小修复（如字段缺失/命名偏差），保持既有行为不变（G7；依赖 T020/T021 暴露偏差）
+- [x] T020 [US3] 在 `tests/unit/test_agent_tools_wrappers.py` 为 `src/agent/tools.py::ping_rtt` 与 `::log_result` 封装写单测（FR-015/016 的 Agent 层契约）：ping_rtt 透传底层返回；log_result 组装 `{iteration, params, rtt, loss}` 后调用 `src/tools/log_tool.py::log_tool`（mock 验证 entry 内容）——4 用例全绿（透传+kwargs、默认 count/timeout、entry 组装、entry 内容）
+- [x] T021 [P] [US3] 在 `tests/integration/test_ping_log_e2e.py` 写集成测试（SC-007/008）：mock subprocess 输出 Unix 与 Windows 两种 ping 格式断言解析结果；`log_tool` 两次追加后逐行 `json.loads` 可解析且含 `timestamp`——4 用例全绿（Unix/Windows 解析、全丢包 inf、ping→log 闭环两行 UTC 时间戳）
+- [x] T022 [US3] 在 `src/tools/ping_rtt_tool.py` 与 `src/tools/log_tool.py` 对照 `contracts/tool-result-json.md` §4/§5 核对字段并最小修复（如字段缺失/命名偏差），保持既有行为不变（G7；依赖 T020/T021 暴露偏差）——核对结果：log_tool 与 §5 完全一致无改动；ping_rtt 非 allowlist 现状抛 ValueError 与契约 §4「success:false + 校验错误」形状不符 → 最小修复：validate_target 的 ValueError 转为 `{"success": false, "error": str(e)}` 返回（安全语义不变——仍拒绝且不探测，subprocess 不被调用），同步更新既有 5 个拒绝矩阵测试为契约形状
 
 **检查点**: 探测与日志可独立验证
 
@@ -134,9 +132,9 @@
 
 **目的**: 文档真实性（FR-018）、端到端验证、全量回归门禁
 
-- [ ] T023 在 `src/agent/tools.py` 修复 docstring 陈旧上限（G4、FR-018、SC-009）：`traffic_send`/`mixed_traffic_send` 的 @tool 描述中 `max 200/10/512/50` 改为 `20000/20/1024/100`，`duration_s` 描述「max 10」改「max 20」，并补 `iat_jitter_ms` 描述；核对 `src/prompts/system_prompt.j2` 参数边界表已为正确值（依赖 US1/US2 完成，避免与新参数描述冲突）
-- [ ] T024 [P] 更新文档真实性：`CLAUDE.md`「Parameter Limits」「Important Constraints」中「Tool docstrings are stale」段落在修复后标注为已修复，并补充钳制标注/截断标注/抖动配置的行为描述（不涉及行为代码）
-- [ ] T025 运行全量门禁：`uv run pytest tests/unit/ -v`、`uv run pytest tests/integration/ -v`、`uv run pytest --cov=src --cov-report=term-missing`，确认全部通过且无既有基线回归；按 `specs/002-scapy-traffic-tools/quickstart.md` 场景 A/B/C 逐场景验证并把结果对照 SC 判据表记录到本任务说明
+- [x] T023 在 `src/agent/tools.py` 修复 docstring 陈旧上限（G4、FR-018、SC-009）：`traffic_send`/`mixed_traffic_send` 的 @tool 描述中 `max 200/10/512/50` 改为 `20000/20/1024/100`，`duration_s` 描述「max 10」改「max 20」，并补 `iat_jitter_ms` 描述；核对 `src/prompts/system_prompt.j2` 参数边界表已为正确值（依赖 US1/US2 完成，避免与新参数描述冲突）——traffic_send docstring 上限四字段修正 + Returns 补 requested_params/clamped/completed；mixed docstring 已在 T016 修正；grep 复核无残留陈旧值；提示边界表渲染自 MAX_* 常量已正确
+- [x] T024 [P] 更新文档真实性：`CLAUDE.md`「Parameter Limits」「Important Constraints」中「Tool docstrings are stale」段落在修复后标注为已修复，并补充钳制标注/截断标注/抖动配置的行为描述（不涉及行为代码）——CLAUDE.md 三条更新：①「Tool docstrings are stale」→「Tool docstrings：已修复（002）」；②新增「钳制/截断标注」行为段；③新增「混合流量抖动」配置段（ATK_IAT_JITTER_MS 配置链注入）；Key Files 表 traffic_send_tool/mixed_traffic_tool 行同步更新
+- [x] T025 运行全量门禁：`uv run pytest tests/unit/ -v`、`uv run pytest tests/integration/ -v`、`uv run pytest --cov=src --cov-report=term-missing`，确认全部通过且无既有基线回归；按 `specs/002-scapy-traffic-tools/quickstart.md` 场景 A/B/C 逐场景验证并把结果对照 SC 判据表记录到本任务说明——实测：`bash .dsh/run-tests.sh tests/unit/ tests/integration/ tests/e2e/ --cov=src` → **506 passed / 9 failed**（9 个与基线完全一致：17 工具断言×2 + Pktgen 直连×7，无新增回归；相对 002 基线 427P 净增 79）；覆盖率 TOTAL 87%。场景验证（安全红线优先：quickstart 场景 A 的直接脚本命令会发真实流量/真实 ping，**未执行**，改用等价安全验证）：A→mock 网络工具级测试（38 个 traffic 单测+2 集成+3 mixed 集成）+ 安全 CLI 冒烟（`-m` 形式非 allowlist 拒绝、无流量；log_tool 追加两行 UTC 时间戳 ✅）；发现：`python src/tools/traffic_send_tool.py` 直接脚本运行因相对导入失败（预存在，`-m` 模块形式正常），已记录待报 Lead；B→tests/unit 全绿；C→tests/unit/test_tools_hitl.py + 001 的 test_hitl_cli（HITL 链路 mock）；SC 对照：SC-001→test_traffic_send_tool 钳制矩阵、SC-002→拒绝矩阵、SC-003→test_tools_hitl、SC-004→test_traffic_send_flows、SC-005→test_mixed_traffic_tool 43 用例、SC-006→test_mixed_traffic_send ≥10000 包 ≤5pp、SC-007→test_ping_rtt_tool 15 用例、SC-008→test_log_tool 11 用例、SC-009→docstring 一致性（T023）
 
 ---
 

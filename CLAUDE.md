@@ -136,8 +136,8 @@ ExperimentManager (backend/experiment.py)
 | `src/config/allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
 | `src/tools/rtt_window.py` | `build_rtt_observation()` — enriches tool results with `rtt_during`, `attack_window`, `observation_window` fields |
-| `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping |
-| `src/tools/mixed_traffic_tool.py` | Multi-protocol via JSON spec; `validate_traffic_spec()` auto-fills missing percentages |
+| `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping; returns `requested_params`/`clamped` (钳制标注) and `completed`/`interrupt_reason` (截断标注) per contracts/tool-result-json.md §1 |
+| `src/tools/mixed_traffic_tool.py` | Multi-protocol via JSON spec; `validate_traffic_spec()` auto-fills missing percentages; `iat_jitter_ms` 参数化（0–20，None 读 env `ATK_IAT_JITTER_MS`，默认 0）；返回同款钳制/截断标注 |
 | `src/tools/pcap_profile_tool.py` | PCAP/PCAPng analysis — extracts IPs, ports, packet size histograms, IAT stats |
 | `src/tools/ping_rtt_tool.py` | Single-shot ping RTT measurement + `validate_target()` allowlist enforcement |
 | `src/tools/log_tool.py` | JSONL experiment logging |
@@ -268,5 +268,7 @@ All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast
 - **Import order**: Pktgen config uses functions (`is_dry_run()`, `get_pktgen_host()`) not module constants, because `main()` sets env vars AFTER imports are resolved.
 - **Vendored Pktgen code** (`pktgen_agent/`, `dsl/`, `topology.yaml`) is at project root and kept in sync with the Lua project. Project root must be on `sys.path`.
 - **`pyyaml`** is a core dependency (not transitive) — required by vendored compiler.
-- **Tool docstrings are stale**: the `@tool` docstrings in `tools.py` say max pps=200, max duration=10s, max packet_size=512, max flow_count=50 — the actual limits (in `traffic_send_tool.py` constants) are higher: pps=20000, duration=20s, packet_size=1024, flow_count=100. The system prompt template has the correct values; the docstrings should be updated to match.
+- **Tool docstrings**: 已修复（002）——`src/agent/tools.py` 的 `traffic_send`/`mixed_traffic_send` docstring 上限与源码常量一致（pps=20000、duration_s=20、packet_size=1024、flow_count=100、iat_jitter_ms=20），系统提示参数边界表亦为正确值。
+- **钳制/截断标注**: `traffic_send_tool` 与 `mixed_traffic_send_tool` 的结果含 `requested_params`（原请求值）与 `clamped`（被钳制字段名列表，空 = 未钳制）；发送被 Ctrl-C 中断时 `completed=false` + `interrupt_reason="keyboard_interrupt"`（已发统计保留），正常完成 `completed=true` 且无该键。
+- **混合流量抖动**: `mixed_traffic_send` 的 `iat_jitter_ms`（0–20，超限钳制、负数拒绝）默认读 env `ATK_IAT_JITTER_MS`；main.py 经配置链（experiment.json `attack.iat_jitter_ms` / profile）注入该 env，无对应 CLI 参数。
 - **RTT observation alignment**: `build_rtt_observation()` adds `attack_window` (start/end timestamps + mode), `observation_window` (first/last sample timestamps + `covers_attack_window` boolean), and `rtt_during` (per-sample RTT + aggregate stats). The LLM is instructed to check `covers_attack_window` before trusting any RTT measurement.

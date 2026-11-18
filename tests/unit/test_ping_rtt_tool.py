@@ -12,11 +12,14 @@ class TestPingRttTool:
     """Test suite for ping_rtt_tool"""
 
     def test_allowlist_check_rejects_non_allowlist_ip(self):
-        """非 allowlist IP 必须被拒绝"""
+        """非 allowlist IP 必须被拒绝（契约 §4：success:false + 校验错误，不探测）"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
 
-        with pytest.raises(ValueError, match="not in allowlist"):
-            ping_rtt_tool("192.168.1.99", count=4)
+        with patch('subprocess.run') as mock_run:
+            result = ping_rtt_tool("192.168.1.99", count=4)
+        assert result["success"] is False
+        assert "not in allowlist" in result["error"]
+        mock_run.assert_not_called()  # 不执行探测
 
     def test_allowlist_check_accepts_allowlist_ip(self):
         """allowlist IP 应该被接受（模拟执行）"""
@@ -86,12 +89,13 @@ class TestPingRttTool:
         assert result["loss_pct"] == 100.0
 
     def test_handles_empty_allowlist(self):
-        """空 allowlist 应拒绝所有 IP"""
+        """空 allowlist 应拒绝所有 IP（契约 §4 拒绝形状）"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
 
         with patch('src.tools.ping_rtt_tool.ALLOWLIST', []):
-            with pytest.raises(ValueError, match="allowlist is empty"):
-                ping_rtt_tool("192.168.1.1", count=1)
+            result = ping_rtt_tool("192.168.1.1", count=1)
+        assert result["success"] is False
+        assert "allowlist is empty" in result["error"]
 
     def test_count_parameter_passed_to_ping(self):
         """count 参数必须传递给 ping 命令"""
@@ -126,22 +130,93 @@ class TestPingRttTool:
         assert "error" in result
 
     def test_invalid_ip_format_rejected(self):
-        """无效 IP 格式应被拒绝"""
+        """无效 IP 格式应被拒绝（契约 §4 拒绝形状）"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
 
-        with pytest.raises(ValueError, match="Invalid IP format"):
-            ping_rtt_tool("invalid-ip", count=1)
+        result = ping_rtt_tool("invalid-ip", count=1)
+        assert result["success"] is False
+        assert "Invalid IP format" in result["error"]
 
     def test_broadcast_ip_rejected(self):
-        """广播地址应该被拒绝"""
+        """广播地址应该被拒绝（契约 §4 拒绝形状）"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
 
-        with pytest.raises(ValueError, match="(?i)broadcast"):
-            ping_rtt_tool("192.168.1.255", count=1)
+        result = ping_rtt_tool("192.168.1.255", count=1)
+        assert result["success"] is False
+        assert "Broadcast" in result["error"]
 
     def test_multicast_ip_rejected(self):
-        """多播地址应该被拒绝"""
+        """多播地址应该被拒绝（契约 §4 拒绝形状）"""
         from src.tools.ping_rtt_tool import ping_rtt_tool
 
-        with pytest.raises(ValueError, match="(?i)multicast"):
-            ping_rtt_tool("224.0.0.1", count=1)
+        result = ping_rtt_tool("224.0.0.1", count=1)
+        assert result["success"] is False
+        assert "Multicast" in result["error"]
+
+class TestPingCommandBuilding:
+    """T005：build_ping_cmd 跨平台参数断言（不硬编码 OS）。"""
+
+    def test_build_ping_cmd_unix(self, monkeypatch):
+        import sys
+
+        from src.tools.ping_rtt_tool import build_ping_cmd
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert build_ping_cmd("10.99.80.160", 4, 10) == [
+            "ping", "-c", "4", "-W", "10", "10.99.80.160",
+        ]
+
+    def test_build_ping_cmd_windows(self, monkeypatch):
+        import sys
+
+        from src.tools.ping_rtt_tool import build_ping_cmd
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert build_ping_cmd("10.99.80.160", 3, 2) == [
+            "ping", "-n", "3", "-w", "2000", "10.99.80.160",
+        ]
+
+
+class TestPingErrorPaths:
+    """T005：命令缺失 / 超时 / 全丢包路径（契约 contracts/tool-result-json.md §4）。"""
+
+    def test_command_not_found(self):
+        from src.tools.ping_rtt_tool import ping_rtt_tool
+
+        with patch('subprocess.run', side_effect=FileNotFoundError("ping")):
+            result = ping_rtt_tool(ALLOWLISTED_IP, count=1)
+
+        assert result["success"] is False
+        assert result["error"] == "ping command not found"
+        assert result["loss_pct"] == 100.0
+
+    def test_timeout_expired(self):
+        from src.tools.ping_rtt_tool import ping_rtt_tool
+
+        with patch('subprocess.run',
+                   side_effect=subprocess.TimeoutExpired("ping", 10)):
+            result = ping_rtt_tool(ALLOWLISTED_IP, count=1)
+
+        assert result["success"] is False
+        assert result["error"] == "Ping timeout expired"
+        assert result["loss_pct"] == 100.0
+
+    def test_all_lost_reports_inf_avg_and_100_loss(self):
+        """全丢包 → avg_rtt_ms=inf 且 loss_pct=100（契约 §4）。"""
+        from src.tools.ping_rtt_tool import ping_rtt_tool
+
+        mock_output = (
+            f"PING {ALLOWLISTED_IP}: 56 data bytes, timeout 2s\n\n"
+            f"--- {ALLOWLISTED_IP} ping statistics ---\n"
+            "2 packets transmitted, 0 packets received, 100% packet loss"
+        )
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=mock_output, stderr="",
+            )
+            result = ping_rtt_tool(ALLOWLISTED_IP, count=2)
+
+        assert result["success"] is True
+        assert result["avg_rtt_ms"] == float('inf')
+        assert result["loss_pct"] == 100.0

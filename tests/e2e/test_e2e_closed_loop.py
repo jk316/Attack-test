@@ -247,26 +247,36 @@ class TestToolErrorHandling:
         assert "adjust" in result["messages"][-1].content.lower()
 
     def test_non_allowlist_ip_bubbles_error(self):
-        """Tool validates IP and raises ValueError for non-allowlist targets."""
+        """Tool validates IP and rejects non-allowlist targets (契约 §4).
+
+        ping_rtt_tool 对非 allowlist 目标返回 success:false + 校验错误
+        （不执行探测）；create_agent 把工具结果回传给 LLM。
+        """
         from src.agent.graph import build_graph
+        from langchain_core.messages import ToolMessage
 
         model = _build_mock_model([
             _make_ai_with_tool_calls(
                 {"name": "ping_rtt", "args": {"ip": "192.168.1.99"}, "id": "c1"},
             ),
+            _make_final("目标被拒绝，本轮无探测。"),
         ])
 
         with patch("src.agent.graph._build_model", return_value=model):
             graph = build_graph()
             config = {"configurable": {"thread_id": "e2e-reject"}}
 
-            # The ping_rtt_tool raises ValueError for non-allowlist IP.
-            # create_agent propagates tool errors by default.
-            with pytest.raises(ValueError, match="not in allowlist"):
-                graph.invoke(
-                    {"messages": [HumanMessage(content="Ping 192.168.1.99")]},
-                    config,
-                )
+            # ping_rtt_tool 对非 allowlist IP 返回拒绝结果（002-T022 契约形状），
+            # 工具结果作为 ToolMessage 回传。
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Ping 192.168.1.99")]},
+                config,
+            )
+
+        tool_msgs = [m for m in result["messages"]
+                     if isinstance(m, ToolMessage)]
+        assert tool_msgs, "预期存在 ping_rtt 工具结果消息"
+        assert any("not in allowlist" in str(m.content) for m in tool_msgs)
 
 
 class TestPCAPIntegration:

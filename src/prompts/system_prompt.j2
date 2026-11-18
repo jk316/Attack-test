@@ -99,6 +99,7 @@
 | traffic_spec_json | 描述多条并发流的 JSON 字符串，格式见下方 Schema |
 | duration_s | 持续时间，默认 5s，最大 {{ max_duration_s }} |
 | pps | 总发包速率，默认 100，最大 {{ max_pps }} |
+| iat_jitter_ms | 报文间隔抖动（毫秒），0–{{ max_iat_jitter_ms }}，默认 0（可按 CLI/配置注入） |
 
 ### Traffic Spec JSON 格式
 
