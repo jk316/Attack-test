@@ -193,6 +193,18 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     # Strip None values so Pktgen uses its own defaults
     clean_params = {k: v for k, v in params.items() if v is not None}
 
+    # 008-T008：下发硬件前的 duration 显式钳制（宪法附加约束 duration≤60000ms）。
+    # 工具层已按 005-G1 拒绝 >60000 请求；此处为引擎边界守卫，
+    # 保证任何内部调用方下发的 duration 永不超过上限。
+    duration = clean_params.get("duration")
+    if (isinstance(duration, (int, float)) and not isinstance(duration, bool)
+            and duration > DURATION_LIMIT_MS):
+        logger.warning(
+            "Clamping duration %s → %s ms before handing to Pktgen engine",
+            duration, DURATION_LIMIT_MS,
+        )
+        clean_params["duration"] = DURATION_LIMIT_MS
+
     try:
         if is_dry_run():
             logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
@@ -245,8 +257,9 @@ def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
         return True
     approval = interrupt({
         "message": f"[HITL] Approve Pktgen '{skill_name}' execution?",
-        "mode": "live",
-        "params": params,
+        # 008 统一审批结构：mode 移入 params（message/params/scope 三键齐全）
+        "params": {"skill": skill_name, "mode": "live", **params},
+        "scope": "pktgen_traffic",
     })
     return bool(approval)
 
@@ -274,6 +287,22 @@ def _configured_src_ip() -> str:
     操作员可按实验拓扑修改 experiment.json pktgen.src_ip（main.py 注入同名 env）。
     """
     return os.environ.get("PKTGEN_SRC_IP") or _DEFAULT_CONFIGURED_SRC_IP
+
+
+def _default_rate() -> float:
+    """008-T012/005-G4：rate 缺省时调用时读 env PKTGEN_RATE，回退签名默认 50。"""
+    try:
+        return float(os.environ.get("PKTGEN_RATE", "50"))
+    except ValueError:
+        return 50.0
+
+
+def _default_duration_ms() -> int:
+    """008-T012/005-G4：duration 缺省时调用时读 env PKTGEN_DURATION_MS，回退签名默认 5000。"""
+    try:
+        return int(os.environ.get("PKTGEN_DURATION_MS", "5000"))
+    except ValueError:
+        return 5000
 
 
 def _src_ip_rejection(skill_name: str) -> dict[str, Any]:
@@ -337,8 +366,8 @@ def _run_traffic_tool(
 @tool
 def pktgen_udp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     dport: int | None = None,
     sport: int | None = None,
     pktSize: int | None = None,
@@ -381,6 +410,8 @@ def pktgen_udp_flood(
     """
     if src_ip:
         return _src_ip_rejection("udp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("udp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "dport": dport, "sport": sport, "pktSize": pktSize,
@@ -393,8 +424,8 @@ def pktgen_udp_flood(
 @tool
 def pktgen_tcp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     dport: int | None = None,
     sport: int | None = None,
     tcp_flags: str = "ack",
@@ -431,6 +462,8 @@ def pktgen_tcp_flood(
     """
     if src_ip:
         return _src_ip_rejection("tcp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("tcp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "dport": dport, "sport": sport, "tcp_flags": tcp_flags,
@@ -444,8 +477,8 @@ def pktgen_tcp_flood(
 @tool
 def pktgen_icmp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     pktSize: int | None = None,
     ttl: int | None = None,
     src_ip: str | None = None,
@@ -478,6 +511,8 @@ def pktgen_icmp_flood(
     """
     if src_ip:
         return _src_ip_rejection("icmp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("icmp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "pktSize": pktSize, "ttl": ttl, "src_ip": _configured_src_ip(),
@@ -489,8 +524,8 @@ def pktgen_icmp_flood(
 
 @tool
 def pktgen_arp_flood(
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     arp_type: str = "request",
     dst_ip: str = "",
     count: int | None = None,
@@ -534,6 +569,8 @@ def pktgen_arp_flood(
             validate_target(dst_ip)
         except ValueError as e:
             return {"success": False, "mode": "unknown", "error": str(e)}
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     t0 = time.time()
     result = _run_traffic_tool("arp_flood", {
         "rate": rate, "duration": duration, "arp_type": arp_type,
@@ -554,7 +591,7 @@ def pktgen_range_scan(
     min_val: str = "1",
     max_val: str = "65535",
     inc: str = "1",
-    rate: float = 50.0,
+    rate: float | None = None,
     pktSize: int | None = None,
     count: int | None = None,
 ) -> dict[str, Any]:
@@ -585,6 +622,7 @@ def pktgen_range_scan(
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
         ``mode``, ``response`` (live), ``rtt_during``.
     """
+    rate = _default_rate() if rate is None else rate
     return _run_traffic_tool("range_based_scan", {
         "scan_field": scan_field, "start": start,
         "min": min_val, "max": max_val, "inc": inc,

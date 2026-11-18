@@ -114,6 +114,21 @@ class TestConfigToToolDefaults:
         # Dry-run default is True
         assert is_dry_run() is True
 
+    def test_pktgen_tool_consumes_env_defaults(self, set_env_from_config):
+        """005-T012（008 完成后回补）：工具调用消费——未显式传 rate/duration
+        时采用 PKTGEN_RATE/PKTGEN_DURATION_MS（008-G4 实现归属）。"""
+        from unittest.mock import MagicMock, patch
+
+        from src.pktgen import adapter
+
+        with patch.object(adapter, "_execute_skill") as mock_exec:
+            mock_exec.return_value = {"success": True, "mode": "dry_run"}
+            adapter.pktgen_udp_flood.invoke({"dst_ip": "10.99.80.160"})
+            engine_params = mock_exec.call_args[0][1]
+
+        assert engine_params["rate"] == 77.0
+        assert engine_params["duration"] == 9999
+
     def test_config_rendered_in_system_prompt(self, set_env_from_config):
         """System prompt should include the env var values."""
         from jinja2 import Environment, FileSystemLoader

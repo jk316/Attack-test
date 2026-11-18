@@ -194,8 +194,8 @@ def parse_args() -> argparse.Namespace:
         "--auto-approve",
         action="store_true",
         default=False,
-        help="Auto-approve all HITL requests (traffic send + TRex script execution), "
-             "skipping interactive prompts",
+        help="自动批准所有 HITL 请求（仅限 dry-run 零流量场景；"
+             "与 --pktgen-live/--trex-live 互斥——实发模式必须人工逐次审批）",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -320,6 +320,12 @@ def parse_args() -> argparse.Namespace:
             f"--catalog-target 必须 ≥ 1（收到 {args.catalog_target}）："
             "目录探索目标脚本数至少为 1"
         )
+    # 008-T014/008-1：自动批准不得与任何实发模式组合（禁止无人值守真实流量）
+    if args.auto_approve and (args.pktgen_live or args.trex_live):
+        parser.error(
+            "--auto-approve 与 --pktgen-live/--trex-live 互斥：自动批准仅限 "
+            "dry-run（零流量）场景，实发模式必须人工逐次审批"
+        )
     if args.max_iters is None:
         args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
     # 攻击抖动默认值（R4：无 CLI 参数；经配置链 attack.iat_jitter_ms /
@@ -339,6 +345,30 @@ def parse_args() -> argparse.Namespace:
         if any(a == flag or a.startswith(flag + "=") for a in sys.argv[1:])
     }
     return args
+
+
+def _warn_config_over_limits(args: argparse.Namespace) -> None:
+    """008-T011/008-2：配置默认值超限启动警告（字段/配置值/钳制后上限值）。
+
+    逐项比对最终生效参数（已含 profile 覆盖）与宪法上限；超限项输出
+    WARNING 到 stderr，**不报错退出**——钳制仍在工具内执行，本层只负责可见性。
+    """
+    checks = [
+        ("attack.pps", getattr(args, "pps", 0), 20000),
+        ("attack.duration_s", getattr(args, "duration", 0), 20),
+        ("attack.packet_size", getattr(args, "packet_size", 0), 1024),
+        ("attack.flow_count", getattr(args, "flow_count", 0), 100),
+        ("attack.iat_jitter_ms", getattr(args, "iat_jitter_ms", 0), 20),
+        ("pktgen.rate", getattr(args, "pktgen_rate", 0), 100),
+        ("pktgen.duration_ms", getattr(args, "pktgen_duration", 0), 60000),
+    ]
+    for field, value, limit in checks:
+        if isinstance(value, (int, float)) and value > limit:
+            print(
+                f"[配置警告] {field}: 配置值 {value} 超过上限，"
+                f"工具内将钳制为 {limit}",
+                file=sys.stderr,
+            )
 
 
 def _run_preflight(args: argparse.Namespace) -> None:
@@ -622,6 +652,8 @@ def main() -> int | None:
     """CLI 入口：实验模式返回 None（退出码 0），探索模式返回达标退出码 0/1。"""
     args = parse_args()
     _run_preflight(args)
+    # 008-T011/008-2：配置默认值超限启动警告（load/apply_profile 之后、env 注入之前）
+    _warn_config_over_limits(args)
 
     # G2（006-T013）：--clean-scripts 仅探索模式生效，启动时（env 注入前）
     # 清空 trex_scripts/cat_*.py 旧脚本，绝不动非 cat_ 文件。

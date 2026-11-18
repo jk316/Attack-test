@@ -97,11 +97,11 @@ description: "Pktgen-DPDK 硬件集成实现任务列表"
 ### 用户故事 2 的测试 ⚠️
 
 - [x] T011 [P] [US2] 回归测试（现状验证+防回归）：扩展 `tests/unit/test_pktgen_adapter.py`——断言 live 下同步等待时长 = min(duration, 60000)ms（monkeypatch `time.sleep` 记录入参）、`duration=0` 不等待、结果含 `attack_window`/`observation_window`/`covers_attack_window` 且 `mode` 标注正确（dry_run/live）
-- [ ] T012 [P] [US2] G4 验证测试（**依赖 008 完成**）：扩展 `tests/integration/test_config_pipeline.py`——现有 `test_pktgen_defaults_flow_to_adapter` 只断言 env 已设置，需补「工具调用消费」断言：适配器工具未显式传 rate/duration 时采用 `PKTGEN_RATE`/`PKTGEN_DURATION_MS`。⚠️ 实现归属 008（008-G4），本任务在 008 完成后仅补验证测试；008 未完成前本任务阻塞
+- [x] T012 [P] [US2] G4 验证测试（008 完成后回补）（**依赖 008 完成**）：扩展 `tests/integration/test_config_pipeline.py`——现有 `test_pktgen_defaults_flow_to_adapter` 只断言 env 已设置，需补「工具调用消费」断言：适配器工具未显式传 rate/duration 时采用 `PKTGEN_RATE`/`PKTGEN_DURATION_MS`。⚠️ 实现归属 008（008-G4），本任务在 008 完成后仅补验证测试；008 未完成前本任务阻塞
 
 ### 用户故事 2 的验证
 
-- [ ] T013 [US2] US2 全绿验证：运行 `tests/unit/test_pktgen_adapter.py`、`tests/integration/test_config_pipeline.py`、`tests/integration/test_pktgen_client.py`（模拟 TCP 端点），确认等待与 RTT 观测行为无回归（依赖 T011、T012）
+- [x] T013 [US2] US2 全绿验证（008 完成后回补）：运行 `tests/unit/test_pktgen_adapter.py`、`tests/integration/test_config_pipeline.py`、`tests/integration/test_pktgen_client.py`（模拟 TCP 端点），确认等待与 RTT 观测行为无回归（依赖 T011、T012）
 
 **检查点**: 用户故事 2 应完整可用且可独立测试（对应 quickstart 场景 1/4/5）。
 

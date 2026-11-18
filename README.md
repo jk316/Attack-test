@@ -231,7 +231,7 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 | `--target-ip` | `10.99.80.160` | 流量与 ping 目标（必须在 allowlist） |
 | `--max-iters` | 20（探索模式 40） | 最大迭代轮数 |
 | `--no-improve-limit` | 5 | 连续 N 轮无改善即早停 |
-| `--auto-approve` | `False` | 自动批准所有 HITL 请求 |
+| `--auto-approve` | `False` | 自动批准所有 HITL 请求（**仅限 dry-run 场景**：与 `--pktgen-live`/`--trex-live` 互斥，实发模式必须人工逐次审批） |
 | `--duration` | 10 | Scapy 攻击时长（秒） |
 | `--pps` | 100 | Scapy 每秒包数 |
 | `--packet-size` | 64 | 包负载字节数 |
@@ -270,17 +270,19 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 | iat_jitter_ms | 20 | `MAX_IAT_JITTER_MS` |
 | mixed 流数 | 100 | `MAX_STREAMS` |
 | Pktgen rate | 100% | skill YAML 约束 |
-| Pktgen duration | 60000 ms | `_wait_for_attack` 封顶 |
+| Pktgen duration | 60000 ms | 工具层拒绝（>60000）+ 引擎边界钳制（`DURATION_LIMIT_MS`） |
 
 ### HITL / allowlist 门控矩阵
 
 | 技能 | allowlist（`dst_ip`） | HITL |
 |------|:---:|:---:|
 | `udp_flood` / `tcp_flood` / `icmp_flood` | ✅ | ✅ |
-| `arp_flood` | ❌（L2 无 IP） | ✅ |
+| `arp_flood` | ❌（L2 无 IP；提供 `dst_ip` 时仍须过 allowlist） | ✅ |
 | `range_based_scan` / `packet_sequence_generation` | ✅ | ✅ |
 | `pcap_replay` | ❌（使用 PCAP 自带 dst） | ✅ |
 | `stats_monitoring` / `safe_stop_and_reset` | N/A | ❌ |
+
+> 审批内容统一结构 `{message, params, scope}`（scope ∈ scapy_traffic / pktgen_traffic / trex_script），CLI 与 Web 共用同一呈现路径。
 
 ### 其他安全约束
 

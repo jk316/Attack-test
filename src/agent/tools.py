@@ -6,6 +6,7 @@ The traffic_send tool includes a HITL gate via langgraph interrupt().
 Default values are read from environment variables (set by main.py from
 experiment.json or CLI), with hardcoded fallbacks for standalone use.
 """
+import json
 import os
 import time
 from typing import Any
@@ -86,6 +87,7 @@ def traffic_send(
     approval = interrupt({
         "message": "[HITL] Approve traffic send?",
         "params": params_display,
+        "scope": "scapy_traffic",  # 008 统一审批结构（contracts/hitl-payload.md）
     })
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}
@@ -190,9 +192,27 @@ def mixed_traffic_send(
         "pps": pps,
         "iat_jitter_ms": iat_jitter_ms,
     }
+    # 008 统一审批结构：params 增加流量规格摘要（流数/协议构成；完整 spec 不进审批材料）
+    try:
+        spec = (json.loads(traffic_spec_json)
+                if isinstance(traffic_spec_json, str) else traffic_spec_json)
+        streams = spec.get("streams", []) if isinstance(spec, dict) else []
+        protocols = sorted({
+            proto
+            for st in streams
+            if isinstance(st, dict)
+            for proto in (st.get("protocol_stack") or [])
+            if isinstance(proto, str)
+        })
+        params_display["stream_count"] = len(streams)
+        params_display["protocols"] = protocols
+    except Exception:
+        params_display["stream_count"] = "?"
+        params_display["protocols"] = []
     approval = interrupt({
         "message": "[HITL] Approve mixed traffic send?",
         "params": params_display,
+        "scope": "scapy_traffic",
     })
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}

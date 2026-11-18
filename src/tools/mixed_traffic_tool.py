@@ -183,6 +183,13 @@ def validate_traffic_spec(spec: dict) -> list[dict]:
                 raise ValueError(
                     f"stream '{sid}': fields.{proto_name} must be a dict"
                 )
+            # FR-004（008-T010）：禁止源地址伪造——IP 层 src 字段不得自定义
+            if proto_name == "IP":
+                for key in field_dict:
+                    if str(key).lower() == "src":
+                        raise ValueError(
+                            f"stream '{sid}': IP.src 不允许自定义（禁止源 IP 伪造）"
+                        )
             _check_dangerous_values(field_dict, sid, proto_name)
 
         pct = stream.get("percentage")
