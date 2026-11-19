@@ -1,0 +1,33 @@
+{
+    "target_ip": "100.1.11.20",
+    "pcap_path": "",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 20,
+    "no_improve_limit": 5,
+    "auto_approve": false,
+    "verbose": false,
+    "pktgen_live": false,
+    "trex_live": false,
+    "trex_explore": false,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "",
+    "attack": {
+        "duration_s": 10,
+        "pps": 100,
+        "packet_size": 64,
+        "flow_count": 1,
+        "iat_jitter_ms": 0
+    },
+    "pktgen": {
+        "rate": 50,
+        "duration_ms": 10000,
+        "host": null,
+        "port": null
+    },
+    "trex": {
+        "timeout_s": 30,
+        "host": null,
+        "port": null
+    }
+}

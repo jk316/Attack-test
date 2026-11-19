@@ -18,8 +18,9 @@ uv run pytest tests/ -v                             # All tests (unit + integrat
 uv run pytest --cov=src --cov-report=term-missing   # With coverage
 
 # ── CLI Agent ────────────────────────────────────────────────────
-# Dry-run (default) — compile Lua only, no traffic sent
-uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5
+# Bare run — all params come from experiment.json (default dry-run: Pktgen/TRex
+# compile-only, no traffic; Scapy tools still send on HITL approval)
+uv run python src/main.py
 
 # Auto-approve — skip HITL prompts
 uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5 --auto-approve
@@ -42,10 +43,6 @@ uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 # Per-run exploration direction — free-form text injected into the catalog
 # prompt (no traffic, no HITL; omit for generic exploration)
 uv run python src/main.py --trex-explore --explore-direction "重点探索DNS放大攻击和TCP SYN洪水"
-
-# Named preset — switch a whole parameter group in one flag
-# (see experiment.json "profiles")
-uv run python src/main.py --profile high_pps
 
 # Free-form instruction for experiment mode — injected into user message
 # and system prompt (dry-run by default, no traffic without --pktgen-live)
@@ -132,8 +129,8 @@ ExperimentManager (backend/experiment.py)
 | `src/main.py` | CLI entry — reads `experiment.json`, sets env vars for tool defaults, parses CLI args, runs HITL polling loop with `VerboseCallback` for LLM I/O logging |
 | `src/prompts/system_prompt.j2` | Jinja2 system prompt — ReAct protocol, Pktgen tool tables, parameter semantics, optimization strategy table, concrete examples |
 | `src/prompts/trex_catalog_prompt.j2` | Jinja2 prompt for `--trex-explore` mode — plan→generate→summarize protocol, `cat_` filename rule, mandatory Chinese annotation block per script, catalog summary table format |
-| `src/config/experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms) |
-| `src/config/allowlist.json` | Allowlisted target IPs |
+| `experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms), plus live/dry-run/auto_approve/instruction flags |
+| `allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
 | `src/tools/rtt_window.py` | `build_rtt_observation()` — enriches tool results with `rtt_during`, `attack_window`, `observation_window` fields |
 | `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping |

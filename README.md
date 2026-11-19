@@ -122,10 +122,9 @@ Attack-Test/
 │   ├── trex/
 │   │   ├── tools.py                 # TRex 写脚本 + 运行（subprocess）
 │   │   └── config.py                # TRex 配置读取（每次调用重读 env）
-│   ├── prompts/                     # Jinja2 提示词模板
-│   └── config/
-│       ├── experiment.json          # 默认参数单一事实来源
-│       └── allowlist.json           # 允许的目标 IP 白名单
+│   └── prompts/                     # Jinja2 提示词模板
+├── experiment.json                   # 默认参数单一事实来源
+├── allowlist.json                    # 允许的目标 IP 白名单
 ├── backend/
 │   ├── server.py                    # FastAPI：WebSocket + REST + 静态资源
 │   └── experiment.py                # ExperimentManager：LangGraph ↔ WebSocket 异步桥
@@ -166,15 +165,15 @@ uv sync --extra dev     # 附加测试依赖（pytest / pytest-cov）
 
    > 也支持 `OPENAI_API_KEY` 作为 `DEEPSEEK_API_KEY` 的备选。
 
-2. **allowlist 白名单**：编辑 `src/config/allowlist.json`，把允许的测试目标 IP 加进 `hosts` 数组。
+2. **allowlist 白名单**：编辑 `allowlist.json`，把允许的测试目标 IP 加进 `hosts` 数组。
 
 3. **（可选）Pktgen/TRex 硬件**：编辑 `topology.yaml` 中的 `pktgen.host/port`、`trex.host/port`、`dst_mac`。
 
 ### 最小可运行示例
 
 ```bash
-# Dry-run：仅编译 Lua，不发任何流量（默认模式）
-uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5
+# 裸跑：所有参数来自 experiment.json（默认 dry-run，Pktgen/TRex 仅编译不发流量）
+uv run python src/main.py
 ```
 
 ---
@@ -185,7 +184,7 @@ uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5
 
 | 模式 | 命令 | 说明 |
 |------|------|------|
-| **CLI 闭环实验**（默认） | `uv run python src/main.py --target-ip <IP> --max-iters 5` | ReAct 探索流量参数使 RTT 最大化，HITL 用阻塞式 `input()` |
+| **CLI 闭环实验**（默认） | `uv run python src/main.py` | ReAct 探索流量参数使 RTT 最大化，HITL 用阻塞式 `input()`；所有参数来自 experiment.json |
 | **CLI TRex 探索** | `uv run python src/main.py --trex-explore` | 仅生成 ≥10 个带中文注释的攻击脚本（强制 dry-run，零流量零 HITL），摘要存 `output/trex_attack_catalog_<时间戳>.md` |
 | **Web 控制台** | `uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload` | 异步 WebSocket 循环，HITL 通过前端按钮审批，打开 http://localhost:8000 |
 
@@ -204,9 +203,6 @@ uv run python src/main.py --target-ip 10.99.80.160 --duration 10 --pps 500 --pkt
 # 带 PCAP 流量画像
 uv run python src/main.py --target-ip 10.99.80.160 --pcap-path data/sample.pcapng
 
-# 命名预设 profile —— 一键切换整组参数（定义于 experiment.json 的 profiles）
-uv run python src/main.py --profile high_pps
-
 # 普通模式自由文本指令 —— 注入 user message 和 system prompt
 uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
 
@@ -220,24 +216,26 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 
 ### 主要 CLI 参数
 
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `--target-ip` | `10.99.80.160` | 流量与 ping 目标（必须在 allowlist） |
-| `--max-iters` | 20（探索模式 40） | 最大迭代轮数 |
-| `--no-improve-limit` | 5 | 连续 N 轮无改善即早停 |
-| `--auto-approve` | `False` | 自动批准所有 HITL 请求 |
-| `--duration` | 10 | Scapy 攻击时长（秒） |
-| `--pps` | 100 | Scapy 每秒包数 |
-| `--packet-size` | 64 | 包负载字节数 |
-| `--flow-count` | 1 | 并发流数 |
-| `--pktgen-live` | `False` | Pktgen 实发（默认 dry-run 仅编译 Lua） |
-| `--pktgen-rate` | 50 | Pktgen 速率百分比（0–100） |
-| `--trex-live` | `False` | TRex 实发（默认 dry-run 仅写脚本+语法检查） |
-| `--trex-explore` | `False` | TRex 攻击目录探索模式 |
-| `--catalog-target` | 10 | 探索模式最少生成脚本数 |
-| `--explore-direction` | 空 | 探索方向（自由文本注入提示词） |
-| `--profile` | 无 | 命名预设，一键切换整组参数（定义于 `experiment.json` 的 `profiles`） |
-| `--instruction` | 空 | 普通模式自由文本目标/指令（注入 user message 和 system prompt） |
+> 所有参数的默认值都来自 `experiment.json`，直接 `uv run python src/main.py` 裸跑即可使用。下表列出的 CLI 参数仅用于**临时覆盖** json 里的默认值。
+
+| 参数 | 说明 |
+|------|------|
+| `--target-ip` | 流量与 ping 目标（必须在 allowlist） |
+| `--max-iters` | 最大迭代轮数 |
+| `--no-improve-limit` | 连续 N 轮无改善即早停 |
+| `--auto-approve` | 自动批准所有 HITL 请求 |
+| `--duration` | Scapy 攻击时长（秒） |
+| `--pps` | Scapy 每秒包数 |
+| `--packet-size` | 包负载字节数 |
+| `--flow-count` | 并发流数 |
+| `--iat-jitter` | 包间隔随机抖动（毫秒） |
+| `--pktgen-live` | Pktgen 实发（默认 dry-run 仅编译 Lua） |
+| `--pktgen-rate` | Pktgen 速率百分比（0–100） |
+| `--trex-live` | TRex 实发（默认 dry-run 仅写脚本+语法检查） |
+| `--trex-explore` | TRex 攻击目录探索模式 |
+| `--catalog-target` | 探索模式最少生成脚本数 |
+| `--explore-direction` | 探索方向（自由文本注入提示词） |
+| `--instruction` | 普通模式自由文本目标/指令（注入 user message 和 system prompt） |
 
 > `--trex-explore` 与 `--trex-live` 互斥（探索模式绝不发送流量）。
 
@@ -287,6 +285,8 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 
 ## 配置说明
 
+所有运行参数（目标 IP、迭代次数、攻击参数、Pktgen/TRex 参数、live/dry-run 开关、`auto_approve`、`instruction` 等）都在 `experiment.json` 中配置。直接 `uv run python src/main.py` 裸跑即可使用全部 json 默认值，无需任何 CLI 参数；CLI flag 仅用于临时覆盖某个值。
+
 ### 配置流
 
 ```
@@ -308,8 +308,8 @@ experiment.json  →  main.py 设置环境变量  →  工具调用时读取
 
 | 文件 | 作用 |
 |------|------|
-| `src/config/experiment.json` | 默认参数单一事实来源（目标 IP、max_iters、攻击参数、pktgen/trex 参数） |
-| `src/config/allowlist.json` | 允许的目标 IP 白名单 |
+| `experiment.json` | 所有运行参数单一事实来源（目标 IP、迭代/攻击参数、Pktgen/TRex、live/dry-run、auto_approve、instruction 等） |
+| `allowlist.json` | 允许的目标 IP 白名单 |
 | `topology.yaml` | Pktgen/TRex 主机端口、TX/RX 端口映射、`dst_mac` |
 | `.env` | LLM API Key（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`）、`LLM_MODEL` |
 

@@ -81,7 +81,7 @@ class VerboseCallback(BaseCallbackHandler):
     #     logger.info("[TOOL] done")
 
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config" / "experiment.json"
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "experiment.json"
 
 DEFAULTS: dict = {
     "target_ip": "10.99.80.160",
@@ -89,10 +89,17 @@ DEFAULTS: dict = {
     "log_path": "data/experiment.jsonl",
     "max_iters": 20,
     "no_improve_limit": 5,
+    "auto_approve": False,
+    "verbose": False,
+    "pktgen_live": False,
+    "trex_live": False,
+    "trex_explore": False,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "",
 }
 
-
-# Config sections that a named profile may override (nested, deep-merged).
+# Config sections read as nested dicts (attack/pktgen/trex).
 _SECTION_KEYS = ("attack", "pktgen", "trex")
 
 
@@ -107,29 +114,8 @@ def _read_config_file() -> dict:
         return {}
 
 
-def _apply_profile(cfg: dict, data: dict, profile: str) -> dict:
-    """Overlay a named profile (data['profiles'][profile]) onto cfg immutably.
-
-    Scalar keys are replaced; nested sections are shallow-merged so a profile
-    only needs to list the keys it changes.
-    """
-    profiles = data.get("profiles", {})
-    if profile not in profiles:
-        available = ", ".join(sorted(profiles)) or "(none)"
-        raise SystemExit(f"未知 profile: {profile!r}，可用: {available}")
-    overrides = profiles[profile]
-    result = dict(cfg)
-    for key in DEFAULTS:
-        if key in overrides:
-            result[key] = overrides[key]
-    for key in _SECTION_KEYS:
-        if key in overrides:
-            result[key] = {**(result.get(key) or {}), **overrides[key]}
-    return result
-
-
-def _load_config_defaults(profile: str | None = None) -> dict:
-    """Load experiment defaults from config, optionally overlaid with a named profile."""
+def _load_config_defaults() -> dict:
+    """Load experiment defaults from config, falling back to hardcoded DEFAULTS."""
     data = _read_config_file()
     merged = dict(DEFAULTS)
     for key in DEFAULTS:
@@ -138,25 +124,13 @@ def _load_config_defaults(profile: str | None = None) -> dict:
     for key in _SECTION_KEYS:
         if key in data:
             merged[key] = dict(data[key])
-    if profile:
-        merged = _apply_profile(merged, data, profile)
     return merged
 
 
 def parse_args() -> argparse.Namespace:
-    # Pre-scan --profile so the profile's defaults feed the remaining args' defaults.
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--profile", default=None)
-    pre_args, _ = pre_parser.parse_known_args()
-
-    cfg = _load_config_defaults(profile=pre_args.profile)
+    cfg = _load_config_defaults()
     parser = argparse.ArgumentParser(
         description="Closed-Loop Network Experiment Agent"
-    )
-    parser.add_argument(
-        "--profile",
-        default=None,
-        help="命名预设：一键切换整组参数（定义于 experiment.json 的 profiles）",
     )
     parser.add_argument(
         "--target-ip",
@@ -188,14 +162,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--auto-approve",
         action="store_true",
-        default=False,
+        default=cfg["auto_approve"],
         help="Auto-approve all HITL requests (traffic send + TRex script execution), "
              "skipping interactive prompts",
     )
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        default=False,
+        default=cfg["verbose"],
         help="Show full untruncated message content on the console (console → DEBUG). "
              "Full content is always written to data/agent.log regardless.",
     )
@@ -217,24 +191,28 @@ def parse_args() -> argparse.Namespace:
         "--flow-count", type=int, default=attack_cfg.get("flow_count", 1),
         help="Number of concurrent flows (default 1)",
     )
+    parser.add_argument(
+        "--iat-jitter", type=int, default=attack_cfg.get("iat_jitter_ms", 0),
+        help="Random jitter on inter-packet interval in ms (default 0)",
+    )
     # ── Pktgen-DPDK options ──────────────────────────────────────────
     pktgen_cfg = cfg.get("pktgen", {})
     parser.add_argument(
         "--pktgen-live",
         action="store_true",
-        default=False,
+        default=cfg["pktgen_live"],
         help="Run Pktgen tools in live mode (actually send traffic to Pktgen). "
              "Default is dry-run (compile Lua scripts only).",
     )
     parser.add_argument(
         "--pktgen-host",
-        default=None,
+        default=pktgen_cfg.get("host"),
         help="Pktgen-DPDK hostname or IP (default from topology.yaml)",
     )
     parser.add_argument(
         "--pktgen-port",
         type=int,
-        default=None,
+        default=pktgen_cfg.get("port"),
         help="Pktgen-DPDK TCP control port (default from topology.yaml)",
     )
     parser.add_argument(
@@ -250,19 +228,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trex-live",
         action="store_true",
-        default=False,
+        default=cfg["trex_live"],
         help="Run TRex scripts in live mode (actually execute generated Python). "
              "Default is dry-run (write + syntax-check only).",
     )
     parser.add_argument(
         "--trex-host",
-        default=None,
+        default=trex_cfg.get("host"),
         help="TRex server hostname or IP (default from topology.yaml)",
     )
     parser.add_argument(
         "--trex-port",
         type=int,
-        default=None,
+        default=trex_cfg.get("port"),
         help="TRex server RPC port (default from topology.yaml)",
     )
     parser.add_argument(
@@ -272,7 +250,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trex-explore",
         action="store_true",
-        default=False,
+        default=cfg["trex_explore"],
         help="TRex attack catalog exploration mode: the agent only generates "
              "attack scripts with Chinese annotations (dry-run, no traffic, no "
              "HITL) and saves the catalog summary to "
@@ -281,20 +259,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--catalog-target",
         type=int,
-        default=10,
+        default=cfg["catalog_target"],
         help="Minimum number of attack scripts the agent must generate in "
              "--trex-explore mode (default 10)",
     )
     parser.add_argument(
         "--explore-direction",
-        default="",
+        default=cfg["explore_direction"],
         help="User-specified exploration direction for --trex-explore mode, "
              "injected into the catalog prompt (free-form text, e.g. "
              '"重点探索DNS放大攻击和TCP SYN洪水")',
     )
     parser.add_argument(
         "--instruction",
-        default="",
+        default=cfg["instruction"],
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
     )
     args = parser.parse_args()
@@ -382,6 +360,7 @@ def main() -> None:
     os.environ["ATK_PPS"] = str(args.pps)
     os.environ["ATK_PACKET_SIZE"] = str(args.packet_size)
     os.environ["ATK_FLOW_COUNT"] = str(args.flow_count)
+    os.environ["ATK_IAT_JITTER_MS"] = str(args.iat_jitter)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
 
@@ -417,8 +396,6 @@ def main() -> None:
     print(f"Log:        {args.log_path}")
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
-    if args.profile:
-        print(f"Profile:    {args.profile}")
     if args.instruction:
         print(f"Instruction: {args.instruction}")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"

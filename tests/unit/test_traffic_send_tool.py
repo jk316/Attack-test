@@ -3,7 +3,7 @@ import re
 from unittest.mock import patch, MagicMock, call
 import pytest
 
-# IP that exists in the actual allowlist (src/config/allowlist.json)
+# IP that exists in the actual allowlist (allowlist.json)
 ALLOWLISTED_IP = "10.99.80.160"
 
 
