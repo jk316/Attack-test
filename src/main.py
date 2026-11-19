@@ -248,6 +248,11 @@ def parse_args() -> argparse.Namespace:
         help="Timeout in seconds for running a TRex script (default 30)",
     )
     parser.add_argument(
+        "--trex-python", default=trex_cfg.get("python"),
+        help="Python interpreter for running generated TRex scripts "
+             "(default: current interpreter; set to a conda env with trex libs)",
+    )
+    parser.add_argument(
         "--trex-explore",
         action="store_true",
         default=cfg["trex_explore"],
@@ -384,6 +389,8 @@ def main() -> None:
     if args.trex_port is not None:
         os.environ["TREX_PORT"] = str(args.trex_port)
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
+    if args.trex_python:
+        os.environ["TREX_PYTHON"] = args.trex_python
 
     pktgen_host = args.pktgen_host or get_pktgen_host()
     pktgen_port = args.pktgen_port or get_pktgen_port()

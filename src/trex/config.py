@@ -5,6 +5,7 @@ environment variables AFTER imports resolve — the same pattern as Pktgen's
 `get_pktgen_host()` / `is_dry_run()` in `src/pktgen/adapter.py`.
 """
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -47,6 +48,20 @@ def get_trex_port() -> int:
         except (TypeError, ValueError):
             pass
     return _DEFAULT_PORT
+
+
+def get_trex_python() -> str:
+    """Return the Python interpreter used to run generated TRex scripts.
+
+    Prefers TREX_PYTHON env, then topology.yaml's trex.python, then the current
+    interpreter (sys.executable). Lets TRex client scripts run under a separate
+    Python (e.g. a conda env with trex_stl_lib/trex_astf_lib) from the agent.
+    """
+    return (
+        os.environ.get("TREX_PYTHON")
+        or _load_trex_section().get("python")
+        or sys.executable
+    )
 
 
 def is_trex_dry_run() -> bool:

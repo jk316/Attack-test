@@ -28,6 +28,7 @@
     "trex": {
         "timeout_s": 30,
         "host": null,
-        "port": null
+        "port": null,
+        "python": "/root/miniconda3/envs/trex311/bin/python"
     }
 }

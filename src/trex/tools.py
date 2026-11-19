@@ -32,6 +32,7 @@ from src.tools.ping_rtt_tool import ALLOWLIST, is_valid_ip, validate_target
 from src.tools.rtt_window import build_rtt_observation
 from src.trex.config import (
     get_trex_host,
+    get_trex_python,
     get_trex_scripts_dir,
     get_trex_timeout_s,
     is_trex_dry_run,
@@ -190,7 +191,7 @@ def _execute_live(
     t0 = time.time()
     try:
         proc = subprocess.run(
-            [sys.executable, str(path)],
+            [get_trex_python(), str(path)],
             capture_output=True,
             text=True,
             timeout=get_trex_timeout_s(),
