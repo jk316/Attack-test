@@ -14,20 +14,21 @@
 
 ### 初始化阶段（实验开始前，仅一次）
 
-0. **启动持续 Ping 监控**: 调用 `start_ping_monitor` 启动后台持续 ping，参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒。
+0. **启动持续监控**: 调用 `start_ping_monitor` 启动后台持续 ping（参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒）；若配置了 HTTP 业务（`experiment.json` 的 `http.url` 非空），同时调用 `start_http_monitor` 启动后台 HTTP 拨测。
    如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
 
 ### 每轮迭代
 
 根据当前阶段自主选择合适工具，不必每次都执行全部步骤。核心循环：
 
-1. **读取攻击前基线 RTT**: `read_ping_stats`（window_s=5）
+1. **读取攻击前基线**: `read_ping_stats`（window_s=5）读 RTT 基线；若 HTTP 拨测在运行，同时 `read_http_stats` 记录 HTTP 基线（`success_rate` / `avg_ttfb_ms`）。
 2. **选择并发送流量**:
    - Scapy 工具（低速率探索）→ `traffic_send` / `mixed_traffic_send`
    - Pktgen 工具（高吞吐/扫描/序列/回放）→ 见下方工具表
    - ⚠️ Pktgen flood 工具 `duration=0` 或 `count=0` 会**永久发送**，必须手动调用 `pktgen_stop_and_reset` 停止
 3. **测量效果**:
    - `read_ping_stats` → RTT 变化
+   - `read_http_stats` → HTTP 健康度变化（success_rate / TTFB / 5xx）
    - `pktgen_stats_monitor` → 端口级统计（Pktgen 工具时推荐）
 4. **记录日志**: `log_result`
 5. **清理（Pktgen 工具后必须）**: `pktgen_stop_and_reset` → 停止流量，重置端口，准备下一轮
@@ -36,7 +37,7 @@
 
 ### 实验结束
 
-- 调用 `stop_ping_monitor` 停止后台 ping，然后输出实验总结。
+- 调用 `stop_ping_monitor` 停止后台 ping，若启动了 HTTP 拨测则同时调用 `stop_http_monitor`，然后输出实验总结。
 
 ## 持续 Ping 监控工具
 
@@ -45,6 +46,29 @@
 | `start_ping_monitor` | 启动后台持续 ping（实验开始时调用一次） |
 | `read_ping_stats` | 读取最近 window_s 秒的 RTT 统计 |
 | `stop_ping_monitor` | 停止后台 ping（实验结束时调用） |
+
+## HTTP 业务拨测工具
+
+针对 HTTP 业务（而非 ICMP）的健康观测，攻击对业务的影响会体现在以下指标上：
+
+| 工具 | 说明 |
+|------|------|
+| `http_probe` | 单次 HTTP 拨测，返回分阶段耗时（DNS/TCP/TLS）、TTFB、总耗时、状态码、下载大小/速率 |
+| `start_http_monitor` | 启动后台持续 HTTP 拨测（实验开始时调用一次，与 `start_ping_monitor` 并列） |
+| `read_http_stats` | 读取最近 window_s 秒的 HTTP 健康统计 |
+| `stop_http_monitor` | 停止后台 HTTP 拨测（实验结束时调用） |
+
+`read_http_stats` 返回的关键字段与语义：
+
+| 字段 | 含义 | 攻击有效时的表现 |
+|------|------|------------------|
+| `success_rate` | 拿到 HTTP 响应（任意状态码）的比例 | 下降（连接层被阻断/超时） |
+| `avg_ttfb_ms` / `avg_total_ms` | 首字节 / 总响应时间 | 升高（业务延迟退化） |
+| `five_xx_rate` | 5xx 占总请求比例 | 上升（服务器过载） |
+| `timeout_count` / `connection_error_count` | 超时 / 连接拒绝次数 | 增多 |
+| `status_codes` | 状态码分布 | 出现 500/502/503/504 |
+
+流量工具（`traffic_send` / `mixed_traffic_send`）的返回值在 `rtt_during` 之外还附带 `http_during` 字段：若 HTTP monitor 在运行，`http_during` 给出攻击窗口内的上述聚合指标，可直接判断攻击对 HTTP 业务的影响。
 
 `read_ping_stats` 返回的字段：monitor_active, target_ip, latest_rtt_ms, avg_rtt_ms, min_rtt_ms, max_rtt_ms, sample_count（收到的探测数）, sent_count（窗口内发送的探测总数）, loss_pct（窗口内真实丢包率）, window_s, backend（fping 或 ping）。**`loss_pct` 现已准确反映窗口内丢包情况**——以前恒为 0，现在 fping 和增强版 ping fallback 都能给出真实值。
 
@@ -324,6 +348,17 @@ finally:
 ## 优化策略 & 奖励函数
 
 **奖励公式**: `reward = avg_rtt_ms + loss_pct * 10` — 最大化 reward。
+
+**若配置了 HTTP 业务拨测**（`http.url` 非空），奖励扩展为：
+
+```
+reward = avg_rtt_ms + loss_pct * 10
+       + (1 - success_rate) * 100      # HTTP 可用性下降
+       + max(0, ttfb_ratio - 1) * 50   # TTFB 相对基线升高
+       + five_xx_rate * 50             # 服务器过载 5xx
+```
+
+其中 `ttfb_ratio` = 攻击期 `avg_ttfb_ms` / 攻击前基线 `avg_ttfb_ms`（基线来自攻击前 `read_http_stats`）。`success_rate` 下降、`five_xx_rate` 上升、TTFB 升高都意味着 HTTP 业务退化，是有效攻击信号。
 
 **分阶段策略**:
 

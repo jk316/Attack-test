@@ -20,6 +20,9 @@ from src.tools.pcap_profile_tool import pcap_profile_tool, DEFAULT_COUNT_LIMIT
 from src.tools.log_tool import log_tool
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.rtt_window import build_rtt_observation
+from src.tools.http_probe_tool import http_probe as _http_probe
+from src.tools.http_monitor import get_http_monitor
+from src.tools.http_window import build_http_observation
 from src.pktgen.adapter import PKTGEN_TOOLS
 from src.trex.tools import TREX_TOOLS
 
@@ -105,6 +108,7 @@ def traffic_send(
     # build_rtt_observation adds rtt_during + attack_window + observation_window
     # so the LLM can tell whether the observation actually covered the attack.
     result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
+    result.update(build_http_observation(get_http_monitor(), t0, mode="scapy"))
 
     return result
 
@@ -200,6 +204,7 @@ def mixed_traffic_send(
 
     # Collect RTT samples during the attack window (if monitor is running).
     result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
+    result.update(build_http_observation(get_http_monitor(), t0, mode="scapy"))
 
     return result
 
@@ -273,12 +278,100 @@ def stop_ping_monitor() -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+# ── HTTP business dial-testing tools ───────────────────────────────
+
+@tool
+def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str, Any]:
+    """Probe an HTTP endpoint (allowlist-gated) and return timing/status metrics.
+
+    Measures per-phase timing (DNS/TCP/TLS), TTFB (time-to-first-byte), total
+    response time, HTTP status code, download size/speed, and classifies errors
+    (timeout / connection_refused / dns_error / tls_error).
+
+    Args:
+        url: Full http/https URL to probe (host must be in allowlist).
+        method: HTTP method (default "GET").
+        timeout_s: Per-request timeout in seconds (default 5).
+
+    Returns:
+        Dict with success, status_code, dns_ms, tcp_connect_ms, tls_ms,
+        ttfb_ms, total_ms, size_bytes, speed_bps, error_type.
+    """
+    return _http_probe(url=url, method=method, timeout_s=timeout_s)
+
+
+@tool
+def start_http_monitor(url: str | None = None, interval_s: float = 1.0) -> dict[str, Any]:
+    """Start continuous background HTTP probing of the business endpoint.
+
+    Call ONCE at experiment start (alongside start_ping_monitor). A background
+    thread repeatedly probes the endpoint via curl. Use read_http_stats to
+    query the latest business-health stats at any time.
+
+    Args:
+        url: Full http/https URL (default: http.url from experiment.json).
+        interval_s: Seconds between probes (default 1.0).
+
+    Returns:
+        Dict with success, message, url.
+    """
+    url = url or os.environ.get("HTTP_URL", "")
+    if not url:
+        return {"success": False, "error": "no HTTP URL configured (set http.url or pass url)"}
+    try:
+        timeout_s = float(os.environ.get("HTTP_TIMEOUT_S", "5"))
+        get_http_monitor().start(url, interval_s=interval_s, timeout_s=timeout_s)
+        return {"success": True, "message": f"HTTP monitor started for {url}", "url": url}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@tool
+def read_http_stats(window_s: float = 5.0) -> dict[str, Any]:
+    """Read latest HTTP business-health stats from the background monitor.
+
+    Call before and after traffic tools to observe HTTP degradation caused by
+    the attack (success_rate drop, TTFB rise, 5xx / connection errors).
+
+    Args:
+        window_s: Time window in seconds for stats (default 5.0).
+
+    Returns:
+        Dict with monitor_active, total_requests, success_rate, avg_ttfb_ms,
+        max_ttfb_ms, avg_total_ms, status_codes, five_xx_rate, error counts.
+    """
+    try:
+        return get_http_monitor().get_stats(window_s=window_s)
+    except Exception as e:
+        return {"monitor_active": False, "error": str(e)}
+
+
+@tool
+def stop_http_monitor() -> dict[str, Any]:
+    """Stop the background HTTP monitor.
+
+    Call at the end of the experiment to clean up resources.
+
+    Returns:
+        Dict with success, message.
+    """
+    try:
+        get_http_monitor().stop()
+        return {"success": True, "message": "HTTP monitor stopped"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # Tool list for create_agent
 EXPERIMENT_TOOLS = [
     pcap_profile,
     start_ping_monitor,
     read_ping_stats,
     stop_ping_monitor,
+    http_probe,
+    start_http_monitor,
+    read_http_stats,
+    stop_http_monitor,
     traffic_send,
     mixed_traffic_send,
     ping_rtt,

@@ -99,8 +99,8 @@ DEFAULTS: dict = {
     "instruction": "",
 }
 
-# Config sections read as nested dicts (attack/pktgen/trex).
-_SECTION_KEYS = ("attack", "pktgen", "trex")
+# Config sections read as nested dicts (attack/pktgen/trex/http).
+_SECTION_KEYS = ("attack", "pktgen", "trex", "http")
 
 
 def _read_config_file() -> dict:
@@ -280,6 +280,24 @@ def parse_args() -> argparse.Namespace:
         default=cfg["instruction"],
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
     )
+    # ── HTTP dial-testing options ───────────────────────────────────
+    http_cfg = cfg.get("http", {})
+    parser.add_argument(
+        "--http-url", default=http_cfg.get("url"),
+        help="HTTP business endpoint URL for dial-testing",
+    )
+    parser.add_argument(
+        "--http-interval", type=float, default=http_cfg.get("interval_s", 1.0),
+        help="Seconds between HTTP probes (default 1.0)",
+    )
+    parser.add_argument(
+        "--http-timeout", type=float, default=http_cfg.get("timeout_s", 5.0),
+        help="Per-request HTTP timeout in seconds (default 5)",
+    )
+    parser.add_argument(
+        "--http-method", default=http_cfg.get("method", "GET"),
+        help="HTTP method for dial-testing (default GET)",
+    )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
         parser.error(
@@ -391,6 +409,13 @@ def main() -> None:
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
     if args.trex_python:
         os.environ["TREX_PYTHON"] = args.trex_python
+
+    # ── HTTP dial-testing configuration ──
+    if args.http_url:
+        os.environ["HTTP_URL"] = args.http_url
+    os.environ["HTTP_INTERVAL_S"] = str(args.http_interval)
+    os.environ["HTTP_TIMEOUT_S"] = str(args.http_timeout)
+    os.environ["HTTP_METHOD"] = args.http_method
 
     pktgen_host = args.pktgen_host or get_pktgen_host()
     pktgen_port = args.pktgen_port or get_pktgen_port()
