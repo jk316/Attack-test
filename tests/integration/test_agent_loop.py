@@ -12,7 +12,7 @@ class TestAgentState:
         state: AgentState = dict(
             iteration=0,
                 rtt_history=[],
-            best_rtt=0.0,
+            best_reward=0.0,
             consecutive_no_improve=0,
             reward=0.0,
             target_ip="10.99.80.160",
@@ -21,7 +21,7 @@ class TestAgentState:
         )
         assert state["iteration"] == 0
         assert state["rtt_history"] == []
-        assert state["best_rtt"] == 0.0
+        assert state["best_reward"] == 0.0
         assert state["target_ip"] == "10.99.80.160"
 
     def test_state_lookup_by_key(self):
@@ -31,7 +31,7 @@ class TestAgentState:
         state: AgentState = dict(
             iteration=1,
                 rtt_history=[],
-            best_rtt=0.0,
+            best_reward=0.0,
             consecutive_no_improve=0,
             reward=0.0,
             target_ip="10.99.80.160",
@@ -50,7 +50,7 @@ class TestAgentState:
 
 
 class TestRewardComputation:
-    """Verify reward = avg_rtt_ms - penalty(loss_pct)."""
+    """Verify the unified reward formula: avg_rtt_ms + loss_pct * 10."""
 
     def test_reward_zero_loss(self):
         from src.agent.state import compute_reward
@@ -62,7 +62,7 @@ class TestRewardComputation:
         from src.agent.state import compute_reward
 
         reward = compute_reward(avg_rtt_ms=5.0, loss_pct=20.0)
-        assert reward == 3.0  # penalty = 20 * 0.1 = 2.0
+        assert reward == 205.0  # loss is a positive signal: 20 * 10 = 200
 
     def test_reward_all_packets_lost(self):
         from src.agent.state import compute_reward
@@ -91,27 +91,27 @@ class TestStopConditions:
 
 
 class TestBestUpdate:
-    """Verify best_rtt tracking and consecutive_no_improve counter."""
+    """Verify best_reward tracking and consecutive_no_improve counter."""
 
     def test_new_best_resets_counter(self):
         from src.agent.state import update_best
 
-        state = {"best_rtt": 3.0, "consecutive_no_improve": 3, "rtt_history": [5.0]}
+        state = {"best_reward": 3.0, "consecutive_no_improve": 3, "reward": 5.0}
         update_best(state)
-        assert state["best_rtt"] == 5.0
+        assert state["best_reward"] == 5.0
         assert state["consecutive_no_improve"] == 0
 
     def test_no_improvement_increments_counter(self):
         from src.agent.state import update_best
 
-        state = {"best_rtt": 5.0, "consecutive_no_improve": 2, "rtt_history": [3.0]}
+        state = {"best_reward": 5.0, "consecutive_no_improve": 2, "reward": 3.0}
         update_best(state)
-        assert state["best_rtt"] == 5.0  # unchanged
+        assert state["best_reward"] == 5.0  # unchanged
         assert state["consecutive_no_improve"] == 3
 
-    def test_empty_history_defaults(self):
+    def test_empty_reward_defaults(self):
         from src.agent.state import update_best
 
-        state = {"best_rtt": 0.0, "consecutive_no_improve": 0, "rtt_history": []}
+        state = {"best_reward": 0.0, "consecutive_no_improve": 0}
         update_best(state)
         assert state["consecutive_no_improve"] == 1  # 0.0 not > 0.0, increments

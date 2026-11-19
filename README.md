@@ -22,6 +22,12 @@
 3. **HITL 人工审批**——所有「产生流量」的工具都会在 `interrupt()` 处暂停，等待操作员显式批准；
 4. **禁止**广播 / 组播、禁止伪造 `src_ip`、禁止无限循环发送。
 
+### Web 控制台安全声明（007-1 决议）
+
+- **仅限可信内网**：`uvicorn backend.server:app` 启动的 Web 控制台**不提供任何身份认证**——任何能访问该地址的人都可以查看实验、启动实验并做出 HITL 审批。请仅在已授权的可信内网环境中运行，**严禁**暴露到公网（启动日志与控制台页面均有一致的警告声明）。
+- **无自动批准路径**：Web 端不存在任何自动批准入口；审批决定的唯一来源是操作员点击「批准 / 拒绝」按钮，拒绝即中止该次流量发送（与 CLI 的 HITL 门禁一致，不可绕过）。
+- **单客户端会话模型**：每个浏览器客户端（client_id）同一时刻至多一个运行中实验；审批与停止仅对该实验的发起客户端生效，其他客户端的操作会被拒绝。
+
 使用本项目即表示你已获得目标环境的合法授权，并对自己的使用行为负责。
 
 ---
@@ -96,7 +102,7 @@ flowchart TD
     CFG --> PKG
 ```
 
-**核心闭环**：LLM 推理 → 调用流量工具（HITL 审批）→ 采集 RTT 观测 → 依据 `reward = avg_rtt_ms − penalty(loss)` 调参 → 重复，直到 `max_iters` 或连续 `no_improve_limit` 轮无提升。
+**核心闭环**：LLM 推理 → 调用流量工具（HITL 审批）→ 采集 RTT 观测 → 依据统一奖励 `reward = avg_rtt_ms + loss_pct × 10` 调参 → 重复，直到 `max_iters` 或连续 `no_improve_limit` 轮无提升（运行时硬裁决强制停止）。
 
 ---
 
@@ -225,7 +231,7 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 | `--target-ip` | `10.99.80.160` | 流量与 ping 目标（必须在 allowlist） |
 | `--max-iters` | 20（探索模式 40） | 最大迭代轮数 |
 | `--no-improve-limit` | 5 | 连续 N 轮无改善即早停 |
-| `--auto-approve` | `False` | 自动批准所有 HITL 请求 |
+| `--auto-approve` | `False` | 自动批准所有 HITL 请求（**仅限 dry-run 场景**：与 `--pktgen-live`/`--trex-live` 互斥，实发模式必须人工逐次审批） |
 | `--duration` | 10 | Scapy 攻击时长（秒） |
 | `--pps` | 100 | Scapy 每秒包数 |
 | `--packet-size` | 64 | 包负载字节数 |
@@ -264,17 +270,19 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 | iat_jitter_ms | 20 | `MAX_IAT_JITTER_MS` |
 | mixed 流数 | 100 | `MAX_STREAMS` |
 | Pktgen rate | 100% | skill YAML 约束 |
-| Pktgen duration | 60000 ms | `_wait_for_attack` 封顶 |
+| Pktgen duration | 60000 ms | 工具层拒绝（>60000）+ 引擎边界钳制（`DURATION_LIMIT_MS`） |
 
 ### HITL / allowlist 门控矩阵
 
 | 技能 | allowlist（`dst_ip`） | HITL |
 |------|:---:|:---:|
 | `udp_flood` / `tcp_flood` / `icmp_flood` | ✅ | ✅ |
-| `arp_flood` | ❌（L2 无 IP） | ✅ |
+| `arp_flood` | ❌（L2 无 IP；提供 `dst_ip` 时仍须过 allowlist） | ✅ |
 | `range_based_scan` / `packet_sequence_generation` | ✅ | ✅ |
 | `pcap_replay` | ❌（使用 PCAP 自带 dst） | ✅ |
 | `stats_monitoring` / `safe_stop_and_reset` | N/A | ❌ |
+
+> 审批内容统一结构 `{message, params, scope}`（scope ∈ scapy_traffic / pktgen_traffic / trex_script），CLI 与 Web 共用同一呈现路径。
 
 ### 其他安全约束
 

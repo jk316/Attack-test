@@ -106,6 +106,16 @@ def validate_params(
     )
 
 
+def _clamped_fields(requested: dict, actual: dict) -> list[str]:
+    """Return the field names whose requested value differs from the clamped one.
+
+    Pure comparison helper（002-1 / 契约 tool-result-json.md §1）——空列表
+    表示未发生任何钳制。
+    """
+    return [name for name in requested
+            if requested.get(name) != actual.get(name)]
+
+
 def traffic_send_tool(
     dst_ip: str,
     dst_port: int,
@@ -139,6 +149,17 @@ def traffic_send_tool(
     if not HAS_SCAPY:
         raise ImportError("Scapy is required for traffic_send_tool")
 
+    # 原请求值（002-1：钳制感知标注——在钳制前捕获）
+    requested_params = {
+        "dst_ip": dst_ip,
+        "dst_port": dst_port,
+        "duration_s": duration_s,
+        "pps": pps,
+        "packet_size": packet_size,
+        "flow_count": flow_count,
+        "iat_jitter_ms": iat_jitter_ms,
+    }
+
     # Validate and clamp parameters (raises ValueError on security violation)
     duration_s, pps, packet_size, flow_count, iat_jitter_ms = validate_params(
         dst_ip, dst_port, duration_s, pps, packet_size,
@@ -154,6 +175,7 @@ def traffic_send_tool(
         "flow_count": flow_count,
         "iat_jitter_ms": iat_jitter_ms,
     }
+    clamped = _clamped_fields(requested_params, params)
 
     # Build payload once
     payload = b"\x00" * packet_size
@@ -195,6 +217,8 @@ def traffic_send_tool(
     start_time = time.time()
     deadline = start_time + duration_s
     next_send = start_time
+    completed = True
+    interrupt_reason: str | None = None
 
     try:
         while time.time() < deadline:
@@ -224,7 +248,9 @@ def traffic_send_tool(
                 time.sleep(0.0001)
 
     except KeyboardInterrupt:
-        pass
+        # 002-3：截断标注——发送被中断时保留已发统计并明确标注未完整发送
+        completed = False
+        interrupt_reason = "keyboard_interrupt"
     finally:
         if raw_sock is not None:
             raw_sock.close()
@@ -235,9 +261,11 @@ def traffic_send_tool(
     elapsed = time.time() - start_time
     effective_pps = round(total_sent / elapsed, 2) if elapsed > 0 else 0.0
 
-    return {
+    result = {
         "success": True,
         "params": params,
+        "requested_params": requested_params,
+        "clamped": clamped,
         "packets_sent": {
             "total": total_sent,
             "per_flow": per_flow,
@@ -245,8 +273,12 @@ def traffic_send_tool(
         "elapsed_s": round(elapsed, 4),
         "effective_pps": effective_pps,
         "send_mode": send_mode,
+        "completed": completed,
         "errors": [],
     }
+    if interrupt_reason is not None:
+        result["interrupt_reason"] = interrupt_reason
+    return result
 
 
 if __name__ == "__main__":

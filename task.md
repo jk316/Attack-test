@@ -57,7 +57,7 @@
   D. 发送流量 traffic_send_tool
   E. 运行 ping_rtt_tool 获取 avg_rtt_ms、loss_pct
   F. 记录日志 log_tool
-  G. 根据 reward = avg_rtt_ms - penalty(loss_pct) 做下一轮调整
+  G. 根据统一奖励 reward = avg_rtt_ms + loss_pct × 10 做下一轮调整
 - 停止条件：达到 max_iters（默认 20）或 RTT 无提升连续 5 轮
 
 使用UV进行依赖管理

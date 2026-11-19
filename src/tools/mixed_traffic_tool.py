@@ -5,6 +5,7 @@ concurrent traffic streams with different protocols and percentages. Enforces
 strict security: IP.dst overwrite, protocol whitelist, no eval injection.
 """
 import json
+import os
 import random
 import socket
 import time
@@ -182,6 +183,13 @@ def validate_traffic_spec(spec: dict) -> list[dict]:
                 raise ValueError(
                     f"stream '{sid}': fields.{proto_name} must be a dict"
                 )
+            # FR-004（008-T010）：禁止源地址伪造——IP 层 src 字段不得自定义
+            if proto_name == "IP":
+                for key in field_dict:
+                    if str(key).lower() == "src":
+                        raise ValueError(
+                            f"stream '{sid}': IP.src 不允许自定义（禁止源 IP 伪造）"
+                        )
             _check_dangerous_values(field_dict, sid, proto_name)
 
         pct = stream.get("percentage")
@@ -218,6 +226,7 @@ def mixed_traffic_send_tool(
     traffic_spec_json: str,
     duration_s: int = 5,
     pps: int = 100,
+    iat_jitter_ms: int | None = None,
     iface: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
@@ -229,6 +238,8 @@ def mixed_traffic_send_tool(
         traffic_spec_json: JSON string describing traffic streams.
         duration_s: Send duration in seconds (max 20).
         pps: Total packets per second across all streams (max 20000).
+        iat_jitter_ms: Random jitter on inter-packet interval in ms (0-20).
+                None reads env ATK_IAT_JITTER_MS (default 0).
         iface: Optional network interface for send().
         verbose: Enable Scapy verbose output.
 
@@ -238,6 +249,15 @@ def mixed_traffic_send_tool(
     """
     if not HAS_SCAPY:
         raise ImportError("Scapy is required for mixed_traffic_send_tool")
+
+    # 原请求值（002-1 钳制标注：在钳制/env 解析前捕获）
+    requested_params = {
+        "dst_ip": dst_ip,
+        "duration_s": duration_s,
+        "pps": pps,
+        "iat_jitter_ms": (iat_jitter_ms if iat_jitter_ms is not None
+                          else int(os.environ.get("ATK_IAT_JITTER_MS", "0"))),
+    }
 
     # 1. Validate target IP
     validate_target(dst_ip)
@@ -250,6 +270,13 @@ def mixed_traffic_send_tool(
     if duration_s <= 0:
         raise ValueError(f"duration_s must be > 0, got {duration_s}")
     duration_s = min(duration_s, MAX_DURATION_S)
+
+    # 2b. 抖动参数化（002-2）：None → env ATK_IAT_JITTER_MS，缺省 0；钳制 0–20
+    if iat_jitter_ms is None:
+        iat_jitter_ms = int(os.environ.get("ATK_IAT_JITTER_MS", "0"))
+    if iat_jitter_ms < 0:
+        raise ValueError(f"iat_jitter_ms must be >= 0, got {iat_jitter_ms}")
+    iat_jitter_ms = min(iat_jitter_ms, MAX_IAT_JITTER_MS)
 
     # 3. Check JSON length
     if len(traffic_spec_json) > MAX_JSON_LENGTH:
@@ -291,6 +318,8 @@ def mixed_traffic_send_tool(
     start_time = time.time()
     deadline = start_time + duration_s
     next_send = start_time
+    completed = True
+    interrupt_reason: str | None = None
 
     try:
         while time.time() < deadline:
@@ -314,12 +343,14 @@ def mixed_traffic_send_tool(
                 per_stream_counts[sid] += 1
                 total_sent += 1
 
-                jitter_s = random.uniform(-MAX_IAT_JITTER_MS, MAX_IAT_JITTER_MS) / 1000.0
+                jitter_s = random.uniform(-iat_jitter_ms, iat_jitter_ms) / 1000.0
                 next_send = time.time() + max(base_inter + jitter_s, 0)
             else:
                 time.sleep(0.0001)
     except KeyboardInterrupt:
-        pass
+        # 002-3 截断标注：保留已发统计并明确标注未完整发送
+        completed = False
+        interrupt_reason = "keyboard_interrupt"
     finally:
         if raw_sock is not None:
             raw_sock.close()
@@ -327,17 +358,26 @@ def mixed_traffic_send_tool(
     elapsed = time.time() - start_time
     effective_pps = round(total_sent / elapsed, 2) if elapsed > 0 else 0.0
 
-    return {
+    params = {
+        "dst_ip": dst_ip,
+        "duration_s": duration_s,
+        "pps": pps,
+        "iat_jitter_ms": iat_jitter_ms,
+        "streams": [
+            {"stream_id": s["stream_id"], "percentage": s["percentage"]}
+            for s in streams
+        ],
+    }
+    clamped = [
+        name for name in ("duration_s", "pps", "iat_jitter_ms")
+        if requested_params.get(name) != params[name]
+    ]
+
+    result = {
         "success": True,
-        "params": {
-            "dst_ip": dst_ip,
-            "duration_s": duration_s,
-            "pps": pps,
-            "streams": [
-                {"stream_id": s["stream_id"], "percentage": s["percentage"]}
-                for s in streams
-            ],
-        },
+        "params": params,
+        "requested_params": requested_params,
+        "clamped": clamped,
         "packets_sent": {
             "total": total_sent,
             "per_stream": per_stream_counts,
@@ -345,8 +385,12 @@ def mixed_traffic_send_tool(
         "elapsed_s": round(elapsed, 4),
         "effective_pps": effective_pps,
         "raw_socket": use_raw,
+        "completed": completed,
         "errors": [],
     }
+    if interrupt_reason is not None:
+        result["interrupt_reason"] = interrupt_reason
+    return result
 
 
 if __name__ == "__main__":

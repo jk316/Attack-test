@@ -92,6 +92,230 @@ class TestAllowlistEnforcement:
 
             mock_validate.assert_not_called()
 
+
+class TestLiveWaitAndObservation:
+    """US2（005-T011）：live 同步等待封顶 60s + RTT 观测字段与 mode 标注。"""
+
+    def test_live_execute_sleeps_for_duration(self):
+        """live 下同步等待时长 = min(duration, 60000) ms。"""
+        import time as time_mod
+
+        from src.pktgen.adapter import _execute_skill
+
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
+             patch("src.pktgen.adapter.get_pktgen_host", return_value="10.0.0.1"), \
+             patch("src.pktgen.adapter.get_pktgen_port", return_value=9999), \
+             patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
+             patch.object(time_mod, "sleep") as mock_sleep:
+            mock_live = MagicMock(return_value={"success": True, "mode": "live"})
+            mock_imp.return_value = (MagicMock(), mock_live)
+
+            _execute_skill("udp_flood", {"duration": 3000})
+
+            mock_sleep.assert_called_once_with(3.0)
+
+    def test_live_execute_wait_capped_at_60s(self):
+        """duration=120000 时等待封顶 60.0s（G1 拒绝后此路径仅直接调用可见）。"""
+        import time as time_mod
+
+        from src.pktgen.adapter import _execute_skill
+
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
+             patch("src.pktgen.adapter.get_pktgen_host", return_value="10.0.0.1"), \
+             patch("src.pktgen.adapter.get_pktgen_port", return_value=9999), \
+             patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
+             patch.object(time_mod, "sleep") as mock_sleep:
+            mock_live = MagicMock(return_value={"success": True, "mode": "live"})
+            mock_imp.return_value = (MagicMock(), mock_live)
+
+            _execute_skill("udp_flood", {"duration": 120000})
+
+            mock_sleep.assert_called_once_with(60.0)
+
+    def test_live_execute_duration_zero_no_wait(self):
+        """duration=0（永久发包）不等待。"""
+        import time as time_mod
+
+        from src.pktgen.adapter import _execute_skill
+
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
+             patch("src.pktgen.adapter.get_pktgen_host", return_value="10.0.0.1"), \
+             patch("src.pktgen.adapter.get_pktgen_port", return_value=9999), \
+             patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
+             patch.object(time_mod, "sleep") as mock_sleep:
+            mock_live = MagicMock(return_value={"success": True, "mode": "live"})
+            mock_imp.return_value = (MagicMock(), mock_live)
+
+            _execute_skill("udp_flood", {"duration": 0})
+
+            mock_sleep.assert_not_called()
+
+    def test_dry_run_result_has_observation_fields(self):
+        """dry-run 工具结果含 attack_window/observation_window，mode=dry_run。"""
+        from src.pktgen.adapter import pktgen_udp_flood
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec:
+            mock_exec.return_value = {"success": True, "mode": "dry_run"}
+            result = pktgen_udp_flood.invoke({"dst_ip": ALLOWLISTED_IP, "rate": 50})
+
+        assert result["success"] is True
+        assert "attack_window" in result
+        assert result["attack_window"]["mode"] == "dry_run"
+        assert "observation_window" in result
+        assert "covers_attack_window" in result["observation_window"]
+
+    def test_live_result_has_observation_fields_live_mode(self):
+        """live 工具结果含观测字段且 mode=live。"""
+        import time as time_mod
+
+        from src.pktgen.adapter import _run_traffic_tool
+
+        with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
+             patch("src.pktgen.adapter.validate_target"), \
+             patch("src.pktgen.adapter.interrupt", return_value=True) as mock_int, \
+             patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
+             patch("src.pktgen.adapter.get_ping_monitor"), \
+             patch.object(time_mod, "sleep"):
+            mock_exec = MagicMock(return_value={"success": True, "mode": "live"})
+            mock_imp.return_value = (MagicMock(), mock_exec)
+
+            result = _run_traffic_tool(
+                "udp_flood",
+                {"dst_ip": ALLOWLISTED_IP, "rate": 50, "duration": 5000},
+                dst_ip=ALLOWLISTED_IP,
+            )
+
+            mock_int.assert_called_once()
+            assert result["success"] is True
+            assert result["attack_window"]["mode"] == "live"
+            assert "observation_window" in result
+            assert "covers_attack_window" in result["observation_window"]
+
+
+class TestReplacedMacDetail:
+    """G5（005-T014/T016）：packet_sequence 的 MAC 替换明细进结果。"""
+
+    REAL_MAC = "f0:c4:78:4c:a5:55"
+
+    def _invoke_sequence(self, entries: list[dict]) -> dict:
+        from src.pktgen.adapter import pktgen_packet_sequence
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec, \
+             patch("src.pktgen.adapter._hitl_gate", return_value=True), \
+             patch("src.pktgen.adapter.validate_target"), \
+             patch("src.pktgen.adapter._get_dst_mac", return_value=self.REAL_MAC):
+            mock_exec.return_value = {"success": True, "mode": "dry_run"}
+            result = pktgen_packet_sequence.invoke({
+                "dst_ip": ALLOWLISTED_IP,
+                "sequences": json.dumps(entries),
+                "rate": 50,
+            })
+            return result
+
+    def test_fabricated_mac_replaced_with_detail(self):
+        """伪造 MAC（全 0-1 模式）被替换且结果含 replaced_mac 明细。"""
+        entries = [{
+            "eth_dst_addr": "00:00:00:00:00:01",
+            "eth_src_addr": "00:11:12:34:56:78",
+            "ip_dst_addr": ALLOWLISTED_IP,
+            "ip_src_addr": "10.0.0.1",
+            "sport": 0, "dport": 0,
+            "ethType": "0x0800", "ipProto": 1,
+            "vlanid": 0, "pktSize": 64,
+        }]
+        result = self._invoke_sequence(entries)
+
+        assert result["success"] is True
+        assert "replaced_mac" in result
+        assert result["replaced_mac"] == [{
+            "index": 0,
+            "from": "00:00:00:00:00:01",
+            "to": self.REAL_MAC,
+        }]
+
+    def test_missing_and_empty_mac_replaced_with_detail(self):
+        """缺失/空串 eth_dst_addr 触发替换且明细含 index/from/to。"""
+        base = {
+            "eth_src_addr": "00:11:12:34:56:78",
+            "ip_dst_addr": ALLOWLISTED_IP,
+            "ip_src_addr": "10.0.0.1",
+            "sport": 0, "dport": 0,
+            "ethType": "0x0800", "ipProto": 1,
+            "vlanid": 0, "pktSize": 64,
+        }
+        entry_missing = dict(base)
+        entry_empty = dict(base, eth_dst_addr="")
+        result = self._invoke_sequence([entry_missing, entry_empty])
+
+        assert "replaced_mac" in result
+        details = result["replaced_mac"]
+        assert len(details) == 2
+        assert details[0]["index"] == 0 and details[0]["from"] == ""
+        assert details[0]["to"] == self.REAL_MAC
+        assert details[1]["index"] == 1 and details[1]["from"] == ""
+        assert details[1]["to"] == self.REAL_MAC
+
+    def test_real_mac_zero_misreplacement(self):
+        """真实 MAC 零误替换，且结果不含 replaced_mac（契约：仅替换时出现）。"""
+        entries = [{
+            "eth_dst_addr": self.REAL_MAC,
+            "eth_src_addr": "00:11:12:34:56:78",
+            "ip_dst_addr": ALLOWLISTED_IP,
+            "ip_src_addr": "10.0.0.1",
+            "sport": 0, "dport": 0,
+            "ethType": "0x0800", "ipProto": 1,
+            "vlanid": 0, "pktSize": 64,
+        }]
+        result = self._invoke_sequence(entries)
+
+        assert result["success"] is True
+        assert "replaced_mac" not in result
+
+
+class TestArpFloodDstIpAllowlist:
+    """G2（005-T006/T008）：arp_flood 提供 dst_ip 时必须过 allowlist。"""
+
+    def test_arp_non_allowlist_dst_ip_rejected(self):
+        """提供非白名单 dst_ip 时拒绝：success=false、错误说明、零执行。"""
+        from src.pktgen.adapter import pktgen_arp_flood
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec:
+            mock_exec.return_value = {"success": True}
+
+            result = pktgen_arp_flood.invoke({"rate": 50, "dst_ip": "192.168.1.99"})
+
+        assert result["success"] is False
+        assert "allowlist" in result["error"]
+        mock_exec.assert_not_called()
+
+    def test_arp_allowlisted_dst_ip_passes_and_samples_rtt(self):
+        """白名单 dst_ip 通过校验且触发 RTT 采样。"""
+        from src.pktgen.adapter import pktgen_arp_flood
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec, \
+             patch("src.pktgen.adapter._sample_rtt") as mock_sample:
+            mock_exec.return_value = {"success": True}
+            mock_sample.return_value = {"success": True, "rtt_during": None}
+
+            result = pktgen_arp_flood.invoke({"rate": 50, "dst_ip": ALLOWLISTED_IP})
+
+        assert result["success"] is True
+        mock_sample.assert_called_once()
+
+    def test_arp_without_dst_ip_executes_and_skips_sampling(self):
+        """不提供 dst_ip 时正常执行且跳过 RTT 采样。"""
+        from src.pktgen.adapter import pktgen_arp_flood
+
+        with patch("src.pktgen.adapter._execute_skill") as mock_exec, \
+             patch("src.pktgen.adapter._sample_rtt") as mock_sample:
+            mock_exec.return_value = {"success": True}
+
+            result = pktgen_arp_flood.invoke({"rate": 50})
+
+        assert result["success"] is True
+        mock_exec.assert_called_once()
+        mock_sample.assert_not_called()
+
     def test_stop_and_reset_skips_allowlist(self):
         """pktgen_stop_and_reset 不应调用 allowlist 校验。"""
         from src.pktgen.adapter import pktgen_stop_and_reset
@@ -330,19 +554,24 @@ class TestRttSampling:
     """RTT 采样附加测试。"""
 
     def test_rtt_attached_when_monitor_running(self):
-        """PingMonitor 运行时，RTT 采样应附加到结果中。"""
+        """PingMonitor 运行时，RTT 采样应附加到结果中。
+
+        攻击窗口 ≥1s（t0 取 5 秒前）——契约不变式：短窗口（<1s）时
+        rtt_during 为 null（003 contracts/rtt-observation.md §5）。
+        """
         from src.pktgen.adapter import _sample_rtt
         import time
 
+        t0 = time.time() - 5.0
         mock_monitor = MagicMock()
         mock_monitor.is_running.return_value = True
         mock_monitor.get_samples_since.return_value = [
-            {"ts": time.time(), "rtt_ms": 10.0, "sent": 1, "received": 1},
-            {"ts": time.time(), "rtt_ms": 20.0, "sent": 1, "received": 1},
+            {"ts": t0 + 1, "rtt_ms": 10.0, "sent": 1, "received": 1},
+            {"ts": t0 + 2, "rtt_ms": 20.0, "sent": 1, "received": 1},
         ]
 
         with patch("src.pktgen.adapter.get_ping_monitor", return_value=mock_monitor):
-            result = _sample_rtt({"success": True}, time.time())
+            result = _sample_rtt({"success": True}, t0)
 
         assert "rtt_during" in result
         assert result["rtt_during"]["avg_rtt_ms"] == 15.0
@@ -472,21 +701,32 @@ class TestRunTrafficToolIntegration:
     """_run_traffic_tool 集成流程测试。"""
 
     def test_full_live_flow_calls_all_steps(self):
-        """live 模式完整流程：allowlist → HITL → execute → RTT。"""
+        """live 模式完整流程：allowlist → HITL → execute → RTT。
+
+        mock 执行的攻击窗口 ≈0s（短窗口）——按 003 契约不变式
+        rtt_during 为 null，故此处注入合成观测验证「执行 → 采样 → 合并」
+        流程；真实 _sample_rtt 行为由 test_rtt_attached_* 覆盖。
+        """
         from src.pktgen.adapter import _run_traffic_tool
+
+        synthetic_observation = {
+            "rtt_during": {"avg_rtt_ms": 30.0, "samples": [], "loss_pct": 0.0},
+            "attack_window": {"mode": "live", "start": {}, "end": {}},
+            "observation_window": {"covers_attack_window": True},
+        }
+
+        def fake_sample(result, t0):
+            result.update(synthetic_observation)
+            return result
 
         with patch("src.pktgen.adapter.is_dry_run", return_value=False), \
              patch("src.pktgen.adapter.validate_target") as mock_val, \
              patch("src.pktgen.adapter.interrupt", return_value=True) as mock_int, \
              patch("src.pktgen.adapter._import_pktgen") as mock_imp, \
-             patch("src.pktgen.adapter.get_ping_monitor") as mock_pm:
+             patch("src.pktgen.adapter.get_ping_monitor"), \
+             patch("src.pktgen.adapter._sample_rtt", side_effect=fake_sample):
             mock_exec = MagicMock(return_value={"success": True, "mode": "live"})
             mock_imp.return_value = (MagicMock(), mock_exec)
-
-            mock_monitor = MagicMock()
-            mock_monitor.is_running.return_value = True
-            mock_monitor.get_samples_since.return_value = [{"ts": 1.0, "rtt_ms": 30.0, "sent": 1, "received": 1}]
-            mock_pm.return_value = mock_monitor
 
             result = _run_traffic_tool(
                 "udp_flood",

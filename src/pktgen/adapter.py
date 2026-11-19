@@ -104,6 +104,14 @@ _SKILLS_WITH_HITL = {
     "range_based_scan", "packet_sequence_generation", "pcap_replay",
 }
 
+# ── Safety gate constants (005: G1 / G3 / D9) ─────────────────────────
+DURATION_LIMIT_MS = 60000  # 宪法附加约束「Pktgen duration≤60000ms」；0 = 永久发包（合法）
+
+# 合法源地址（D9）：experiment.json pktgen.src_ip 的默认值（005-T004），
+# main.py 经 env PKTGEN_SRC_IP 注入；适配器调用时读取 env 优先、回退此默认，
+# 覆盖 vendored YAML 的伪造默认 192.168.1.1/24。
+_DEFAULT_CONFIGURED_SRC_IP = "10.99.80.10/24"
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 _pktgen_exec_cache: tuple | None = None
@@ -185,6 +193,18 @@ def _execute_skill(skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
     # Strip None values so Pktgen uses its own defaults
     clean_params = {k: v for k, v in params.items() if v is not None}
 
+    # 008-T008：下发硬件前的 duration 显式钳制（宪法附加约束 duration≤60000ms）。
+    # 工具层已按 005-G1 拒绝 >60000 请求；此处为引擎边界守卫，
+    # 保证任何内部调用方下发的 duration 永不超过上限。
+    duration = clean_params.get("duration")
+    if (isinstance(duration, (int, float)) and not isinstance(duration, bool)
+            and duration > DURATION_LIMIT_MS):
+        logger.warning(
+            "Clamping duration %s → %s ms before handing to Pktgen engine",
+            duration, DURATION_LIMIT_MS,
+        )
+        clean_params["duration"] = DURATION_LIMIT_MS
+
     try:
         if is_dry_run():
             logger.info("Dry-run: skill=%s params=%s", skill_name, clean_params)
@@ -237,8 +257,9 @@ def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
         return True
     approval = interrupt({
         "message": f"[HITL] Approve Pktgen '{skill_name}' execution?",
-        "mode": "live",
-        "params": params,
+        # 008 统一审批结构：mode 移入 params（message/params/scope 三键齐全）
+        "params": {"skill": skill_name, "mode": "live", **params},
+        "scope": "pktgen_traffic",
     })
     return bool(approval)
 
@@ -259,6 +280,59 @@ def _sample_rtt(result: dict[str, Any], t0: float) -> dict[str, Any]:
     return result
 
 
+def _configured_src_ip() -> str:
+    """D9：返回合法源地址（env PKTGEN_SRC_IP 优先，回退配置默认）。
+
+    在编译前填入技能参数，覆盖 vendored YAML 的伪造默认源 192.168.1.1/24；
+    操作员可按实验拓扑修改 experiment.json pktgen.src_ip（main.py 注入同名 env）。
+    """
+    return os.environ.get("PKTGEN_SRC_IP") or _DEFAULT_CONFIGURED_SRC_IP
+
+
+def _default_rate() -> float:
+    """008-T012/005-G4：rate 缺省时调用时读 env PKTGEN_RATE，回退签名默认 50。"""
+    try:
+        return float(os.environ.get("PKTGEN_RATE", "50"))
+    except ValueError:
+        return 50.0
+
+
+def _default_duration_ms() -> int:
+    """008-T012/005-G4：duration 缺省时调用时读 env PKTGEN_DURATION_MS，回退签名默认 5000。"""
+    try:
+        return int(os.environ.get("PKTGEN_DURATION_MS", "5000"))
+    except ValueError:
+        return 5000
+
+
+def _src_ip_rejection(skill_name: str) -> dict[str, Any]:
+    """G3：LLM 传入 src_ip 的拒绝结果（禁止源 IP 伪造）。"""
+    return {
+        "success": False,
+        "skill": skill_name,
+        "mode": "unknown",
+        "error": "src_ip 不允许自定义（禁止源 IP 伪造；"
+                 "合法源地址来自配置 PKTGEN_SRC_IP）",
+    }
+
+
+def _validate_traffic_params(skill_name: str, params: dict[str, Any]) -> dict[str, Any] | None:
+    """G1 前置校验（执行/编译前）：duration 上限违规返回错误结果，合规返回 None。
+
+    校验必须先于 allowlist / HITL / 编译执行（data-model 状态流转），
+    违规即止——零编译零流量。
+    """
+    duration = params.get("duration")
+    if duration is not None and duration > DURATION_LIMIT_MS:
+        return {
+            "success": False,
+            "skill": skill_name,
+            "mode": "unknown",
+            "error": f"duration {duration} exceeds maximum {DURATION_LIMIT_MS} ms",
+        }
+    return None
+
+
 def _run_traffic_tool(
     skill_name: str,
     params: dict[str, Any],
@@ -266,11 +340,15 @@ def _run_traffic_tool(
 ) -> dict[str, Any]:
     """Common execution path for traffic-generating Pktgen tools.
 
-    1. Allowlist check (if *dst_ip* provided)
-    2. HITL gate
-    3. Execute skill
-    4. RTT sampling
+    1. Duration 上限校验（G1，失败即止）
+    2. Allowlist check (if *dst_ip* provided)
+    3. HITL gate
+    4. Execute skill
+    5. RTT sampling
     """
+    error_result = _validate_traffic_params(skill_name, params)
+    if error_result is not None:
+        return error_result
     if skill_name in _SKILLS_WITH_DST_IP:
         _apply_allowlist(dst_ip, skill_name)
     if skill_name in _SKILLS_WITH_HITL:
@@ -288,8 +366,8 @@ def _run_traffic_tool(
 @tool
 def pktgen_udp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     dport: int | None = None,
     sport: int | None = None,
     pktSize: int | None = None,
@@ -312,11 +390,16 @@ def pktgen_udp_flood(
                 ``10.10.10.2`` (Pktgen default).
         rate: Packet rate as percentage of line-rate (0–100, default 50).
         duration: Traffic duration in **milliseconds** (0 = forever,
-                  default 5000 = 5 s).
+                  default 5000 = 5 s).  Requests above 60000 ms are REJECTED
+                  (hard limit; use 0 for forever and ``pktgen_stop_and_reset``
+                  to terminate).
         dport: UDP destination port (default 5678).
         sport: UDP source port (default 1234).
         pktSize: Packet size in bytes (64–1518, default 256).
-        src_ip: Source IP in CIDR notation (default ``192.168.1.1/24``).
+        src_ip: **Forbidden** — custom source IPs are rejected (no src-IP
+                forgery).  The legal source comes from configuration
+                (``PKTGEN_SRC_IP`` / experiment.json ``pktgen.src_ip``),
+                overriding the vendored default.
         count: Number of packets (0 = forever, default 0).
         burst: Tx burst size (default 128).
 
@@ -325,10 +408,14 @@ def pktgen_udp_flood(
         ``mode`` (dry_run/live), ``response`` (live only), and
         ``rtt_during`` (if ping monitor is active).
     """
+    if src_ip:
+        return _src_ip_rejection("udp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("udp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "dport": dport, "sport": sport, "pktSize": pktSize,
-        "src_ip": src_ip, "count": count, "burst": burst,
+        "src_ip": _configured_src_ip(), "count": count, "burst": burst,
     }, dst_ip=dst_ip)
 
 
@@ -337,8 +424,8 @@ def pktgen_udp_flood(
 @tool
 def pktgen_tcp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     dport: int | None = None,
     sport: int | None = None,
     tcp_flags: str = "ack",
@@ -356,13 +443,16 @@ def pktgen_tcp_flood(
     Args:
         dst_ip: Destination IP address (must be in allowlist).
         rate: Packet rate as percentage of line-rate (0–100, default 50).
-        duration: Traffic duration in **milliseconds** (default 5000).
+        duration: Traffic duration in **milliseconds** (default 5000;
+                  >60000 rejected; 0 = forever).
         dport: TCP destination port (default 5678).
         sport: TCP source port (default 1234).
         tcp_flags: TCP flags string — ``syn``, ``ack``, ``rst``, ``fin``,
                    or comma-separated like ``syn,ack``.  Default ``ack``.
         pktSize: Packet size in bytes (64–1518, default 256).
-        src_ip: Source IP in CIDR notation.
+        src_ip: **Forbidden** — custom source IPs are rejected (no src-IP
+                forgery); the legal source comes from configuration
+                (``PKTGEN_SRC_IP`` / experiment.json ``pktgen.src_ip``).
         count: Number of packets (0 = forever).
         burst: Tx burst size (default 128).
 
@@ -370,10 +460,14 @@ def pktgen_tcp_flood(
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
         ``mode``, ``response`` (live), ``rtt_during``.
     """
+    if src_ip:
+        return _src_ip_rejection("tcp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("tcp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
         "dport": dport, "sport": sport, "tcp_flags": tcp_flags,
-        "pktSize": pktSize, "src_ip": src_ip,
+        "pktSize": pktSize, "src_ip": _configured_src_ip(),
         "count": count, "burst": burst,
     }, dst_ip=dst_ip)
 
@@ -383,8 +477,8 @@ def pktgen_tcp_flood(
 @tool
 def pktgen_icmp_flood(
     dst_ip: str = "",
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     pktSize: int | None = None,
     ttl: int | None = None,
     src_ip: str | None = None,
@@ -401,10 +495,13 @@ def pktgen_icmp_flood(
     Args:
         dst_ip: Destination IP address (must be in allowlist).
         rate: Packet rate as percentage of line-rate (0–100, default 50).
-        duration: Traffic duration in **milliseconds** (default 5000).
+        duration: Traffic duration in **milliseconds** (default 5000;
+                  >60000 rejected; 0 = forever).
         pktSize: Packet size in bytes (64–1518, default 256).
         ttl: IP Time-To-Live (default 64).
-        src_ip: Source IP in CIDR notation.
+        src_ip: **Forbidden** — custom source IPs are rejected (no src-IP
+                forgery); the legal source comes from configuration
+                (``PKTGEN_SRC_IP`` / experiment.json ``pktgen.src_ip``).
         count: Number of packets (0 = forever).
         burst: Tx burst size (default 128).
 
@@ -412,9 +509,13 @@ def pktgen_icmp_flood(
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
         ``mode``, ``response`` (live), ``rtt_during``.
     """
+    if src_ip:
+        return _src_ip_rejection("icmp_flood")
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     return _run_traffic_tool("icmp_flood", {
         "dst_ip": dst_ip, "rate": rate, "duration": duration,
-        "pktSize": pktSize, "ttl": ttl, "src_ip": src_ip,
+        "pktSize": pktSize, "ttl": ttl, "src_ip": _configured_src_ip(),
         "count": count, "burst": burst,
     }, dst_ip=dst_ip)
 
@@ -423,8 +524,8 @@ def pktgen_icmp_flood(
 
 @tool
 def pktgen_arp_flood(
-    rate: float = 50.0,
-    duration: int = 5000,
+    rate: float | None = None,
+    duration: int | None = None,
     arp_type: str = "request",
     dst_ip: str = "",
     count: int | None = None,
@@ -440,15 +541,19 @@ def pktgen_arp_flood(
     The optional *dst_ip* is NOT sent to Pktgen (ARP has no IP fields);
     it is only used for RTT sampling via the PingMonitor against that target.
     Provide the same IP used for ``start_ping_monitor`` to correlate RTT
-    impact.
+    impact.  When provided, *dst_ip* MUST pass the allowlist check
+    (non-allowlisted targets are rejected); leave it empty to skip RTT
+    sampling.
 
     Args:
         rate: Packet rate as percentage of line-rate (0–100, default 50).
-        duration: Traffic duration in **milliseconds** (default 5000).
+        duration: Traffic duration in **milliseconds** (default 5000;
+                  >60000 rejected; 0 = forever).
         arp_type: ARP packet type — ``request``, ``req``, ``gratuitous``,
                   ``grat``, or ``g``.  Default ``request``.
         dst_ip: Target IP for RTT sampling only (NOT sent to Pktgen).
-                Must be in allowlist.  Leave empty to skip RTT sampling.
+                Must be in allowlist when provided (otherwise rejected).
+                Leave empty to skip RTT sampling.
         count: Number of packets (0 = forever).
         burst: Tx burst size (default 128).
 
@@ -457,6 +562,15 @@ def pktgen_arp_flood(
         ``mode``, ``response`` (live), and ``rtt_during`` if *dst_ip*
         is provided.
     """
+    # G2（005-T008）：提供 dst_ip 时必须过 allowlist（白名单/广播/组播），
+    # 失败即拒绝；不提供仍允许（ARP L2 语义），仅跳过 RTT 采样。
+    if dst_ip:
+        try:
+            validate_target(dst_ip)
+        except ValueError as e:
+            return {"success": False, "mode": "unknown", "error": str(e)}
+    rate = _default_rate() if rate is None else rate
+    duration = _default_duration_ms() if duration is None else duration
     t0 = time.time()
     result = _run_traffic_tool("arp_flood", {
         "rate": rate, "duration": duration, "arp_type": arp_type,
@@ -477,7 +591,7 @@ def pktgen_range_scan(
     min_val: str = "1",
     max_val: str = "65535",
     inc: str = "1",
-    rate: float = 50.0,
+    rate: float | None = None,
     pktSize: int | None = None,
     count: int | None = None,
 ) -> dict[str, Any]:
@@ -508,6 +622,7 @@ def pktgen_range_scan(
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
         ``mode``, ``response`` (live), ``rtt_during``.
     """
+    rate = _default_rate() if rate is None else rate
     return _run_traffic_tool("range_based_scan", {
         "scan_field": scan_field, "start": start,
         "min": min_val, "max": max_val, "inc": inc,
@@ -549,7 +664,11 @@ def pktgen_packet_sequence(
 
     Returns:
         Dict with ``success``, ``skill``, ``params``, ``lua_code``,
-        ``mode``, ``response`` (live), ``rtt_during``.
+        ``mode``, ``response`` (live), ``rtt_during``.  Fabricated / missing
+        ``eth_dst_addr`` entries are auto-filled with the real ``dst_mac``
+        from topology.yaml and reported in ``replaced_mac``
+        (``[{"index": i, "from": old, "to": new}]``; the key appears only
+        when a replacement actually happened).
     """
     # Parse JSON string to Python list for the compiler
     try:
@@ -561,6 +680,7 @@ def pktgen_packet_sequence(
     # fabricated — the LLM doesn't know the real dst_mac and tends to
     # invent numbers like 00:00:00:00:00:01.
     dst_mac_default = _get_dst_mac()
+    replaced_mac: list[dict[str, Any]] = []
     for i, entry in enumerate(seq_list):
         eth = (entry.get("eth_dst_addr") or "").strip()
         # Missing, empty, or clearly fabricated (all-zeros prefix pattern
@@ -572,11 +692,17 @@ def pktgen_packet_sequence(
                 i, eth, dst_mac_default,
             )
             entry["eth_dst_addr"] = dst_mac_default
+            # G5（005-T016）：替换明细进结果，与 logger 记录保持一致
+            replaced_mac.append({"index": i, "from": eth, "to": dst_mac_default})
 
-    return _run_traffic_tool("packet_sequence_generation", {
+    result = _run_traffic_tool("packet_sequence_generation", {
         "sequences": seq_list, "rate": rate,
         "count": count, "burst": burst, "dst_ip": dst_ip,
     }, dst_ip=dst_ip)
+    if replaced_mac:
+        # 契约 pktgen-adapter-results.md §2：仅实际发生替换时出现该字段
+        result["replaced_mac"] = replaced_mac
+    return result
 
 
 # ── Tool: pktgen_pcap_replay ─────────────────────────────────────────
@@ -623,6 +749,10 @@ def pktgen_stats_monitor(
     the Pktgen ports.  Use this to monitor the effect of ongoing traffic (e.g.
     observe port-level packet loss or rate drops while a flood is running).
 
+    In dry-run mode (default) this only compiles/validates the script and
+    does NOT connect to the hardware (决策 005-2: the default mode never
+    touches the network).
+
     Args:
         interval_ms: Polling interval in milliseconds (default 1000).
         iterations: Number of polling iterations (0 = run until interrupted,
@@ -653,6 +783,10 @@ def pktgen_stop_and_reset(
     Idempotent — safe to call at any time, even if no traffic is running.
     Call this before switching between Pktgen flood types or at the end of
     the experiment as cleanup.
+
+    In dry-run mode (default) this only compiles/validates the script and
+    does NOT connect to the hardware — it does not actually stop a live
+    Pktgen (决策 005-2).  Real stop/reset requires live mode.
 
     Args:
         save_config: Save current config before reset (default False).

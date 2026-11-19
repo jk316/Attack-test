@@ -30,15 +30,29 @@ def _get_pktgen_host_port() -> tuple[str, int]:
 
 
 def _is_pktgen_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
-    """Check whether Pktgen is reachable at the given host:port."""
+    """Check whether Pktgen is reachable at the given host:port.
+
+    005 修复（基线失败②）：仅 TCP connect 不足——本机网络对
+    10.99.80.222:22022 的 connect 成功但发送后立即 reset（无可用
+    Pktgen 服务）。改为服务级探测：connect → 发空命令 → 读响应，
+    reset/EOF/超时均视为不可用（跳过），只有收到响应字节才视为
+    可用 Pktgen（真实硬件会回 Lua 提示/响应；空命令无任何流量）。
+    """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect((host, port))
-        sock.close()
-        return True
     except OSError:
         return False
+    try:
+        try:
+            sock.sendall(b"\n")  # minimal handshake: empty Lua command
+            data = sock.recv(1024)
+            return bool(data)
+        except OSError:
+            return False
+    finally:
+        sock.close()
 
 
 @pytest.fixture(scope="session")

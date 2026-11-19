@@ -260,7 +260,7 @@ class TestPcapProfile:
             result = graph.invoke(state, config)
 
         mock_profile_fn.assert_called_once_with(
-            pcap_path="data/game.pcapng", count=50000,
+            pcap_path="data/game.pcapng", count=None,
         )
         assert "28763" in result["messages"][-1].content
 
@@ -493,8 +493,12 @@ class TestPingMonitorTools:
 
         assert "not active" in result["messages"][-1].content.lower()
 
-    def test_graph_has_17_tools(self):
-        """Graph should have 17 tools (8 original + 9 Pktgen)."""
+    def test_graph_has_19_tools(self):
+        """Graph should have 19 tools (8 Scapy + 9 Pktgen + 2 TRex).
+
+        008-T001 基线修复：原断言 17 在 006 引入 TRex 两工具后过期；
+        正确值 19（CLAUDE.md 确认）。
+        """
         from src.agent.graph import build_graph
         from src.agent.tools import EXPERIMENT_TOOLS
 
@@ -503,7 +507,8 @@ class TestPingMonitorTools:
         assert "read_ping_stats" in tool_names
         assert "stop_ping_monitor" in tool_names
         assert "pktgen_udp_flood" in tool_names
-        assert len(EXPERIMENT_TOOLS) == 17
+        assert "write_python_file" in tool_names
+        assert len(EXPERIMENT_TOOLS) == 19
 
     def test_full_continuous_ping_workflow(self, mock_model, mock_monitor):
         """Agent executes full flow: start → read → traffic → read → stop."""
@@ -561,7 +566,8 @@ class TestPingMonitorTools:
             result = graph.invoke(state, config)
 
         # All tools called in correct order
-        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=1.0)
+        # 003-G-001：interval_s 缺省透传 None，由 PingMonitor 读配置回退间隔
+        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=None)
         assert mock_monitor.get_stats.call_count == 2  # baseline + after
         mock_send.assert_called_once()
         mock_monitor.stop.assert_called_once()

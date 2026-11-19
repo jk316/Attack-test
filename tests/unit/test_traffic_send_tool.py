@@ -354,3 +354,165 @@ class TestRawSocketSend:
             result = _create_raw_socket()
         assert result is mock_sock
         mock_sock.setsockopt.assert_called_once()
+
+
+class TestValidationMatrix:
+    """T004：拒绝矩阵补齐（data-model「校验规则汇总」FR-002–006）。
+
+    非正数拒绝、端口边界、非法 IP 格式——安全违规必须抛 ValueError。
+    """
+
+    def test_dst_port_zero_rejected(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="dst_port"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=0, pps=10)
+
+    def test_dst_port_65536_rejected(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="dst_port"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=65536, pps=10)
+
+    def test_packet_size_zero_rejected(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="packet_size must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=10, packet_size=0)
+
+    def test_flow_count_zero_rejected(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="flow_count must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=10, flow_count=0)
+
+    def test_negative_duration_rejected(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="duration_s must be > 0"):
+            traffic_send_tool(ALLOWLISTED_IP, dst_port=8080, pps=10, duration_s=-1)
+
+    def test_invalid_ip_format_rejected(self):
+        """格式非法 IP（validate_target 矩阵）必须被拒绝。"""
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with pytest.raises(ValueError, match="Invalid IP format"):
+            traffic_send_tool("999.1.1.1", dst_port=8080, pps=10)
+
+    def test_clamp_matrix_boundaries_stay_within_limits(self):
+        """越限钳制矩阵（与 T008 标注字段联动前先锁定钳制值本身）。
+
+        直接调用纯函数 validate_params——避免真实发送循环时长（duration 钳制
+        到 20s 会拖慢测试）。
+        """
+        from src.tools.traffic_send_tool import (
+            validate_params,
+            MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE,
+            MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
+        )
+
+        duration_s, pps, packet_size, flow_count, iat_jitter_ms = validate_params(
+            ALLOWLISTED_IP, dst_port=8080,
+            duration_s=999, pps=999999, packet_size=4096,
+            flow_count=500, iat_jitter_ms=100, src_ip=None,
+        )
+        assert duration_s == MAX_DURATION_S
+        assert pps == MAX_PPS
+        assert packet_size == MAX_PACKET_SIZE
+        assert flow_count == MAX_FLOW_COUNT
+        assert iat_jitter_ms == MAX_IAT_JITTER_MS
+
+
+class TestClampAnnotations:
+    """T008：钳制标注（G1、002-1、FR-004、SC-001；契约 tool-result-json.md §1）。
+
+    全部 mock 网络 I/O：raw socket 用 MagicMock（内存内），杜绝真实流量。
+    """
+
+    def test_over_limit_pps_annotated(self):
+        from src.tools.traffic_send_tool import traffic_send_tool, MAX_PPS
+
+        with patch("src.tools.traffic_send_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
+                ALLOWLISTED_IP, dst_port=8080, pps=999999, duration_s=1,
+            )
+        assert result["params"]["pps"] == MAX_PPS
+        assert result["requested_params"]["pps"] == 999999
+        assert "pps" in result["clamped"]
+
+    def test_all_compliant_clamped_empty(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with patch("src.tools.traffic_send_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
+                ALLOWLISTED_IP, dst_port=8080,
+                duration_s=1, pps=10, packet_size=64, flow_count=1,
+                iat_jitter_ms=0,
+            )
+        assert result["clamped"] == []
+        assert result["requested_params"]["duration_s"] == 1
+        assert result["requested_params"]["pps"] == 10
+        assert result["requested_params"]["dst_port"] == 8080
+
+    def test_multi_field_clamp_lists_all_field_names(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with patch("src.tools.traffic_send_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
+                ALLOWLISTED_IP, dst_port=8080,
+                duration_s=1, pps=999999, packet_size=4096, flow_count=500,
+            )
+        assert {"pps", "packet_size", "flow_count"} <= set(result["clamped"])
+        assert "duration_s" not in result["clamped"]  # 未越限的字段不标注
+        assert result["requested_params"]["flow_count"] == 500
+
+    def test_duration_clamp_detection_pure(self):
+        """duration_s=999 → 标注 duration_s（纯比较函数，避免 20 秒真实发送）。"""
+        from src.tools.traffic_send_tool import _clamped_fields
+
+        requested = {"duration_s": 999, "pps": 10}
+        actual = {"duration_s": 20, "pps": 10}
+        assert _clamped_fields(requested, actual) == ["duration_s"]
+
+
+class TestInterruptionAnnotation:
+    """T009：截断标注（G3、002-3、FR-008；契约 tool-result-json.md §1）。"""
+
+    def test_keyboard_interrupt_marks_incomplete(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        mock_sock = MagicMock()
+
+        def interrupt_sendto(data, addr):
+            raise KeyboardInterrupt
+
+        mock_sock.sendto.side_effect = interrupt_sendto
+
+        with patch("src.tools.traffic_send_tool._create_raw_socket",
+                   return_value=mock_sock), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
+                ALLOWLISTED_IP, dst_port=8080, duration_s=1, pps=10,
+            )
+
+        assert result["completed"] is False
+        assert result["interrupt_reason"] == "keyboard_interrupt"
+        assert result["packets_sent"]["total"] >= 1  # 已发部分保留
+
+    def test_normal_completion_completed_true_no_reason(self):
+        from src.tools.traffic_send_tool import traffic_send_tool
+
+        with patch("src.tools.traffic_send_tool._create_raw_socket",
+                   return_value=MagicMock()), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
+                ALLOWLISTED_IP, dst_port=8080, duration_s=1, pps=10,
+            )
+        assert result["completed"] is True
+        assert "interrupt_reason" not in result

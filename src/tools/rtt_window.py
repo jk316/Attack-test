@@ -136,7 +136,9 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
     }
 
     # 有样本，但攻击窗口过短（forever 未等待 / dry-run 未发流）时告警：
-    # 样本虽存在，却可能只覆盖了攻击刚开始的一瞬。
+    # 样本虽存在，却可能只覆盖了攻击刚开始的一瞬。契约不变式：
+    # rtt_during != null ⇒ covers_attack_window == true——未覆盖的观测
+    # 不得携带可被误用的聚合数据，故此处 rtt_during 置 null。
     if duration_s < MIN_MEANINGFUL_WINDOW_S:
         observation_window["covers_attack_window"] = False
         observation_window["note"] = (
@@ -144,6 +146,11 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
             "工具未等待攻击完成（如 duration=0 或 dry-run），"
             f"仅采到 {total_sent} 个探测（收到 {total_received}），可能不足以反映攻击效果。"
         )
+        return {
+            "rtt_during": None,
+            "attack_window": attack_window,
+            "observation_window": observation_window,
+        }
     else:
         observation_window["covers_attack_window"] = True
         note = f"观测窗口已覆盖攻击窗口，共 {total_sent} 个探测（收到 {total_received}，丢包 {loss_pct}%）。"

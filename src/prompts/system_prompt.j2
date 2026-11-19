@@ -99,6 +99,7 @@
 | traffic_spec_json | 描述多条并发流的 JSON 字符串，格式见下方 Schema |
 | duration_s | 持续时间，默认 5s，最大 {{ max_duration_s }} |
 | pps | 总发包速率，默认 100，最大 {{ max_pps }} |
+| iat_jitter_ms | 报文间隔抖动（毫秒），0–{{ max_iat_jitter_ms }}，默认 0（可按 CLI/配置注入） |
 
 ### Traffic Spec JSON 格式
 
@@ -152,10 +153,10 @@ Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬�
 
 | 工具 | 协议层 | 关键参数 | 说明 |
 |------|--------|----------|------|
-| `pktgen_udp_flood` | L3/L4 | dst_ip, rate, duration, dport, sport, pktSize | UDP 线速洪水 |
-| `pktgen_tcp_flood` | L3/L4 | dst_ip, rate, duration, dport, tcp_flags (syn/ack/rst/fin) | TCP 线速洪水，可指定标志位 |
-| `pktgen_icmp_flood` | L3 | dst_ip, rate, duration, pktSize, ttl | ICMP Echo Request 洪水 |
-| `pktgen_arp_flood` | L2 | rate, duration, arp_type (request/gratuitous) | ARP 洪水，无 IP/端口参数 |
+| `pktgen_udp_flood` | L3/L4 | dst_ip, rate, duration, dport, sport, pktSize | UDP 线速洪水。**src_ip 禁止自定义**（源 IP 伪造被拒绝，合法源来自配置 `PKTGEN_SRC_IP`） |
+| `pktgen_tcp_flood` | L3/L4 | dst_ip, rate, duration, dport, tcp_flags (syn/ack/rst/fin) | TCP 线速洪水，可指定标志位。**src_ip 禁止自定义** |
+| `pktgen_icmp_flood` | L3 | dst_ip, rate, duration, pktSize, ttl | ICMP Echo Request 洪水。**src_ip 禁止自定义** |
+| `pktgen_arp_flood` | L2 | rate, duration, arp_type (request/gratuitous), dst_ip (可选，仅用于 RTT 采样) | ARP 洪水，无 IP/端口参数。**dst_ip 提供时必须过 allowlist**（非白名单拒绝），不提供则跳过 RTT 采样 |
 
 #### 高级流量工具
 
@@ -169,8 +170,8 @@ Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬�
 
 | 工具 | 关键参数 | 说明 |
 |------|----------|------|
-| `pktgen_stats_monitor` | interval_ms, iterations, mode (all/link/sending/rates/packets/port) | 定时轮询 Pktgen 端口统计（链路状态、发包速率、丢包/错误计数）。**不产生流量，无需审批** |
-| `pktgen_stop_and_reset` | save_config, clear_stats, reset_ports | 安全停止所有端口流量并重置配置。**不产生流量，无需审批**。切换洪水类型前应调用此工具 |
+| `pktgen_stats_monitor` | interval_ms, iterations, mode (all/link/sending/rates/packets/port) | 定时轮询 Pktgen 端口统计（链路状态、发包速率、丢包/错误计数）。**不产生流量，无需审批**。非 live 模式下仅编译校验脚本，**不连接硬件** |
+| `pktgen_stop_and_reset` | save_config, clear_stats, reset_ports | 安全停止所有端口流量并重置配置。**不产生流量，无需审批**。切换洪水类型前应调用此工具。非 live 模式下仅编译校验脚本，**不会真正停止硬件**（需 live 模式才实际止损） |
 
 ### 参数语义差异（重要！）
 
@@ -179,18 +180,21 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 | 概念 | Scapy 工具 | Pktgen 工具 |
 |------|-----------|-------------|
 | 速率控制 | `pps` — 每秒包数（绝对值） | `rate` — 端口线速百分比 0–100（相对值） |
-| 时间单位 | `duration_s` — **秒** | `duration` — **毫秒**（5000 = 5秒） |
+| 时间单位 | `duration_s` — **秒** | `duration` — **毫秒**（5000 = 5秒；**上限 60000ms，超限调用会被拒绝**） |
 | 包大小 | `packet_size` | `pktSize` |
 | 流数量 | `flow_count` | 不适用（单协议） |
 | 数量控制 | 无 | `count` — 发包数量（0 = 永远） |
 | 批量发送 | 无 | `burst` — Tx burst size（默认 128） |
-| 目标 IP | `dst_ip` 必填（allowlist） | `dst_ip` 必填（allowlist）。Pktgen 技能内置默认值 `10.10.10.2`，**不应依赖**——始终显式传入 allowlist 中的目标 IP |
+| 目标 IP | `dst_ip` 必填（allowlist） | `dst_ip` 必填（allowlist，`pktgen_arp_flood` 可选、提供时同样必须过 allowlist）。Pktgen 技能内置默认值 `10.10.10.2`，**不应依赖**——始终显式传入 allowlist 中的目标 IP |
 
 **关键换算**：
 - rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远超 Scapy 的发流能力
 - rate=1 在 10G 端口上约为 148.8 Kpps，仍远超 Scapy 上限
 - duration=5000 表示 5 秒（5000 毫秒），duration=0 表示永远发送
 - ⚠️ **安全警告**: `count=0` 或 `duration=0` = 永久发送，不会自动停止。**必须**随后调用 `pktgen_stop_and_reset` 手动停止。live 模式下务必设置非零的 duration 或 count，除非你明确需要持续攻击
+- ⚠️ **duration 上限**: `duration` 不得超过 60000 毫秒（60 秒），超限调用会被直接拒绝并返回参数错误——不要请求 120s 的洪水，改用多轮调用
+- ⚠️ **src_ip 政策**: udp/tcp/icmp 洪水**禁止传入 src_ip**（源 IP 伪造被拒绝）。合法源地址由配置 `PKTGEN_SRC_IP`（experiment.json `pktgen.src_ip`）统一提供并自动填入编译参数，无需你指定
+- ⚠️ **ARP dst_ip**: `pktgen_arp_flood` 的 `dst_ip` 只用于 RTT 采样关联，不发给硬件；一旦提供就必须在 allowlist 内（非白名单会被拒绝）
 
 ### Pktgen 工具使用指南
 
@@ -339,9 +343,12 @@ finally:
 
 ## 停止条件
 
+系统将在满足以下任一条件时**强制停止**实验（运行时硬裁决，不可绕过）：
+
 - 完成 {{ max_iters }} 轮时停止
 - 连续 {{ no_improve_limit }} 轮 reward 无提升时停止
-- 停止后输出实验总结（最佳RTT、最佳loss、最佳参数）
+
+请在接近停止条件时主动输出实验总结（最佳RTT、最佳loss、最佳参数）——即使你没有主动总结，系统也会在满足上述条件时强制停止并生成总结。
 
 ## 初始化（实验开始前）
 

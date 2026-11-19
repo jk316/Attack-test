@@ -6,6 +6,7 @@ The traffic_send tool includes a HITL gate via langgraph interrupt().
 Default values are read from environment variables (set by main.py from
 experiment.json or CLI), with hardcoded fallbacks for standalone use.
 """
+import json
 import os
 import time
 from typing import Any
@@ -57,14 +58,15 @@ def traffic_send(
     Args:
         dst_ip: Target IP address (must be in allowlist).
         dst_port: Target port (1-65535).
-        duration_s: Send duration in seconds (max 10).
-        pps: Packets per second (max 200).
-        packet_size: Payload size in bytes (max 512).
-        flow_count: Number of concurrent flows with unique sport (max 50).
+        duration_s: Send duration in seconds (max 20).
+        pps: Packets per second (max 20000).
+        packet_size: Payload size in bytes (max 1024).
+        flow_count: Number of concurrent flows with unique sport (max 100).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
 
     Returns:
-        Dict with success, params, packets_sent, elapsed_s, effective_pps.
+        Dict with success, params, requested_params, clamped, packets_sent,
+        elapsed_s, effective_pps, completed.
     """
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
     duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
@@ -85,6 +87,7 @@ def traffic_send(
     approval = interrupt({
         "message": "[HITL] Approve traffic send?",
         "params": params_display,
+        "scope": "scapy_traffic",  # 008 统一审批结构（contracts/hitl-payload.md）
     })
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}
@@ -110,7 +113,7 @@ def traffic_send(
 
 
 @tool
-def pcap_profile(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> dict[str, Any]:
+def pcap_profile(pcap_path: str, count: int | None = None) -> dict[str, Any]:
     """Analyze a PCAP/PCAPng file and return traffic profile.
 
     Extracts: top destination IPs/ports, packet size histogram, inter-arrival
@@ -119,7 +122,8 @@ def pcap_profile(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> dict[str, 
 
     Args:
         pcap_path: Path to the pcap or pcapng file.
-        count: Maximum number of packets to read (default 50000).
+        count: Maximum number of packets to read (None reads env
+               PCAP_PROFILE_MAX_PACKETS, default 50000).
 
     Returns:
         Dict with top_dst_ips, top_dst_ports, packet_size_hist, iat_ms_stats,
@@ -152,6 +156,7 @@ def mixed_traffic_send(
     traffic_spec_json: str,
     duration_s: int | None = None,
     pps: int | None = None,
+    iat_jitter_ms: int | None = None,
 ) -> dict[str, Any]:
     """Send mixed-protocol traffic to a target using a traffic specification.
     REQUIRES HUMAN APPROVAL.
@@ -167,8 +172,10 @@ def mixed_traffic_send(
         traffic_spec_json: JSON string describing traffic streams. See the
                 system prompt for the exact schema (streams, protocol_stack,
                 fields, percentage).
-        duration_s: Send duration in seconds (max 10).
-        pps: Total packets per second across all streams (max 200).
+        duration_s: Send duration in seconds (max 20).
+        pps: Total packets per second across all streams (max 20000).
+        iat_jitter_ms: Random jitter on inter-packet interval in ms (0-20).
+                None reads env ATK_IAT_JITTER_MS (default 0).
 
     Returns:
         Dict with success, params, packets_sent (total + per_stream),
@@ -177,15 +184,35 @@ def mixed_traffic_send(
     # Resolve defaults from env vars (set by main.py from experiment.json / CLI)
     duration_s = duration_s if duration_s is not None else int(os.environ.get("ATK_DURATION_S", "10"))
     pps = pps if pps is not None else int(os.environ.get("ATK_PPS", "100"))
+    iat_jitter_ms = iat_jitter_ms if iat_jitter_ms is not None else int(os.environ.get("ATK_IAT_JITTER_MS", "0"))
 
     params_display = {
         "dst_ip": dst_ip,
         "duration_s": duration_s,
         "pps": pps,
+        "iat_jitter_ms": iat_jitter_ms,
     }
+    # 008 统一审批结构：params 增加流量规格摘要（流数/协议构成；完整 spec 不进审批材料）
+    try:
+        spec = (json.loads(traffic_spec_json)
+                if isinstance(traffic_spec_json, str) else traffic_spec_json)
+        streams = spec.get("streams", []) if isinstance(spec, dict) else []
+        protocols = sorted({
+            proto
+            for st in streams
+            if isinstance(st, dict)
+            for proto in (st.get("protocol_stack") or [])
+            if isinstance(proto, str)
+        })
+        params_display["stream_count"] = len(streams)
+        params_display["protocols"] = protocols
+    except Exception:
+        params_display["stream_count"] = "?"
+        params_display["protocols"] = []
     approval = interrupt({
         "message": "[HITL] Approve mixed traffic send?",
         "params": params_display,
+        "scope": "scapy_traffic",
     })
     if not approval:
         return {"success": False, "error": "HITL rejected by operator"}
@@ -196,6 +223,7 @@ def mixed_traffic_send(
         traffic_spec_json=traffic_spec_json,
         duration_s=duration_s,
         pps=pps,
+        iat_jitter_ms=iat_jitter_ms,
     )
 
     # Collect RTT samples during the attack window (if monitor is running).
@@ -207,7 +235,7 @@ def mixed_traffic_send(
 # ── Continuous ping monitor tools ──────────────────────────────────
 
 @tool
-def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
+def start_ping_monitor(ip: str, interval_s: float | None = None) -> dict[str, Any]:
     """Start a continuous background ping to monitor RTT in real-time.
 
     Call this ONCE at the beginning of the experiment. A background ping
@@ -216,8 +244,9 @@ def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
 
     Args:
         ip: Target IP address (must be in allowlist).
-        interval_s: Interval between pings in seconds (default 1.0).
-                    Windows ignores this and pings as fast as possible.
+        interval_s: Interval between pings in seconds (default from config
+                    ping_monitor.fallback_interval_s, 1.0). Windows ignores
+                    this and pings as fast as possible.
 
     Returns:
         Dict with success, message, target_ip.
@@ -235,7 +264,7 @@ def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
 
 
 @tool
-def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
+def read_ping_stats(window_s: float | None = None) -> dict[str, Any]:
     """Read the latest RTT statistics from the background ping monitor.
 
     Call this before and after traffic_send to observe RTT changes caused
@@ -243,7 +272,8 @@ def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
     seconds.
 
     Args:
-        window_s: Time window in seconds for stats computation (default 5.0).
+        window_s: Time window in seconds for stats computation (default from
+                  config ping_monitor.stats_window_s, 5.0).
 
     Returns:
         Dict with monitor_active, latest_rtt_ms, avg_rtt_ms, min_rtt_ms,

@@ -481,3 +481,255 @@ class TestPingMonitorParsingEdgeCases:
         assert _extract_rtt(
             "    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),"
         ) is None
+
+
+class TestConfigDrivenBuild:
+    """T005：配置读取与换算（G-001/G-002，research 决策 2/3）。
+
+    env PING_MONITOR_* → _build_fping_q_cmd / start / get_stats / deque 上限。
+    """
+
+    def test_fping_q_period_from_probes_per_sec(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_PROBES_PER_SEC", "10")
+        monkeypatch.setenv("PING_MONITOR_SUMMARY_INTERVAL_S", "1")
+        assert PingMonitor._build_fping_q_cmd("10.99.80.160") == [
+            "fping", "-l", "-Q", "1", "-p", "100", "10.99.80.160",
+        ]
+
+    def test_fping_q_summary_interval_from_env(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_PROBES_PER_SEC", "5")
+        monkeypatch.setenv("PING_MONITOR_SUMMARY_INTERVAL_S", "2")
+        cmd = PingMonitor._build_fping_q_cmd("10.99.80.160")
+        assert cmd[3] == "2"       # -Q 摘要间隔
+        assert cmd[5] == "200"     # -p 周期 = 1000/5 ms
+
+    def test_probes_frequency_floor_0_1s(self, monkeypatch):
+        """频率下限 0.1 s：probes_per_sec>10 被钳制（周期 ≥100ms）。"""
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_PROBES_PER_SEC", "100")
+        cmd = PingMonitor._build_fping_q_cmd("10.99.80.160")
+        assert int(cmd[5]) >= 100  # -p 钳到 ≥100ms
+
+    def test_nonpositive_probes_rejected(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_PROBES_PER_SEC", "0")
+        with pytest.raises(ValueError, match="probes_per_sec"):
+            PingMonitor._build_fping_q_cmd("10.99.80.160")
+
+    def test_env_missing_falls_back_to_defaults(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        for var in ("PING_MONITOR_PROBES_PER_SEC", "PING_MONITOR_SUMMARY_INTERVAL_S"):
+            monkeypatch.delenv(var, raising=False)
+        assert PingMonitor._build_fping_q_cmd("10.99.80.160") == [
+            "fping", "-l", "-Q", "1", "-p", "100", "10.99.80.160",
+        ]
+
+    def test_fallback_interval_used_by_start(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor, _fping_available
+
+        monkeypatch.setenv("PING_MONITOR_FALLBACK_INTERVAL_S", "2.5")
+        captured = {}
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return None  # start() 会失败——但 cmd 已被捕获
+
+        with patch("src.tools.ping_monitor._fping_available", return_value=False), \
+             patch("src.tools.ping_monitor.subprocess.Popen", side_effect=fake_popen):
+            try:
+                PingMonitor().start("10.99.80.160")  # interval_s 缺省 → env
+            except (AttributeError, RuntimeError):
+                pass  # fake Popen 返回 None 导致后续失败，命令已捕获
+        assert captured["cmd"][captured["cmd"].index("-i") + 1] == "2.5"
+
+    def test_deque_maxlen_from_env(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_MAX_SAMPLES", "100")
+        assert PingMonitor()._samples.maxlen == 100
+
+    def test_deque_default_maxlen(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.delenv("PING_MONITOR_MAX_SAMPLES", raising=False)
+        assert PingMonitor()._samples.maxlen == 4000
+
+    def test_stats_window_default_from_env(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.setenv("PING_MONITOR_STATS_WINDOW_S", "2.0")
+        m = PingMonitor()
+        result = m.get_stats()  # 未运行 + window 缺省 → env
+        assert result["window_s"] == 2.0
+
+    def test_stats_window_default_fallback(self, monkeypatch):
+        from src.tools.ping_monitor import PingMonitor
+
+        monkeypatch.delenv("PING_MONITOR_STATS_WINDOW_S", raising=False)
+        m = PingMonitor()
+        assert m.get_stats()["window_s"] == 5.0
+
+
+class TestFpingQSummaryParsing:
+    """T007：fping -Q 摘要行/超时行/非摘要行解析（对照 contracts/monitor-sample.md）。"""
+
+    def test_summary_line_weighted_counts_and_avg(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        line = "10.99.80.160 : xmt/rcv/%loss = 10/8/20%, min/avg/max = 2.1/5.7/12.3"
+        sample = PingMonitor._parse_fping_summary_line(line)
+        assert sample is not None
+        assert sample.sent == 10
+        assert sample.received == 8
+        assert sample.rtt_ms == 5.7  # avg
+
+    def test_all_lost_summary_has_null_rtt(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        line = "10.99.80.160 : xmt/rcv/%loss = 10/0/100%, min/avg/max = 0/0/0"
+        sample = PingMonitor._parse_fping_summary_line(line)
+        assert sample is not None
+        assert sample.sent == 10
+        assert sample.received == 0
+        assert sample.rtt_ms is None  # 全丢不得记为 0 ms
+
+    def test_timeout_line_not_a_summary(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        # fping 超时行（非 -Q 摘要行）不产生样本
+        line = "10.99.80.160 : [1], 84 bytes, timeout (2.12 avg, 50% loss)"
+        assert PingMonitor._parse_fping_summary_line(line) is None
+
+    def test_icmp_header_and_blank_not_samples(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        assert PingMonitor._parse_fping_summary_line(
+            "ICMP Host Unreachable from 192.168.1.1 for ICMP Echo sent to 10.99.80.160") is None
+        assert PingMonitor._parse_fping_summary_line("") is None
+        assert PingMonitor._parse_fping_summary_line("   ") is None
+
+
+class TestCrossLanguageLoss:
+    """T008：跨语言丢包解析（G-004）。"""
+
+    def test_english_request_timed_out(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line("Request timed out.")
+        assert s is not None and s.sent == 1 and s.received == 0 and s.rtt_ms is None
+
+    def test_english_destination_unreachable(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line(
+            "Reply from 192.168.1.1: Destination host unreachable.")
+        assert s is not None and s.sent == 1 and s.received == 0 and s.rtt_ms is None
+
+    def test_chinese_request_timeout(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line("请求超时。")
+        assert s is not None and s.sent == 1 and s.received == 0 and s.rtt_ms is None
+
+    def test_chinese_unreachable(self):
+        """中文不可达模式「无法访问目标主机」（G-004 缺口）。"""
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line("无法访问目标主机。")
+        assert s is not None and s.sent == 1 and s.received == 0 and s.rtt_ms is None
+
+    def test_unix_reply_rtt(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line(
+            "64 bytes from 10.99.80.160: icmp_seq=0 ttl=64 time=12.34 ms")
+        assert s is not None and s.rtt_ms == 12.34 and s.received == 1
+
+    def test_windows_reply_rtt(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        s = PingMonitor._parse_ping_line(
+            "Reply from 10.99.80.160: bytes=32 time=5ms TTL=64")
+        assert s is not None and s.rtt_ms == 5.0 and s.received == 1
+
+
+class TestWeightedStats:
+    """T009：加权统计口径（G-005，对照 contracts/monitor-sample.md §2/§4）。"""
+
+    def _monitor(self):
+        from src.tools.ping_monitor import PingMonitor, MonitorSample
+
+        now = time.time()
+        m = TestPingMonitorStats._make_monitor_with_samples(self, [
+            MonitorSample(ts=now - 3, rtt_ms=5.0, sent=10, received=8),
+            MonitorSample(ts=now - 2, rtt_ms=20.0, sent=1, received=1),
+        ])
+        return m, now
+
+    def test_loss_formula_one_minus_received_over_sent(self):
+        m, _ = self._monitor()
+        stats = m.get_stats(window_s=10)
+        # sent=11, received=9 → (1 - 9/11) * 100 = 18.2
+        assert stats["loss_pct"] == round((1 - 9 / 11) * 100, 1)
+        assert stats["sample_count"] == 9
+        assert stats["sent_count"] == 11
+
+    def test_weighted_avg_matches_manual(self):
+        m, _ = self._monitor()
+        stats = m.get_stats(window_s=10)
+        # (5.0*8 + 20.0*1) / 9 = 6.667
+        assert stats["avg_rtt_ms"] == round((5.0 * 8 + 20.0 * 1) / 9, 3)
+
+    def test_not_running_returns_inactive_zero_counts(self):
+        from src.tools.ping_monitor import PingMonitor
+
+        stats = PingMonitor().get_stats(window_s=5)
+        assert stats["monitor_active"] is False
+        assert stats["sample_count"] == 0
+        assert stats["sent_count"] == 0
+        assert stats["loss_pct"] == 100.0
+
+
+class TestConcurrentQueries:
+    """T010：并发一致性（SC-004）。"""
+
+    def test_concurrent_queries_no_exception_and_consistent(self):
+        import threading
+
+        from src.tools.ping_monitor import PingMonitor, MonitorSample
+
+        now = time.time()
+        m = TestPingMonitorStats._make_monitor_with_samples(self, [
+            MonitorSample(ts=now - 2, rtt_ms=10.0, sent=10, received=10),
+            MonitorSample(ts=now - 1, rtt_ms=20.0, sent=10, received=10),
+        ])
+
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                for _ in range(100):
+                    stats = m.get_stats(window_s=10)
+                    assert stats["sent_count"] == 20
+                    samples = m.get_samples_since(now - 3)
+                    assert len(samples) == 2
+            except Exception as e:  # pragma: no cover - 收集异常
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        # 串行对照：样本数与串行一致
+        assert len(m.get_samples_since(now - 3)) == 2
+        assert m.get_stats(window_s=10)["sample_count"] == 20

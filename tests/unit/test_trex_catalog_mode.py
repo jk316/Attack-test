@@ -38,8 +38,9 @@ class TestCatalogCliArgs:
         assert args.max_iters == 20  # experiment.json default
 
     def test_explore_with_trex_live_conflicts(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as excinfo:
             _parse(["--trex-explore", "--trex-live"])
+        assert excinfo.value.code != 0  # 解析期报错，进程以非 0 退出码终止（FR-020）
 
     def test_explore_max_iters_override(self):
         args = _parse(["--trex-explore", "--max-iters", "15", "--catalog-target", "5"])
@@ -66,6 +67,17 @@ class TestCatalogCliArgs:
                                            explore_direction=""))
         assert os.environ.get("TREX_DRY_RUN") == "true"
         assert os.environ.get("CATALOG_TARGET") == "7"
+
+    def test_apply_mode_env_overrides_existing_live_env(self, monkeypatch):
+        """探索模式即使 env 残留 "false" 也强制回 dry-run（FR-020 边界固化）。"""
+        import os
+
+        from src.main import _apply_mode_env
+
+        monkeypatch.setenv("TREX_DRY_RUN", "false")  # 模拟先前 live 运行残留
+        _apply_mode_env(argparse.Namespace(trex_explore=True, catalog_target=7,
+                                           explore_direction=""))
+        assert os.environ.get("TREX_DRY_RUN") == "true"
 
     def test_apply_mode_env_noop_in_experiment_mode(self, monkeypatch):
         import os
