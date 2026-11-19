@@ -24,7 +24,7 @@
 - **R2（并行策略）**：001–008 在 `src/main.py`、`src/agent/tools.py`、`src/config/experiment.json`、`backend/experiment.py` 等多处共享文件上高度耦合，无法安全并行。裁定：**两梯队顺序执行**（001–004 先，005–008 后），换取零写冲突；代价是墙钟时间串行——可接受，监督质量优先。
 - **R3（勾选格式）**：tasks.md 统一用 `- [x]` 勾选（与现有 checklist 格式一致）；验收统计同时接受 `[x]`/`[X]`。
 - **R4（ATK_IAT_JITTER_MS 注入归属）**：001-T002 发现 main.py 未注入 `ATK_IAT_JITTER_MS`（无对应 CLI 参数）。裁定归属 **002**（T015 实现 env 读取 + experiment.json 已有键）：由 002 在 T015/T016 后补齐 main.py 注入行（配置链取值、profile 感知、不新增 CLI 参数）+ 断言测试。理由：不注入则该配置键永不生效，违反宪法「配置单一来源」。
-- **R5（001-T023 真实 LLM 验证）**：.env 密钥无效（401），真实 LLM 三场景无法实跑。裁定：接受 mock e2e 等价验证 + 真实 CLI 安全路径验证，**真实 LLM 场景待密钥有效后补验**，作为最终验收前置项。
+- **R5（001-T023 真实 LLM 验证）**：~~.env 密钥无效~~ → **已关闭（2026-11-19 08:09）**。根因：会话位于 git worktree，误读了 worktree 内 01:37 的旧截断密钥（29 字符）；用户的有效密钥在主仓库 `/Users/zxkkk/code/Attack-test/.env`（35 字符 + LLM_MODEL=deepseek-flash，与账户模型 deepseek-flash/deepseek-v4-pro 匹配）。修复：worktree .env → 符号链接指向主仓库 .env。真实 LLM 补验：场景 C 目录探索实跑（17 脚本、exit 0、零流量）+ 场景 A 实验模式实跑（HITL 全拒 0 报文、covers=false 轮硬裁决跳过、exit 0）。场景 B（auto-approve 真实流量）与 002 场景 A（真实流量命令）按安全红线维持 mock 等价、不实跑。
 - **R6（002 quickstart 直接脚本命令）**：`python src/tools/traffic_send_tool.py` 直接运行因相对导入失败（预存在）。裁定归属 002 收尾：quickstart.md 命令改 `-m` 模块形式（或等价写法），纯文档修复，可并入 003/004 任意提交。
 - **R7（003-T018 改派）**：Web 端 ping 监控清理（backend/experiment.py 实验结束路径调 `get_ping_monitor().stop()`，FR-016/G-003）在 003 梯队范围外（禁改 backend/）。裁定：保持未勾，改派 **007 梯队**（第二梯队），已写入第二梯队任务书。
 - **R8（004-T017 改派）**：Web 上传画像映射接入（backend/experiment.py 走 `profile_to_params` 注入会话上下文）同属 backend/ 范围冲突。裁定：保持未勾，改派 **007 梯队**（第二梯队），已写入第二梯队任务书。
