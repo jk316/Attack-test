@@ -9,6 +9,7 @@ hermetic minimal file (the repo's experiment.json may carry server overrides).
 from __future__ import annotations
 
 import json
+import logging
 import sys
 
 import pytest
@@ -71,6 +72,19 @@ def hermetic_cfg(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def redirect_agent_log(monkeypatch, tmp_path):
+    """Keep main() from appending to the tracked data/agent.log during tests."""
+    real_fh = logging.FileHandler
+
+    def fake_fh(path, *args, **kwargs):
+        if str(path) == "data/agent.log":
+            path = str(tmp_path / "agent.log")
+        return real_fh(path, *args, **kwargs)
+
+    monkeypatch.setattr(logging, "FileHandler", fake_fh)
+
+
+@pytest.fixture
 def stub_graph(monkeypatch):
     graph = FakeGraph()
     monkeypatch.setattr(main_mod, "build_graph", lambda **kwargs: graph)
@@ -99,7 +113,7 @@ def _argv(extra):
 
 
 def test_cli_auto_starts_and_stops_monitors(
-    hermetic_cfg, stub_graph, lifecycle_calls, monkeypatch
+    hermetic_cfg, redirect_agent_log, stub_graph, lifecycle_calls, monkeypatch
 ):
     monkeypatch.setattr(sys, "argv", _argv([]))
     main_mod.main()  # runs to completion: stub graph ends the loop immediately
@@ -112,7 +126,7 @@ def test_cli_auto_starts_and_stops_monitors(
 
 
 def test_cli_passes_http_cfg_when_url_given(
-    hermetic_cfg, stub_graph, lifecycle_calls, monkeypatch
+    hermetic_cfg, redirect_agent_log, stub_graph, lifecycle_calls, monkeypatch
 ):
     monkeypatch.setattr(
         sys, "argv",
@@ -126,7 +140,7 @@ def test_cli_passes_http_cfg_when_url_given(
 
 
 def test_catalog_mode_skips_monitor_start(
-    hermetic_cfg, stub_graph, lifecycle_calls, monkeypatch
+    hermetic_cfg, redirect_agent_log, stub_graph, lifecycle_calls, monkeypatch
 ):
     monkeypatch.setattr(
         sys, "argv",
