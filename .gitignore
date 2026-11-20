@@ -27,6 +27,10 @@ test.py
 # Track data/ logs (experiment.jsonl); PCAP uploads stay out of git
 data/uploads/
 
+# PCAP captures stay out of git
+data/*.pcap
+data/*.pcapng
+
 # Pktgen compiled Lua output
 lua_scripts/
 
