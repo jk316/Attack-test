@@ -133,20 +133,49 @@ def pcap_profile(pcap_path: str, count: int = DEFAULT_COUNT_LIMIT) -> dict[str, 
 
 
 @tool
-def log_result(log_path: str, iteration: int, params: dict, rtt: float, loss: float) -> dict[str, Any]:
-    """Append experiment result to a JSONL log file.
+def log_result(
+    log_path: str,
+    iteration: int,
+    params: dict,
+    rtt: float,
+    loss: float,
+    tool: str | None = None,
+    results: dict | None = None,
+) -> dict[str, Any]:
+    """Append experiment result to a JSONL log file (canonical schema).
+
+    记录规范（params 只放输入参数，统一字段名）:
+    - target_ip: 目标 IP
+    - dst_port: 目标端口
+    - duration_ms: 攻击时长（统一毫秒；不要用 duration_s/duration）
+    - pkt_size: 包大小字节（不要用 packet_size/pktSize）
+    - pps: 包速率 packets/s（Scapy/TRex）
+    - rate_pct: Pktgen 线速百分比（仅 Pktgen 工具）
+    - protocol: 协议（udp/tcp/icmp/arp；不要用 proto）
+    - 工具特有参数（tcp_flags/scan_field/arp_type/streams 等）放 params.extras
+
+    实测结果（tx_gbps、pps_actual、port_util_pct、note 等）放 results 参数，
+    不要混入 params。tool 填本次攻击工具名；省略时系统会自动记录。
 
     Args:
         log_path: Path to the JSONL log file.
         iteration: Current iteration number.
-        params: The traffic parameters used in this iteration.
+        params: The traffic input parameters used in this iteration.
         rtt: Average RTT in milliseconds measured this iteration.
         loss: Packet loss percentage this iteration.
+        tool: Name of the attack tool that produced this iteration
+            (auto-filled when omitted).
+        results: Measured outcomes of the iteration (throughput, actual pps,
+            notes, ...). Optional.
 
     Returns:
         Dict with success status.
     """
     entry = {"iteration": iteration, "params": params, "rtt": rtt, "loss": loss}
+    if tool:
+        entry["tool"] = tool
+    if results:
+        entry["results"] = results
     return log_tool(log_path=log_path, entry=entry)
 
 

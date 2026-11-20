@@ -10,12 +10,14 @@ architecture that supports:
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 
 from langgraph.types import Command
 
 from src.agent.graph import build_graph
+from src.tools.log_tool import generate_run_id
 
 logger = logging.getLogger("experiment")
 logger.setLevel(logging.DEBUG)
@@ -68,6 +70,11 @@ class ExperimentManager:
         self._stop_requested = False
         self._hitl_queue = asyncio.Queue()
         self._ws = websocket
+
+        # Run identity: every log_result line in this run shares this id.
+        # Only one experiment runs per process, so an env var is safe here.
+        run_id = generate_run_id()
+        os.environ["DSH_RUN_ID"] = run_id
 
         thread_id = str(uuid4())[:8]
         self._config = {"configurable": {"thread_id": thread_id}}

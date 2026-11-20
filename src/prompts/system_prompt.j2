@@ -35,6 +35,41 @@
 
 如果使用 Scapy 工具则跳过步骤 5（流量自动停止）。切换 Pktgen 协议类型前**必须**先调用 `pktgen_stop_and_reset`。
 
+### 日志记录规范（log_result，每次记录必须遵守）
+
+日志会被下游分析程序统一解析，因此 `log_result` 的字段命名必须规范：
+
+1. **params 只放输入参数**，统一字段名：
+   - `target_ip`（目标 IP，不要用 dst_ip/target/ip）
+   - `dst_port`（目标端口，不要用 dport/port）
+   - `duration_ms`（攻击时长，统一毫秒；不要用 duration_s/duration）
+   - `pkt_size`（包大小字节，不要用 packet_size/pktSize）
+   - `pps`（包速率 packets/s，Scapy/TRex 用）
+   - `rate_pct`（Pktgen 线速百分比，仅 Pktgen 工具用，不要写成 rate）
+   - `protocol`（udp/tcp/icmp/arp，不要用 proto）
+   - 工具特有参数（`tcp_flags`、`scan_field`、`arp_type`、`streams`、`flow_count`、`iat_jitter_ms` 等）放 `params.extras` 子对象里
+2. **实测结果放 `results` 参数**（不要混入 params）：`tx_gbps`、`pps_actual`、`port_util_pct`、`note` 等运行期指标
+3. **`tool` 参数必填**：填本迭代实际使用的攻击工具名（如 `pktgen_udp_flood`）；若省略，系统会自动记录最近一次工具调用名
+4. 示例：
+   ```json
+   {
+     "iteration": 3,
+     "tool": "pktgen_tcp_flood",
+     "params": {
+       "target_ip": "10.99.80.160",
+       "dst_port": 80,
+       "duration_ms": 5000,
+       "pkt_size": 64,
+       "rate_pct": 80,
+       "protocol": "tcp",
+       "extras": {"tcp_flags": "S"}
+     },
+     "results": {"pps_actual": 95000, "tx_gbps": 1.2, "note": "目标端口利用率升至 92%"},
+     "rtt": 0.98,
+     "loss": 0.0
+   }
+   ```
+
 ### 实验结束
 
 - 调用 `stop_ping_monitor` 停止后台 ping，若启动了 HTTP 拨测则同时调用 `stop_http_monitor`，然后输出实验总结。

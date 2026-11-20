@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port, is_dry_run
+from src.tools.log_middleware import ToolTaggerMiddleware
 from src.trex.config import get_trex_host, get_trex_port, is_trex_dry_run
 from src.trex.tools import TREX_TOOLS
 from src.tools.traffic_send_tool import (
@@ -177,4 +178,5 @@ def build_graph(
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=MemorySaver(),
+        middleware=[ToolTaggerMiddleware()],
     )

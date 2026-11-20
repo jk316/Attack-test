@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.graph import build_graph  # noqa: E402
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
+from src.tools.log_tool import generate_run_id  # noqa: E402
 from src.trex.config import get_trex_host, get_trex_port  # noqa: E402
 from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from langgraph.types import Command  # noqa: E402
@@ -378,6 +379,10 @@ def _extract_hitl_payload(gs) -> dict | None:
 def main() -> None:
     args = parse_args()
 
+    # ── Run identity: every log_result line in this run shares this id ──
+    run_id = generate_run_id()
+    os.environ["DSH_RUN_ID"] = run_id
+
     # ── Inject defaults as env vars (tools read these at call time) ──
     os.environ["ATK_DURATION_S"] = str(args.duration)
     os.environ["ATK_PPS"] = str(args.pps)
@@ -423,6 +428,7 @@ def main() -> None:
     trex_port = args.trex_port or get_trex_port()
 
     print(f"=== Closed-Loop Experiment ===")
+    print(f"Run ID:     {run_id}")
     print(f"Target:     {args.target_ip}")
     print(f"PCAP:       {args.pcap_path or '(none)'}")
     print(f"Log:        {args.log_path}")
