@@ -493,8 +493,8 @@ class TestPingMonitorTools:
 
         assert "not active" in result["messages"][-1].content.lower()
 
-    def test_graph_has_17_tools(self):
-        """Graph should have 17 tools (8 original + 9 Pktgen)."""
+    def test_graph_has_23_tools(self):
+        """Graph should have 23 tools (8 Scapy + 9 Pktgen + 2 TRex + 4 HTTP)."""
         from src.agent.graph import build_graph
         from src.agent.tools import EXPERIMENT_TOOLS
 
@@ -503,7 +503,9 @@ class TestPingMonitorTools:
         assert "read_ping_stats" in tool_names
         assert "stop_ping_monitor" in tool_names
         assert "pktgen_udp_flood" in tool_names
-        assert len(EXPERIMENT_TOOLS) == 17
+        assert "http_probe" in tool_names
+        assert "write_python_file" in tool_names
+        assert len(EXPERIMENT_TOOLS) == 23
 
     def test_full_continuous_ping_workflow(self, mock_model, mock_monitor):
         """Agent executes full flow: start → read → traffic → read → stop."""

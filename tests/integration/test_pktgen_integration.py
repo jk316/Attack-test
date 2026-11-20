@@ -137,12 +137,12 @@ class TestAllNineSkillsHaveValidYaml:
 class TestGraphIncludesPktgenTools:
     """Verify build_graph() includes all Pktgen tools."""
 
-    def test_tool_count_is_17(self):
-        """EXPERIMENT_TOOLS should have 17 tools (8 original + 9 Pktgen)."""
+    def test_tool_count_is_23(self):
+        """EXPERIMENT_TOOLS should have 23 tools (8 Scapy + 9 Pktgen + 2 TRex + 4 HTTP)."""
         from src.agent.tools import EXPERIMENT_TOOLS
 
-        assert len(EXPERIMENT_TOOLS) == 17, (
-            f"Expected 17 tools, got {len(EXPERIMENT_TOOLS)}: "
+        assert len(EXPERIMENT_TOOLS) == 23, (
+            f"Expected 23 tools, got {len(EXPERIMENT_TOOLS)}: "
             f"{[t.name for t in EXPERIMENT_TOOLS]}"
         )
 
