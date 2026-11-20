@@ -18,9 +18,29 @@ from langgraph.types import Command
 
 from src.agent.graph import build_graph
 from src.tools.log_tool import generate_run_id
+from src.tools.monitor_lifecycle import (
+    start_experiment_monitors,
+    stop_experiment_monitors,
+)
 
 logger = logging.getLogger("experiment")
 logger.setLevel(logging.DEBUG)
+
+
+def _load_http_cfg() -> dict | None:
+    """Read the ``http`` section of the root experiment.json (config single source).
+
+    Returns ``None`` when the file is missing/unparseable or the section is
+    absent — the lifecycle helper then skips the HTTP monitor.
+    """
+    try:
+        cfg_path = Path(__file__).resolve().parent.parent / "experiment.json"
+        with open(cfg_path, encoding="utf-8") as fh:
+            return json.load(fh).get("http") or None
+    except Exception:
+        logger.warning("Failed to read http config from experiment.json", exc_info=True)
+        return None
+
 
 # ── Message protocol helpers ────────────────────────────────────
 
@@ -110,6 +130,16 @@ class ExperimentManager:
 
         logger.info("Starting experiment: thread=%s, target=%s", thread_id, target_ip)
 
+        # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
+        # HTTP config comes from the root experiment.json (same source as
+        # main.py); a missing file/parse error degrades to "no HTTP monitor".
+        http_cfg = _load_http_cfg()
+        started = start_experiment_monitors(target_ip, http_cfg)
+        logger.info(
+            "Monitors auto-started: ping=%s http=%s",
+            started["ping"], started["http"],
+        )
+
         try:
             await self._run_loop(initial_state)
         except Exception as e:
@@ -119,6 +149,8 @@ class ExperimentManager:
                 "data": {"message": str(e)},
             })
         finally:
+            # Monitors are program-owned; always cleaned up (spec 009 FR-007)
+            stop_experiment_monitors()
             self._running = False
             self._ws = None
             await websocket.send_json({

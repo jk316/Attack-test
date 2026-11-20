@@ -21,7 +21,10 @@ from src.agent.graph import build_graph  # noqa: E402
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
 from src.tools.log_tool import generate_run_id  # noqa: E402
 from src.trex.config import get_trex_host, get_trex_port  # noqa: E402
-from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
+from src.tools.monitor_lifecycle import (  # noqa: E402
+    start_experiment_monitors,
+    stop_experiment_monitors,
+)
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
@@ -463,6 +466,23 @@ def main() -> None:
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
 
+    # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
+    # Catalog mode sends no traffic and needs no observation (FR-004).
+    if not args.trex_explore:
+        http_cfg = None
+        if args.http_url:
+            http_cfg = {
+                "url": args.http_url,
+                "interval_s": args.http_interval,
+                "timeout_s": args.http_timeout,
+                "method": args.http_method,
+            }
+        started = start_experiment_monitors(args.target_ip, http_cfg)
+        agent_logger.info(
+            "Monitors auto-started: ping=%s http=%s",
+            started["ping"], started["http"],
+        )
+
     verbose = VerboseCallback()
     graph = build_graph(
         max_iters=args.max_iters, no_improve_limit=args.no_improve_limit,
@@ -534,14 +554,11 @@ def main() -> None:
 
         print(f"\nResults logged to: {args.log_path}")
     finally:
-        # Ensure ping monitor is always cleaned up
+        # Ensure both monitors are always cleaned up (spec 009 FR-007)
         try:
-            monitor = get_ping_monitor()
-            if monitor.is_running():
-                logger.info("Cleaning up ping monitor...")
-                monitor.stop()
+            stop_experiment_monitors()
         except Exception:
-            pass
+            logger.warning("Monitor cleanup failed", exc_info=True)
 
 
 if __name__ == "__main__":

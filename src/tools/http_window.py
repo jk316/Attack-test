@@ -49,8 +49,8 @@ def build_http_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]
                 "first_sample": None,
                 "last_sample": None,
                 "covers_attack_window": False,
-                "note": "HTTP monitor 未运行——无 HTTP 观测，请先调用 "
-                        "start_http_monitor，本结果不可用于规划。",
+                "note": "HTTP monitor 未运行——无 HTTP 观测（监控由实验程序自动管理，"
+                        "未配置 http.url 或监控不可用），本结果不可用于规划。",
             },
         }
 

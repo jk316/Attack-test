@@ -68,8 +68,8 @@ def build_rtt_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]:
                 "first_sample": None,
                 "last_sample": None,
                 "covers_attack_window": False,
-                "note": "ping monitor 未运行——无 RTT 观测，请先调用 "
-                        "start_ping_monitor，本结果不可用于规划。",
+                "note": "ping monitor 未运行——无 RTT 观测（监控由实验程序自动管理，"
+                        "若持续为空说明监控不可用），本结果不可用于规划。",
             },
         }
 

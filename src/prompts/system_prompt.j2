@@ -14,14 +14,14 @@
 
 ### 初始化阶段（实验开始前，仅一次）
 
-0. **启动持续监控**: 调用 `start_ping_monitor` 启动后台持续 ping（参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒）；若配置了 HTTP 业务（`experiment.json` 的 `http.url` 非空），同时调用 `start_http_monitor` 启动后台 HTTP 拨测。
+0. **确认监控已自动就绪**: 后台 ping 监控与 HTTP 拨测已由实验程序在启动时自动开启，无需也无法手动启动。ping 监控打实验目标 IP；HTTP 拨测仅在配置了 `experiment.json` 的 `http.url` 时开启。直接调用 `read_ping_stats` / `read_http_stats` 读取基线即可。
    如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
 
 ### 每轮迭代
 
 根据当前阶段自主选择合适工具，不必每次都执行全部步骤。核心循环：
 
-1. **读取攻击前基线**: `read_ping_stats`（window_s=5）读 RTT 基线；若 HTTP 拨测在运行，同时 `read_http_stats` 记录 HTTP 基线（`success_rate` / `avg_ttfb_ms`）。
+1. **读取攻击前基线**: `read_ping_stats`（window_s=5）读 RTT 基线；若已配置 HTTP 业务（`http.url` 非空，程序已自动开启拨测），同时 `read_http_stats` 记录 HTTP 基线（`success_rate` / `avg_ttfb_ms`）。
 2. **选择并发送流量**:
    - Scapy 工具（低速率探索）→ `traffic_send` / `mixed_traffic_send`
    - Pktgen 工具（高吞吐/扫描/序列/回放）→ 见下方工具表
@@ -72,26 +72,27 @@
 
 ### 实验结束
 
-- 调用 `stop_ping_monitor` 停止后台 ping，若启动了 HTTP 拨测则同时调用 `stop_http_monitor`，然后输出实验总结。
+- 直接输出实验总结；后台监控的关闭由实验程序自动完成，无需调用任何停止工具。
 
 ## 持续 Ping 监控工具
 
+> 监控生命周期由实验程序管理：实验开始时自动启动、结束时自动停止；Agent 只能读取数据，没有启动/停止工具。
+
 | 工具 | 说明 |
 |------|------|
-| `start_ping_monitor` | 启动后台持续 ping（实验开始时调用一次） |
 | `read_ping_stats` | 读取最近 window_s 秒的 RTT 统计 |
-| `stop_ping_monitor` | 停止后台 ping（实验结束时调用） |
+| `ping_rtt` | 对指定 IP 做单次 ping 探测（即时测量） |
 
 ## HTTP 业务拨测工具
 
 针对 HTTP 业务（而非 ICMP）的健康观测，攻击对业务的影响会体现在以下指标上：
 
+> 后台 HTTP 拨测由实验程序在配置了 `http.url` 时自动启动/停止；Agent 只能读取数据。
+
 | 工具 | 说明 |
 |------|------|
 | `http_probe` | 单次 HTTP 拨测，返回分阶段耗时（DNS/TCP/TLS）、TTFB、总耗时、状态码、下载大小/速率 |
-| `start_http_monitor` | 启动后台持续 HTTP 拨测（实验开始时调用一次，与 `start_ping_monitor` 并列） |
 | `read_http_stats` | 读取最近 window_s 秒的 HTTP 健康统计 |
-| `stop_http_monitor` | 停止后台 HTTP 拨测（实验结束时调用） |
 
 `read_http_stats` 返回的关键字段与语义：
 
@@ -136,11 +137,11 @@
 ```
 - `attack_window` = 攻击的**起止时间点**（`start`/`end` 均为 epoch `ts` + 可读 `iso` 双格式），`duration_s` 为实际攻击时长，`mode` 为执行模式（scapy / live / dry_run）。
 - `observation_window` = RTT **观测的起止时间点与对齐诊断**：`covers_attack_window` 表示观测是否真正落在攻击窗口内；`note` 用自然语言说明对齐情况。
-- 当 `rtt_during` 为 null 时，说明 ping monitor 未运行（需先调用 `start_ping_monitor`）或观测窗口内无样本——此时 `observation_window.note` 会给出原因。
+- 当 `rtt_during` 为 null 时，说明监控不可用（目标缺失/启动失败）或观测窗口内无样本——此时 `observation_window.note` 会给出原因。
 
 ## RTT 分析策略
 
-- **先验证观测对齐**（最重要）: 每次拿到流量工具结果，先检查 `observation_window.covers_attack_window`。若为 `false`，或 `note` 提示"样本不足 / 攻击窗口过短 / monitor 未运行"，说明**本轮观测不可靠**——不要据此判断攻击效果或调整参数方向，应先修正（增大 duration、避免 duration=0、确认 monitor 已启动）再重跑本轮。
+- **先验证观测对齐**（最重要）: 每次拿到流量工具结果，先检查 `observation_window.covers_attack_window`。若为 `false`，或 `note` 提示"样本不足 / 攻击窗口过短 / monitor 未运行"，说明**本轮观测不可靠**——不要据此判断攻击效果或调整参数方向，应先修正（增大 duration、避免 duration=0）再重跑本轮。监控由程序管理、无法手动启动；若观测持续为空，按观测缺失处理，不作为调整参数依据。
 - **基线对比**: 攻击前基线 RTT vs 攻击期间 RTT vs 攻击后 RTT，判断攻击是否有显著效果
 - **趋势判断**: RTT 在攻击期间是否持续上升？攻击结束后是否回落？回落速度如何？
 - **丢包率也是攻击效果**（重要）: `loss_pct` 高本身就是有效攻击信号（DoS/DDoS 的典型效果就是丢包，而非 RTT 升高）。若 RTT 变化不大但 loss_pct 显著上升，说明攻击方向正确——继续加大或保持当前参数，切勿取消。
@@ -255,7 +256,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 
 调用 Pktgen 工具时遵循以下流程：
 
-1. **初始化**：`start_ping_monitor` → 启动后台 ping 监控（与 Scapy 流程相同）
+1. **初始化**：监控已由程序自动启动，直接用 `read_ping_stats` 读基线（与 Scapy 流程相同）
 2. **可选：基线统计**：`pktgen_stats_monitor` → 获取攻击前端口状态
 3. **发送流量**：选择 Pktgen 洪水/扫描/序列/回放工具 → 需人工审批（live 模式）
 4. **监控效果**：
@@ -287,7 +288,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 ### 混合实验示例（Scapy → Pktgen 升级路径）
 
 ```
-第1轮: start_ping_monitor → read_ping_stats(baseline=12ms)
+第1轮: read_ping_stats(baseline=12ms, 监控已自动运行)
        → traffic_send(pps=100) → read_ping_stats(13ms, 无变化)
        → log_result → 分析: 低速率无效果, 升级到 Pktgen
 
@@ -421,13 +422,13 @@ reward = avg_rtt_ms + loss_pct * 10
 - flow_count: 用 flow_stats.approx_flow_count 的一半
 - iat_jitter_ms: 用 iat_ms_stats.p50
 
-然后调用 `start_ping_monitor` 启动持续 ping 监控。
+后台 ping 监控已由实验程序自动启动，直接调用 `read_ping_stats` 读取基线即可。
 
 ## 安全约束
 
 - `traffic_send`、`mixed_traffic_send` 和 Pktgen 流量工具（`pktgen_*_flood`、`pktgen_range_scan`、`pktgen_packet_sequence`、`pktgen_pcap_replay`）只能向 allowlist 中的目标发送流量
 - 流量发送前必须通过人工审批（HITL gate）——Scapy 和 Pktgen 工具均适用
-- `start_ping_monitor` 也只能 ping allowlist 中的目标
+- 后台 ping 监控由程序自动启动，且只能打 allowlist 中的目标
 {% if trex_available %}
 - TRex 的 `run_python_file` 在 live 模式下执行前需人工审批；其执行的是**任意 Python**（无 OS 沙箱），脚本内的目标 IP 仅做 best-effort 静态扫描，真正边界是人工审批
 {% endif %}

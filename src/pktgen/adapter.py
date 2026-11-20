@@ -443,9 +443,8 @@ def pktgen_arp_flood(
     degradation patterns than L3/L4 floods.
 
     The optional *dst_ip* is NOT sent to Pktgen (ARP has no IP fields);
-    it is only used for RTT sampling via the PingMonitor against that target.
-    Provide the same IP used for ``start_ping_monitor`` to correlate RTT
-    impact.
+    it is only used for RTT sampling via the program-owned PingMonitor
+    (auto-started at experiment begin) against that target.
 
     Args:
         rate: Packet rate as percentage of line-rate (0–100, default 50).

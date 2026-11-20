@@ -239,34 +239,8 @@ def mixed_traffic_send(
 
 
 # ── Continuous ping monitor tools ──────────────────────────────────
-
-@tool
-def start_ping_monitor(ip: str, interval_s: float = 1.0) -> dict[str, Any]:
-    """Start a continuous background ping to monitor RTT in real-time.
-
-    Call this ONCE at the beginning of the experiment. A background ping
-    subprocess will run continuously, collecting per-second RTT samples.
-    Use read_ping_stats to query the latest stats at any time.
-
-    Args:
-        ip: Target IP address (must be in allowlist).
-        interval_s: Interval between pings in seconds (default 1.0).
-                    Windows ignores this and pings as fast as possible.
-
-    Returns:
-        Dict with success, message, target_ip.
-    """
-    try:
-        monitor = get_ping_monitor()
-        monitor.start(ip, interval_s=interval_s)
-        return {
-            "success": True,
-            "message": f"Ping monitor started for {ip}",
-            "target_ip": ip,
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
+# Note (spec 009): the ping monitor lifecycle is owned by the program —
+# both entry points auto-start it, so there is no start/stop tool here.
 
 @tool
 def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
@@ -290,24 +264,8 @@ def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
         return {"monitor_active": False, "error": str(e)}
 
 
-@tool
-def stop_ping_monitor() -> dict[str, Any]:
-    """Stop the background ping monitor.
-
-    Call this at the end of the experiment to clean up resources.
-
-    Returns:
-        Dict with success, message.
-    """
-    try:
-        monitor = get_ping_monitor()
-        monitor.stop()
-        return {"success": True, "message": "Ping monitor stopped"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 # ── HTTP business dial-testing tools ───────────────────────────────
+# Note (spec 009): the HTTP monitor lifecycle is owned by the program.
 
 @tool
 def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str, Any]:
@@ -330,32 +288,6 @@ def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[st
 
 
 @tool
-def start_http_monitor(url: str | None = None, interval_s: float = 1.0) -> dict[str, Any]:
-    """Start continuous background HTTP probing of the business endpoint.
-
-    Call ONCE at experiment start (alongside start_ping_monitor). A background
-    thread repeatedly probes the endpoint via curl. Use read_http_stats to
-    query the latest business-health stats at any time.
-
-    Args:
-        url: Full http/https URL (default: http.url from experiment.json).
-        interval_s: Seconds between probes (default 1.0).
-
-    Returns:
-        Dict with success, message, url.
-    """
-    url = url or os.environ.get("HTTP_URL", "")
-    if not url:
-        return {"success": False, "error": "no HTTP URL configured (set http.url or pass url)"}
-    try:
-        timeout_s = float(os.environ.get("HTTP_TIMEOUT_S", "5"))
-        get_http_monitor().start(url, interval_s=interval_s, timeout_s=timeout_s)
-        return {"success": True, "message": f"HTTP monitor started for {url}", "url": url}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@tool
 def read_http_stats(window_s: float = 5.0) -> dict[str, Any]:
     """Read latest HTTP business-health stats from the background monitor.
 
@@ -375,32 +307,12 @@ def read_http_stats(window_s: float = 5.0) -> dict[str, Any]:
         return {"monitor_active": False, "error": str(e)}
 
 
-@tool
-def stop_http_monitor() -> dict[str, Any]:
-    """Stop the background HTTP monitor.
-
-    Call at the end of the experiment to clean up resources.
-
-    Returns:
-        Dict with success, message.
-    """
-    try:
-        get_http_monitor().stop()
-        return {"success": True, "message": "HTTP monitor stopped"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 # Tool list for create_agent
 EXPERIMENT_TOOLS = [
     pcap_profile,
-    start_ping_monitor,
     read_ping_stats,
-    stop_ping_monitor,
     http_probe,
-    start_http_monitor,
     read_http_stats,
-    stop_http_monitor,
     traffic_send,
     mixed_traffic_send,
     ping_rtt,
