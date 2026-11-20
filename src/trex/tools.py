@@ -30,6 +30,8 @@ from langgraph.types import interrupt
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.ping_rtt_tool import ALLOWLIST, is_valid_ip, validate_target
 from src.tools.rtt_window import build_rtt_observation
+from src.tools.http_monitor import get_http_monitor
+from src.tools.http_window import build_http_observation
 from src.trex.config import (
     get_trex_host,
     get_trex_python,
@@ -238,6 +240,10 @@ def _execute_live(
         except Exception:
             monitor = None
         result.update(build_rtt_observation(monitor, t0, mode="live"))
+
+    # HTTP 拨测目标来自 experiment.json 的 http.url，与攻击 target_ip 无关，
+    # 因此无条件注入（monitor 未运行时 build_http_observation 安全返回 None）。
+    result.update(build_http_observation(get_http_monitor(), t0, mode="live"))
 
     return result
 

@@ -394,6 +394,52 @@ class TestRttSampling:
         assert result["rtt_during"] is None
 
 
+class TestHttpSampling:
+    """HTTP 采样附加测试（_sample_rtt 现在也注入 http_during）。"""
+
+    def test_http_attached_when_monitor_running(self):
+        from src.pktgen.adapter import _sample_rtt
+        import time
+
+        http_monitor = MagicMock()
+        http_monitor.is_running.return_value = True
+        http_monitor.get_samples_since.return_value = [
+            {"ts": time.time(), "ttfb_ms": 10.0, "total_ms": 15.0,
+             "status_code": 200, "success": True, "error_type": None},
+            {"ts": time.time(), "ttfb_ms": 30.0, "total_ms": 40.0,
+             "status_code": 503, "success": True, "error_type": None},
+        ]
+        ping_monitor = MagicMock()
+        ping_monitor.is_running.return_value = False
+
+        with patch("src.pktgen.adapter.get_ping_monitor", return_value=ping_monitor), \
+             patch("src.pktgen.adapter.get_http_monitor", return_value=http_monitor):
+            result = _sample_rtt({"success": True}, time.time() - 2)
+
+        assert "http_during" in result
+        assert result["http_during"]["total_requests"] == 2
+        assert result["http_during"]["success_rate"] == 1.0
+        assert result["http_during"]["avg_ttfb_ms"] == 20.0
+        assert result["http_during"]["five_xx_rate"] == 0.5
+        assert "http_observation_window" in result
+        assert result["http_observation_window"]["covers_attack_window"] is True
+
+    def test_http_null_when_monitor_not_running(self):
+        from src.pktgen.adapter import _sample_rtt
+        import time
+
+        http_monitor = MagicMock()
+        http_monitor.is_running.return_value = False
+        ping_monitor = MagicMock()
+        ping_monitor.is_running.return_value = False
+
+        with patch("src.pktgen.adapter.get_ping_monitor", return_value=ping_monitor), \
+             patch("src.pktgen.adapter.get_http_monitor", return_value=http_monitor):
+            result = _sample_rtt({"success": True}, time.time())
+
+        assert result["http_during"] is None
+
+
 class TestPacketSequenceJsonParsing:
     """pktgen_packet_sequence 的 JSON 解析测试。"""
 
