@@ -2,7 +2,7 @@
     "target_ip": "100.1.11.3",
     "pcap_path": "",
     "log_path": "data/experiment.jsonl",
-    "max_iters": 20,
+    "max_iters": 5,
     "no_improve_limit": 5,
     "auto_approve": true,
     "verbose": false,
@@ -11,7 +11,7 @@
     "trex_explore": false,
     "catalog_target": 10,
     "explore_direction": "",
-    "instruction": "使用Trex来构造大文件下载攻击，去下载这个图片http://100.1.11.3:8081/api/activities/00000000-0000-0000-0000-000000000001/image",
+    "instruction": "使用Trex来实现TCP 长连接攻击，去下载这个图片http://100.1.11.3:8081/api/activities/00000000-0000-0000-0000-000000000001/image",
     "attack": {
         "duration_s": 10,
         "pps": 100,
