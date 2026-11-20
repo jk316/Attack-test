@@ -24,7 +24,8 @@ test.py
 
 .claude/
 
-data/
+# Track data/ logs (experiment.jsonl); PCAP uploads stay out of git
+data/uploads/
 
 # Pktgen compiled Lua output
 lua_scripts/
