@@ -6,11 +6,11 @@
 #   bash scripts/logsync.sh                  # 提交信息自动带时间戳
 #   bash scripts/logsync.sh "TRex 满线速 SYN 测试"   # 自定义提交信息
 #
-# 流程: pull --rebase → add data/ + experiment.json → 无变更则跳过 → commit → push
+# 流程: pull --rebase → add data/agent.log + data/experiment.jsonl → 无变更则跳过 → commit → push
 # 说明:
-#   - 只暂存 data/（日志、实验数据）与 experiment.json（运行配置），
-#     不碰其他任何文件；
-#   - 若工作区还有这两者之外的未提交改动，脚本会提醒但不会代提交。
+#   - 只暂存 data/agent.log 与 data/experiment.jsonl 两个日志文件，
+#     不碰 data/ 下其他内容，也不碰 experiment.json 等配置；
+#   - 若工作区还有这两个文件之外的未提交改动，脚本会提醒但不会代提交。
 # =============================================================================
 set -uo pipefail
 
@@ -23,16 +23,16 @@ if ! git pull --rebase; then
   exit 1
 fi
 
-# ── 2. 检查工作区是否有其他未提交改动（data/ 与 experiment.json 之外的）──
-OTHER="$(git status --porcelain | grep -vE '^.. data/' | grep -vE '^.. experiment\.json' || true)"
+# ── 2. 检查工作区是否有其他未提交改动（两个日志文件之外的）──
+OTHER="$(git status --porcelain | grep -vE '^.. data/agent\.log$' | grep -vE '^.. data/experiment\.jsonl$' || true)"
 if [ -n "$OTHER" ]; then
   echo "⚠️  存在本次不会提交的改动："
   echo "$OTHER"
-  echo "   （本脚本只提交 data/ 与 experiment.json，请自行处理上面这些文件）"
+  echo "   （本脚本只提交 data/agent.log 与 data/experiment.jsonl，请自行处理上面这些文件）"
 fi
 
-# ── 3. 暂存日志与运行配置 ──
-git add data/ experiment.json
+# ── 3. 暂存两个日志文件 ──
+git add data/agent.log data/experiment.jsonl
 
 # ── 4. 没有变更就直接结束 ──
 if git diff --cached --quiet; then
