@@ -60455,3 +60455,498 @@ TRex script resolve_mac2.py succeeded (1.084s)
 [fping_q] s=10 r=10 rtt=0.064
 [fping_q] s=10 r=10 rtt=0.064
 [fping_q] UNPARSED: ... (178 more similar lines)
+[100.1.11.3] backend=fping_q cmd=fping -l -Q 1 -p 100 100.1.11.3
+[http-monitor] start url=http://10.99.80.159:3000/login interval=1.00s
+Monitors auto-started: ping=True http=True
+============================================================
+[LLM INPUT] 总消息: 2, 本轮新增: 2
+  [0] system: 你是一个闭环网络实验智能体，通过自主调用工具来最大化目标的 RTT（往返时延） 和 丢包率。\n\n**所有输出和回答请使用中文。**\n\n\n## 本次实验目标（用户指定）\n\n用户对本次实验的额外目标/要求如下，请在不违反安全约束和实验协议的前提下优先满足，并据此调整参数探索方向：\n\n验证观测链路：只执行一轮 traffic_send（pps=100、duration_s=5），然后 read_ping_stats 读取攻击后基线，输出总结并结束。禁止调用 Pktgen/TRex 任何工具。\n\n\n## 实验协议（每轮必须严格按顺序执行）\n\n### 初始化阶段（实验开始前，仅一次）\n\n0. **确认监控已自动就绪**: 后台 ping 监控与 HTTP 拨测已由实验程序在启动时自动开启，无需也无法手动启动。ping 监控打实验目标 IP；HTTP 拨测仅在配置了 `experiment.json` 的 `http.url` 时开启。直接调用 `read_ping_stats` / `read_http_stats` 读取基线即可。\n   如果提供了 PCAP 文件路径，在此步骤之前先调用 `p… (+14565 chars, see data/agent.log) 
+    content: 你是一个闭环网络实验智能体，通过自主调用工具来最大化目标的 RTT（往返时延） 和 丢包率。
+
+**所有输出和回答请使用中文。**
+
+
+## 本次实验目标（用户指定）
+
+用户对本次实验的额外目标/要求如下，请在不违反安全约束和实验协议的前提下优先满足，并据此调整参数探索方向：
+
+验证观测链路：只执行一轮 traffic_send（pps=100、duration_s=5），然后 read_ping_stats 读取攻击后基线，输出总结并结束。禁止调用 Pktgen/TRex 任何工具。
+
+
+## 实验协议（每轮必须严格按顺序执行）
+
+### 初始化阶段（实验开始前，仅一次）
+
+0. **确认监控已自动就绪**: 后台 ping 监控与 HTTP 拨测已由实验程序在启动时自动开启，无需也无法手动启动。ping 监控打实验目标 IP；HTTP 拨测仅在配置了 `experiment.json` 的 `http.url` 时开启。直接调用 `read_ping_stats` / `read_http_stats` 读取基线即可。
+   如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
+
+### 每轮迭代
+
+根据当前阶段自主选择合适工具，不必每次都执行全部步骤。核心循环：
+
+1. **读取攻击前基线**: `read_ping_stats`（window_s=5）读 RTT 基线；若已配置 HTTP 业务（`http.url` 非空，程序已自动开启拨测），同时 `read_http_stats` 记录 HTTP 基线（`success_rate` / `avg_ttfb_ms`）。
+2. **选择并发送流量**:
+   - Scapy 工具（低速率探索）→ `traffic_send` / `mixed_traffic_send`
+   - Pktgen 工具（高吞吐/扫描/序列/回放）→ 见下方工具表
+   - ⚠️ Pktgen flood 工具 `duration=0` 或 `count=0` 会**永久发送**，必须手动调用 `pktgen_stop_and_reset` 停止
+3. **测量效果**:
+   - `read_ping_stats` → RTT 变化
+   - `read_http_stats` → HTTP 健康度变化（success_rate / TTFB / 5xx）
+   - `pktgen_stats_monitor` → 端口级统计（Pktgen 工具时推荐）
+4. **记录日志**: `log_result`
+5. **清理（Pktgen 工具后必须）**: `pktgen_stop_and_reset` → 停止流量，重置端口，准备下一轮
+
+如果使用 Scapy 工具则跳过步骤 5（流量自动停止）。切换 Pktgen 协议类型前**必须**先调用 `pktgen_stop_and_reset`。
+
+### 日志记录规范（log_result，每次记录必须遵守）
+
+日志会被下游分析程序统一解析，因此 `log_result` 的字段命名必须规范：
+
+1. **params 只放输入参数**，统一字段名：
+   - `target_ip`（目标 IP，不要用 dst_ip/target/ip）
+   - `dst_port`（目标端口，不要用 dport/port）
+   - `duration_ms`（攻击时长，统一毫秒；不要用 duration_s/duration）
+   - `pkt_size`（包大小字节，不要用 packet_size/pktSize）
+   - `pps`（包速率 packets/s，Scapy/TRex 用）
+   - `rate_pct`（Pktgen 线速百分比，仅 Pktgen 工具用，不要写成 rate）
+   - `protocol`（udp/tcp/icmp/arp，不要用 proto）
+   - 工具特有参数（`tcp_flags`、`scan_field`、`arp_type`、`streams`、`flow_count`、`iat_jitter_ms` 等）放 `params.extras` 子对象里
+2. **实测结果放 `results` 参数**（不要混入 params）：`tx_gbps`、`pps_actual`、`port_util_pct`、`note` 等运行期指标
+3. **`tool` 参数必填**：填本迭代实际使用的攻击工具名（如 `pktgen_udp_flood`）；若省略，系统会自动记录最近一次工具调用名
+4. 示例：
+   ```json
+   {
+     "iteration": 3,
+     "tool": "pktgen_tcp_flood",
+     "params": {
+       "target_ip": "10.99.80.160",
+       "dst_port": 80,
+       "duration_ms": 5000,
+       "pkt_size": 64,
+       "rate_pct": 80,
+       "protocol": "tcp",
+       "extras": {"tcp_flags": "S"}
+     },
+     "results": {"pps_actual": 95000, "tx_gbps": 1.2, "note": "目标端口利用率升至 92%"},
+     "rtt": 0.98,
+     "loss": 0.0
+   }
+   ```
+
+### 实验结束
+
+- 直接输出实验总结；后台监控的关闭由实验程序自动完成，无需调用任何停止工具。
+
+## 持续 Ping 监控工具
+
+> 监控生命周期由实验程序管理：实验开始时自动启动、结束时自动停止；Agent 只能读取数据，没有启动/停止工具。
+
+| 工具 | 说明 |
+|------|------|
+| `read_ping_stats` | 读取最近 window_s 秒的 RTT 统计 |
+| `ping_rtt` | 对指定 IP 做单次 ping 探测（即时测量） |
+
+## HTTP 业务拨测工具
+
+针对 HTTP 业务（而非 ICMP）的健康观测，攻击对业务的影响会体现在以下指标上：
+
+> 后台 HTTP 拨测由实验程序在配置了 `http.url` 时自动启动/停止；Agent 只能读取数据。
+
+| 工具 | 说明 |
+|------|------|
+| `http_probe` | 单次 HTTP 拨测，返回分阶段耗时（DNS/TCP/TLS）、TTFB、总耗时、状态码、下载大小/速率 |
+| `read_http_stats` | 读取最近 window_s 秒的 HTTP 健康统计 |
+
+`read_http_stats` 返回的关键字段与语义：
+
+| 字段 | 含义 | 攻击有效时的表现 |
+|------|------|------------------|
+| `success_rate` | 拿到 HTTP 响应（任意状态码）的比例 | 下降（连接层被阻断/超时） |
+| `avg_ttfb_ms` / `avg_total_ms` | 首字节 / 总响应时间 | 升高（业务延迟退化） |
+| `five_xx_rate` | 5xx 占总请求比例 | 上升（服务器过载） |
+| `timeout_count` / `connection_error_count` | 超时 / 连接拒绝次数 | 增多 |
+| `status_codes` | 状态码分布 | 出现 500/502/503/504 |
+
+流量工具（`traffic_send` / `mixed_traffic_send`）的返回值在 `rtt_during` 之外还附带 `http_during` 字段：若 HTTP monitor 在运行，`http_during` 给出攻击窗口内的上述聚合指标，可直接判断攻击对 HTTP 业务的影响。
+
+`read_ping_stats` 返回的字段：monitor_active, target_ip, latest_rtt_ms, avg_rtt_ms, min_rtt_ms, max_rtt_ms, sample_count（收到的探测数）, sent_count（窗口内发送的探测总数）, loss_pct（窗口内真实丢包率）, window_s, backend（fping 或 ping）。**`loss_pct` 现已准确反映窗口内丢包情况**——以前恒为 0，现在 fping 和增强版 ping fallback 都能给出真实值。
+
+`traffic_send` 和 `mixed_traffic_send`（以及所有 Pktgen 流量工具）返回值中新增 `rtt_during`、`attack_window`、`observation_window` 字段（仅在 ping monitor 运行时 `rtt_during` 才有数据）：
+```json
+{
+  "rtt_during": {
+    "samples": [{"ts": 1717200000.123, "rtt_ms": 12.5, "sent": 1, "received": 1}, ...],
+    "avg_rtt_ms": 25.3,
+    "min_rtt_ms": 5.1,
+    "max_rtt_ms": 80.2,
+    "loss_pct": 20.0,
+    "total_sent": 5,
+    "total_received": 4
+  },
+  "attack_window": {
+    "start": {"ts": 1717200000.1, "iso": "2026-07-13 15:20:00"},
+    "end":   {"ts": 1717200005.2, "iso": "2026-07-13 15:20:05"},
+    "duration_s": 5.1,
+    "mode": "scapy"
+  },
+  "observation_window": {
+    "sample_count": 5,
+    "first_sample": {"ts": 1717200000.6, "iso": "2026-07-13 15:20:00"},
+    "last_sample":  {"ts": 1717200004.9, "iso": "2026-07-13 15:20:04"},
+    "covers_attack_window": true,
+    "note": "观测窗口已覆盖攻击窗口，共 5 个探测（收到 4，丢包 20.0%）。"
+  }
+}
+```
+- `attack_window` = 攻击的**起止时间点**（`start`/`end` 均为 epoch `ts` + 可读 `iso` 双格式），`duration_s` 为实际攻击时长，`mode` 为执行模式（scapy / live / dry_run）。
+- `observation_window` = RTT **观测的起止时间点与对齐诊断**：`covers_attack_window` 表示观测是否真正落在攻击窗口内；`note` 用自然语言说明对齐情况。
+- 当 `rtt_during` 为 null 时，说明监控不可用（目标缺失/启动失败）或观测窗口内无样本——此时 `observation_window.note` 会给出原因。
+
+## RTT 分析策略
+
+- **先验证观测对齐**（最重要）: 每次拿到流量工具结果，先检查 `observation_window.covers_attack_window`。若为 `false`，或 `note` 提示"样本不足 / 攻击窗口过短 / monitor 未运行"，说明**本轮观测不可靠**——不要据此判断攻击效果或调整参数方向，应先修正（增大 duration、避免 duration=0）再重跑本轮。监控由程序管理、无法手动启动；若观测持续为空，按观测缺失处理，不作为调整参数依据。
+- **基线对比**: 攻击前基线 RTT vs 攻击期间 RTT vs 攻击后 RTT，判断攻击是否有显著效果
+- **趋势判断**: RTT 在攻击期间是否持续上升？攻击结束后是否回落？回落速度如何？
+- **丢包率也是攻击效果**（重要）: `loss_pct` 高本身就是有效攻击信号（DoS/DDoS 的典型效果就是丢包，而非 RTT 升高）。若 RTT 变化不大但 loss_pct 显著上升，说明攻击方向正确——继续加大或保持当前参数，切勿取消。
+- **参数效果**: 不同参数组合对 RTT 和丢包率的影响程度，找出最有效的参数组合
+
+## 混合流量工具 (mixed_traffic_send)
+
+除了 `traffic_send` 的单协议流量外，你还可以使用 `mixed_traffic_send` 发送多协议、多流混合流量。
+
+### 参数
+
+| 参数 | 说明 |
+|------|------|
+| dst_ip | 目标 IP（必须是 allowlist 中的地址）。traffic_spec_json 中的 IP.dst 会被自动覆盖为此值 |
+| traffic_spec_json | 描述多条并发流的 JSON 字符串，格式见下方 Schema |
+| duration_s | 持续时间，默认 5s，最大 20 |
+| pps | 总发包速率，默认 100，最大 20000 |
+
+### Traffic Spec JSON 格式
+
+```json
+{
+  "streams": [
+    {
+      "stream_id": "字符串，唯一标识，不含特殊字符",
+      "protocol_stack": ["IP", "TCP"],
+      "fields": {
+        "IP": {"ttl": 64},
+        "TCP": {"flags": "S", "dport": 80, "sport": 12345}
+      },
+      "percentage": 60
+    }
+  ]
+}
+```
+
+### 约束
+
+- streams 数量: 1-10 条
+- protocol_stack: 自底向上排列，支持 IP、TCP、UDP、ICMP、DNS、Raw
+- fields: 键名必须与 Scapy 属性名一致（如 TCP.flags, UDP.dport, DNS.qr）
+- DNS 嵌套字段: qd/an/ns/ar 用 dict 表示，如 `"qd": {"qname": "example.com.", "qtype": "A"}`
+  - DNS qtype 仅支持: A, NS, MD, MF, CNAME, SOA, MB, MG, MR, NULL, WKS, PTR, HINFO, MINFO, MX, TXT, AAAA, SRV
+  - 不要使用 ANY 或其他未列出的 qtype 值
+- percentage: 整数 1-100，所有流的 percentage 之和必须为 100
+- IP.dst 无需填写，会被自动覆盖为 dst_ip 的值
+
+### 选择建议
+
+- 简单 UDP 流量测试 → 用 `traffic_send`
+- 需要 TCP SYN/ACK、DNS 查询、ICMP、多协议混合 → 用 `mixed_traffic_send`
+- 需要模拟真实业务流量混合 → 用 `mixed_traffic_send`
+
+
+## Pktgen-DPDK 工具（硬件线速流量）
+
+Pktgen-DPDK 是基于 Intel DPDK 的高性能数据包发生器，能以 **硬件线速** 发送流量，吞吐量远超 Python Scapy。Pktgen 编译 Lua 脚本并发送到运行中的 Pktgen 实例（10.99.80.222:22022）执行。
+
+
+**当前为 dry-run 模式**：Pktgen 工具仅编译 Lua 脚本并保存到 `lua_scripts/` 目录，**不实际发送流量**。适合验证参数和脚本正确性。如需实际发送，使用 `--pktgen-live` 启动。
+
+
+### Pktgen 工具列表（共 9 个）
+
+#### 洪水攻击工具
+
+| 工具 | 协议层 | 关键参数 | 说明 |
+|------|--------|----------|------|
+| `pktgen_udp_flood` | L3/L4 | dst_ip, rate, duration, dport, sport, pktSize | UDP 线速洪水 |
+| `pktgen_tcp_flood` | L3/L4 | dst_ip, rate, duration, dport, tcp_flags (syn/ack/rst/fin) | TCP 线速洪水，可指定标志位 |
+| `pktgen_icmp_flood` | L3 | dst_ip, rate, duration, pktSize, ttl | ICMP Echo Request 洪水 |
+| `pktgen_arp_flood` | L2 | rate, duration, arp_type (request/gratuitous) | ARP 洪水，无 IP/端口参数 |
+
+#### 高级流量工具
+
+| 工具 | 关键参数 | 说明 |
+|------|----------|------|
+| `pktgen_range_scan` | dst_ip, scan_field, start/min/max/inc, rate | 硬件级参数范围扫描。Pktgen 自动在 [min,max] 区间按 inc 步进遍历 scan_field（dst_ip/dst_port/src_port/pkt_size/vlan_id/MAC 等），远快于软件逐轮调整 |
+| `pktgen_packet_sequence` | dst_ip, sequences (JSON数组), rate, count | 多包序列生成。通过 seqTable 定义最多 16 种不同包模板，Pktgen 按序循环发送。每个模板指定完整的 MAC/IP/port/proto/size/VLAN |
+| `pktgen_pcap_replay` | pcap_file, rate, count | PCAP 文件回放。从 Pktgen 主机上的 PCAP 文件直接回放流量。**⚠️ 不受 allowlist 约束**——PCAP 文件中内嵌的 dst_ip 直接使用，不经过 Attack-Test 的 IP 校验。操作员在 HITL 审批时必须特别关注 pcap_file 的内容 |
+
+#### 监控与控制工具
+
+| 工具 | 关键参数 | 说明 |
+|------|----------|------|
+| `pktgen_stats_monitor` | interval_ms, iterations, mode (all/link/sending/rates/packets/port) | 定时轮询 Pktgen 端口统计（链路状态、发包速率、丢包/错误计数）。**不产生流量，无需审批** |
+| `pktgen_stop_and_reset` | save_config, clear_stats, reset_ports | 安全停止所有端口流量并重置配置。**不产生流量，无需审批**。切换洪水类型前应调用此工具 |
+
+### 参数语义差异（重要！）
+
+Pktgen 工具的参数语义与 Scapy 工具有本质区别：
+
+| 概念 | Scapy 工具 | Pktgen 工具 |
+|------|-----------|-------------|
+| 速率控制 | `pps` — 每秒包数（绝对值） | `rate` — 端口线速百分比 0–100（相对值） |
+| 时间单位 | `duration_s` — **秒** | `duration` — **毫秒**（5000 = 5秒） |
+| 包大小 | `packet_size` | `pktSize` |
+| 流数量 | `flow_count` | 不适用（单协议） |
+| 数量控制 | 无 | `count` — 发包数量（0 = 永远） |
+| 批量发送 | 无 | `burst` — Tx burst size（默认 128） |
+| 目标 IP | `dst_ip` 必填（allowlist） | `dst_ip` 必填（allowlist）。Pktgen 技能内置默认值 `10.10.10.2`，**不应依赖**——始终显式传入 allowlist 中的目标 IP |
+
+**关键换算**：
+- rate=100 表示端口最大线速（通常 14.88 Mpps @ 64B on 10G），远超 Scapy 的发流能力
+- rate=1 在 10G 端口上约为 148.8 Kpps，仍远超 Scapy 上限
+- duration=5000 表示 5 秒（5000 毫秒），duration=0 表示永远发送
+- ⚠️ **安全警告**: `count=0` 或 `duration=0` = 永久发送，不会自动停止。**必须**随后调用 `pktgen_stop_and_reset` 手动停止。live 模式下务必设置非零的 duration 或 count，除非你明确需要持续攻击
+
+### Pktgen 工具使用指南
+
+调用 Pktgen 工具时遵循以下流程：
+
+1. **初始化**：监控已由程序自动启动，直接用 `read_ping_stats` 读基线（与 Scapy 流程相同）
+2. **可选：基线统计**：`pktgen_stats_monitor` → 获取攻击前端口状态
+3. **发送流量**：选择 Pktgen 洪水/扫描/序列/回放工具 → 需人工审批（live 模式）
+4. **监控效果**：
+   - `read_ping_stats` → 获取攻击期间/攻击后 RTT 变化
+   - `pktgen_stats_monitor` → 获取端口级速率/丢包/错误统计
+5. **清理**：`pktgen_stop_and_reset` → 停止流量并重置端口
+
+### 扩展的优化目标
+
+除了原有的 RTT + 丢包率目标，Pktgen 工具还支持以下分析维度：
+
+- **端口速率饱和点**：通过 `pktgen_range_scan` 扫描 rate 0→100，配合 `read_ping_stats` 找到使 RTT 急剧上升的速率阈值
+- **协议敏感性**：对比 UDP/TCP/ICMP/ARP 洪水在相同速率下的 RTT 影响，判断目标的协议处理瓶颈
+- **端口统计关联**：`pktgen_stats_monitor` 的端口速率/丢包计数 vs ping RTT/丢包率的关联分析
+- **参数空间快速探索**：`pktgen_range_scan` 可在单次调用中遍历 dst_port 1–65535 或 pktSize 64–1518，硬件级速度远超 ReAct 逐轮调整
+- **真实流量复现**：`pktgen_pcap_replay` 可回放已捕获的流量模式，测试目标对特定流量特征的响应
+
+### Pktgen 与 Scapy 工具选择
+
+不设硬性规则。以下为决策参考，由你自主判断：
+
+- **低速率探索阶段** → Scapy 工具更灵活（多协议混合、DNS 查询、字段精细控制）
+- **需要更高吞吐量** → Pktgen 洪水工具
+- **需要自动遍历参数范围** → `pktgen_range_scan`（硬件扫描比软件逐轮调整快几个数量级）
+- **需要多协议混合 + 字段精确控制** → `mixed_traffic_send` 或 `pktgen_packet_sequence`
+- **需要端口级硬件统计** → `pktgen_stats_monitor`
+- **切换 Pktgen 协议前** → 先调用 `pktgen_stop_and_reset`
+
+### 混合实验示例（Scapy → Pktgen 升级路径）
+
+```
+第1轮: read_ping_stats(baseline=12ms, 监控已自动运行)
+       → traffic_send(pps=100) → read_ping_stats(13ms, 无变化)
+       → log_result → 分析: 低速率无效果, 升级到 Pktgen
+
+第2轮: pktgen_udp_flood(rate=10, duration=5000)
+       → read_ping_stats(avg=85ms, RTT大幅上升!)
+       → pktgen_stop_and_reset → log_result
+       → 分析: rate=10 有效果, 继续加大
+
+第3轮: pktgen_udp_flood(rate=30, duration=5000)
+       → read_ping_stats(avg=250ms, max=500ms)
+       → pktgen_stats_monitor(确认端口线速发包)
+       → pktgen_stop_and_reset → log_result
+       → 分析: rate=30 效果显著, 尝试探索端口扫描
+
+第4轮: pktgen_range_scan(scan_field=dst_port, min=1, max=1024, rate=20)
+       → read_ping_stats → 分析: port 80/443 时 RTT 最高
+       → pktgen_stop_and_reset → log_result
+       → 总结: 目标对 80/443 端口流量最敏感
+```
+
+### 错误恢复
+
+- **Pktgen 连接失败**（`PktgenConnectionError` / `Connection failed`）→ Pktgen 不可达，降级使用 Scapy 工具（`traffic_send` / `mixed_traffic_send`）继续实验，不要放弃
+- **编译错误**（`CompileError`）→ 参数超出合法范围，根据错误信息调整参数后重试
+- **HITL 被拒绝** → LLM 收到 `{"success": False, "error": "HITL rejected"}`，应调整参数（如降低 rate、更换协议）后重新提交审批，不要重复相同请求
+
+
+
+
+## TRex 客户端工具（生成并执行 Python 脚本）
+
+TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python 脚本**，脚本通过 TRex 的 STL/ASTF Python API 连接 Trexserver（10.99.80.222:4501）执行流量。与 Scapy/Pktgen 的结构化工具不同，这里用两个通用工具让你自由生成任意 TRex 脚本：
+
+| 工具 | 说明 |
+|------|------|
+| `write_python_file` | 把 Python 源码写入 `trex_scripts/` 沙箱目录并做**语法检查**（只解析不执行）。即使有语法错误，文件也会保留，供人类查看/修改 |
+| `run_python_file` | 执行 `trex_scripts/` 中已写入的脚本，捕获 stdout / stderr / 退出码 |
+
+
+**当前为 dry-run 模式**：`run_python_file` 只做存在性 + 语法检查，**不会真正执行脚本**。适合验证生成的代码。如需实际执行，用 `--trex-live` 启动。
+
+
+### 使用流程（生成 → 检查 → 执行 → 出错修复）
+
+1. `write_python_file(filename="xxx.py", code="...")` 生成脚本 → 检查返回的 `syntax_ok`
+2. 若 `syntax_ok=false`，根据 `syntax_error` 修改代码后重新 `write_python_file`
+3. `run_python_file(filename="xxx.py", target_ip="<目标IP>")` 执行
+4. 若返回 `success=false`（非零退出码 / 超时 / 连接失败），根据 `stderr` 修正脚本后重试；也可交由人类直接编辑 `trex_scripts/xxx.py` 后重跑
+
+### 约束
+
+- `filename` 只能是裸文件名（如 `udp_flood.py`），不能带目录或 `..`
+- `target_ip`（若提供）必须在 allowlist 中
+- 脚本内不应出现非 allowlist 的目标 IP——live 模式下会对**明显的点分十进制 IP 字面量**做静态拦截（best-effort；通过字符串拼接/十六进制/域名等方式混淆的 IP 无法被静态发现，真正兜底是 HITL 人工审批）
+- **执行无 OS 沙箱**：live 模式下脚本以本机当前用户完整权限运行任意 Python（可读写文件、读环境变量、访问网络）。审批前请仔细阅读 HITL 弹窗展示的脚本内容
+- 脚本执行有超时（默认 30s），禁止无限发包
+- TRex 客户端库已安装在运行主机，脚本直接 `import trex_stl_lib` / `import trex_astf_lib` 即可
+
+### 脚本模板示例
+
+```python
+from trex_stl_lib.api import *
+
+c = STLClient(server="10.99.80.222")
+c.connect()
+try:
+    c.reset()
+    # ... 添加 streams / 启动流量 / 停止 ...
+finally:
+    c.disconnect()
+```
+
+
+## 参数边界
+
+| 参数 | 最小值 | 最大值 |
+|------|--------|--------|
+| dst_port | 1 | 65535 |
+| duration_s | 1 | 20 (默认 10) |
+| pps | 1 | 20000 (默认 100) |
+| packet_size | 1 | 1024 (默认 64) |
+| flow_count | 1 | 100 (默认 1) |
+| iat_jitter_ms | 0 | 20 |
+
+**默认攻击参数**（可通过 CLI 覆盖）:
+- duration_s=10, pps=100, packet_size=64, flow_count=1
+
+- Pktgen: rate=50%, duration=10000ms
+
+
+## 优化策略 & 奖励函数
+
+**奖励公式**: `reward = avg_rtt_ms + loss_pct * 10` — 最大化 reward。
+
+**若配置了 HTTP 业务拨测**（`http.url` 非空），奖励扩展为：
+
+```
+reward = avg_rtt_ms + loss_pct * 10
+       + (1 - success_rate) * 100      # HTTP 可用性下降
+       + max(0, ttfb_ratio - 1) * 50   # TTFB 相对基线升高
+       + five_xx_rate * 50             # 服务器过载 5xx
+```
+
+其中 `ttfb_ratio` = 攻击期 `avg_ttfb_ms` / 攻击前基线 `avg_ttfb_ms`（基线来自攻击前 `read_http_stats`）。`success_rate` 下降、`five_xx_rate` 上升、TTFB 升高都意味着 HTTP 业务退化，是有效攻击信号。
+
+**分阶段策略**:
+
+| 阶段 | 条件 | 策略 |
+|------|------|------|
+| 早期探索 | loss_pct == 0, RTT 不高 | 逐轮增加 pps/rate、packet_size/pktSize，找到 RTT 开始上升的拐点。Pktgen rate 从 5-10 起步 |
+| 饱和推进 | loss_pct == 0, RTT 已上升 | 沿当前方向继续加大，每次调整 1-3 个参数。RTT 持续上升 = 方向正确 |
+| 退化攻击 | loss_pct > 0 | 优先提高 loss_pct，RTT 辅助参考。loss_pct > 50% 表示攻击成功 |
+| 协议切换 | 连续 3 轮无改善 | 切换协议类型（UDP→TCP SYN→ICMP→ARP），不同目标对不同协议敏感性不同 |
+| 批量探索 | 需要大范围搜索 | 使用 `pktgen_range_scan` 硬件扫描替代 ReAct 逐轮调整（速度快几个数量级） |
+
+**通用原则**: 逐步调整避免极端值；每轮只改 1-3 个参数；RTT 上升继续同方向，下降则反向。
+
+## 停止条件
+
+- 完成 2 轮时停止
+- 连续 5 轮 reward 无提升时停止
+- 停止后输出实验总结（最佳RTT、最佳loss、最佳参数）
+
+## 初始化（实验开始前）
+
+如果用户提供了 PCAP 文件路径，先调用 `pcap_profile` 分析流量特征，基于分析结果设置初始参数：
+- dst_port: 用 top_dst_ports[0]
+- packet_size: 用 packet_size_hist 的峰值区间
+- flow_count: 用 flow_stats.approx_flow_count 的一半
+- iat_jitter_ms: 用 iat_ms_stats.p50
+
+后台 ping 监控已由实验程序自动启动，直接调用 `read_ping_stats` 读取基线即可。
+
+## 安全约束
+
+- `traffic_send`、`mixed_traffic_send` 和 Pktgen 流量工具（`pktgen_*_flood`、`pktgen_range_scan`、`pktgen_packet_sequence`、`pktgen_pcap_replay`）只能向 allowlist 中的目标发送流量
+- 流量发送前必须通过人工审批（HITL gate）——Scapy 和 Pktgen 工具均适用
+- 后台 ping 监控由程序自动启动，且只能打 allowlist 中的目标
+
+- TRex 的 `run_python_file` 在 live 模式下执行前需人工审批；其执行的是**任意 Python**（无 OS 沙箱），脚本内的目标 IP 仅做 best-effort 静态扫描，真正边界是人工审批
+
+- `pktgen_stats_monitor` 和 `pktgen_stop_and_reset` **不需要**人工审批（不产生流量 / 停止操作不应被阻塞）
+- Pktgen `rate=100` 可能完全拥塞链路——从低 rate 开始探索，逐步提高
+
+  [1] human: 请开始闭环网络实验：\n- 用户指令: 验证观测链路：只执行一轮 traffic_send（pps=100、duration_s=5），然后 read_ping_stats 读取攻击后基线，输出总结并结束。禁止调用 Pktgen/TRex 任何工具。\n- 目标IP: 100.1.11.3\n- 最大迭代次数: 2\n- 无改善停止轮数: 5\n- 日志文件路径: data/experiment.jsonl\n- PCAP文件路径: 无（使用默认初始参数）\n\n请严格按照系统提示中的实验协议执行。如果提供了PCAP文件，先用 pcap_profile 工具分析流量特征。 
+    content: 请开始闭环网络实验：
+- 用户指令: 验证观测链路：只执行一轮 traffic_send（pps=100、duration_s=5），然后 read_ping_stats 读取攻击后基线，输出总结并结束。禁止调用 Pktgen/TRex 任何工具。
+- 目标IP: 100.1.11.3
+- 最大迭代次数: 2
+- 无改善停止轮数: 5
+- 日志文件路径: data/experiment.jsonl
+- PCAP文件路径: 无（使用默认初始参数）
+
+请严格按照系统提示中的实验协议执行。如果提供了PCAP文件，先用 pcap_profile 工具分析流量特征。
+[fping_q] UNPARSED: [02:08:59]
+[fping_q] s=10 r=10 rtt=0.071
+[fping_q] s=10 r=10 rtt=0.064
+============================================================
+[LLM INPUT] 总消息: 4, 本轮新增: 2
+  [2] ai: 我先读取攻击前基线，然后执行一轮 traffic_send。  tool_calls=['read_ping_stats']
+    content: 我先读取攻击前基线，然后执行一轮 traffic_send。
+    kwargs={"reasoning_content": "Let me follow the user's instructions. Execute one round of traffic_send (pps=100, duration_s=5), then read_ping_stats, output summary.\n\nFirst, read baseline before attack (per protocol step 1). Then traffic_send. Then read_ping_stats.\n\nLet me start with reading baseline.", "refusal": null}
+  [3] tool: {"monitor_active": true, "target_ip": "100.1.11.3", "latest_rtt_ms": 0.064, "avg_rtt_ms": 0.068, "min_rtt_ms": 0.064, "max_rtt_ms": 0.071, "sample_count": 20, "sent_count": 20, "loss_pct": 0.0, "window_s": 5.0, "backend": "fping_q"} 
+    content: {"monitor_active": true, "target_ip": "100.1.11.3", "latest_rtt_ms": 0.064, "avg_rtt_ms": 0.068, "min_rtt_ms": 0.064, "max_rtt_ms": 0.071, "sample_count": 20, "sent_count": 20, "loss_pct": 0.0, "window_s": 5.0, "backend": "fping_q"}
+[fping_q] s=10 r=10 rtt=0.066
+[fping_q] s=10 r=10 rtt=0.063
+[fping_q] s=10 r=10 rtt=0.061
+[fping_q] s=10 r=10 rtt=0.063
+[fping_q] s=10 r=10 rtt=0.06
+[fping_q] s=10 r=10 rtt=0.063
+============================================================
+[LLM INPUT] 总消息: 6, 本轮新增: 2
+  [4] ai: 攻击前基线：avg_rtt=0.068ms，loss=0%。现在执行一轮 traffic_send（pps=100、duration_s=5）。  tool_calls=['traffic_send']
+    content: 攻击前基线：avg_rtt=0.068ms，loss=0%。现在执行一轮 traffic_send（pps=100、duration_s=5）。
+    kwargs={"reasoning_content": "Baseline: avg_rtt 0.068ms, loss 0%. Now send traffic.", "refusal": null}
+  [5] tool: {"success": true, "params": {"dst_ip": "100.1.11.3", "dst_port": 80, "duration_s": 5, "pps": 100, "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 0}, "packets_sent": {"total": 494, "per_flow": {"0": 494}}, "elapsed_s": 5.0001, "effective_pps": 98.8, "send_mode": "raw", "errors": [], "rtt_during": {"samples": [{"ts": 1795226942.647, "rtt_ms": 0.063, "sent": 10, "received": 10}, {"ts": 1795226943.647, "rtt_ms": 0.061, "sent": 10, "received": 10}, {"ts": 1795226944.647, "rtt_ms": 0.063, "sent"… (+1228 chars, see data/agent.log) 
+    content: {"success": true, "params": {"dst_ip": "100.1.11.3", "dst_port": 80, "duration_s": 5, "pps": 100, "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 0}, "packets_sent": {"total": 494, "per_flow": {"0": 494}}, "elapsed_s": 5.0001, "effective_pps": 98.8, "send_mode": "raw", "errors": [], "rtt_during": {"samples": [{"ts": 1795226942.647, "rtt_ms": 0.063, "sent": 10, "received": 10}, {"ts": 1795226943.647, "rtt_ms": 0.061, "sent": 10, "received": 10}, {"ts": 1795226944.647, "rtt_ms": 0.063, "sent": 10, "received": 10}, {"ts": 1795226945.647, "rtt_ms": 0.06, "sent": 10, "received": 10}, {"ts": 1795226946.647, "rtt_ms": 0.063, "sent": 10, "received": 10}], "avg_rtt_ms": 0.062, "min_rtt_ms": 0.06, "max_rtt_ms": 0.063, "loss_pct": 0.0, "total_sent": 50, "total_received": 50}, "attack_window": {"start": {"ts": 1795226941.942, "iso": "2026-11-21 02:09:01"}, "end": {"ts": 1795226946.946, "iso": "2026-11-21 02:09:06"}, "duration_s": 5.004, "mode": "scapy"}, "observation_window": {"sample_count": 5, "first_sample": {"ts": 1795226942.647, "iso": "2026-11-21 02:09:02"}, "last_sample": {"ts": 1795226946.647, "iso": "2026-11-21 02:09:06"}, "covers_attack_window": true, "note": "观测窗口已覆盖攻击窗口，共 50 个探测（收到 50，丢包 0.0%）。"}, "http_during": {"total_requests": 1, "success_count": 0, "success_rate": 0.0, "timeout_count": 1, "connection_error_count": 0, "avg_ttfb_ms": 0.0, "max_ttfb_ms": 0.0, "avg_total_ms": 5001.549, "status_codes": {}, "five_xx_rate": 0.0}, "http_observation_window": {"sample_count": 1, "first_sample": {"ts": 1795226943.657, "iso": "2026-11-21 02:09:03"}, "last_sample": {"ts": 1795226943.657, "iso": "2026-11-21 02:09:03"}, "covers_attack_window": true, "note": "观测窗口已覆盖攻击窗口，共 1 个 HTTP 请求（成功 0）。 连接层失败 1 次。"}}
+[fping_q] s=10 r=10 rtt=0.069
+============================================================
+[LLM INPUT] 总消息: 8, 本轮新增: 2
+  [6] ai: 观测窗口已覆盖攻击窗口（covers_attack_window=true）。现在读取攻击后基线。  tool_calls=['read_ping_stats']
+    content: 观测窗口已覆盖攻击窗口（covers_attack_window=true）。现在读取攻击后基线。
+    kwargs={"reasoning_content": "", "refusal": null}
+  [7] tool: {"monitor_active": true, "target_ip": "100.1.11.3", "latest_rtt_ms": 0.069, "avg_rtt_ms": 0.063, "min_rtt_ms": 0.06, "max_rtt_ms": 0.069, "sample_count": 50, "sent_count": 50, "loss_pct": 0.0, "window_s": 5.0, "backend": "fping_q"} 
+    content: {"monitor_active": true, "target_ip": "100.1.11.3", "latest_rtt_ms": 0.069, "avg_rtt_ms": 0.063, "min_rtt_ms": 0.06, "max_rtt_ms": 0.069, "sample_count": 50, "sent_count": 50, "loss_pct": 0.0, "window_s": 5.0, "backend": "fping_q"}
+[fping_q] s=10 r=10 rtt=0.066
+[fping_q] s=10 r=10 rtt=0.069
+[fping_q] s=10 r=10 rtt=0.061
+============================================================
+[LLM INPUT] 总消息: 10, 本轮新增: 2
+  [8] ai: 读取攻击后基线完成。现在记录本轮结果。  tool_calls=['log_result']
+    content: 读取攻击后基线完成。现在记录本轮结果。
+    kwargs={"reasoning_content": "Now log the result and output summary. The user wants only one round. Log: iteration 1, tool traffic_send, params, rtt=avg during 0.062 or post 0.063, loss=0.\n\nNote http_during showed 1 request with success_rate 0 and timeout. That's interesting but user's goal is just verify observation link. I'll log and summarize.", "refusal": null}
+  [9] tool: {"success": true, "msg": "日志写入成功"} 
+    content: {"success": true, "msg": "日志写入成功"}
+[fping_q] s=10 r=10 rtt=0.063
+[fping_q] s=10 r=10 rtt=0.06
+[fping_q] s=10 r=10 rtt=0.068
+[fping_q] s=10 r=10 rtt=0.066
+[fping_q] UNPARSED: ... (15 more similar lines)
