@@ -51,6 +51,10 @@ uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
 # ── Web Console ──────────────────────────────────────────────────
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # Open http://localhost:8000
+
+# ── Sync experiment logs from the server ─────────────────────────
+bash scripts/logsync.sh                    # commit+push data/ + experiment.json
+bash scripts/logsync.sh "TRex SYN 测试"    # with a custom commit message
 ```
 
 ## Architecture
