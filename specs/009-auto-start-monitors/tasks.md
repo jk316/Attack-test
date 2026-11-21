@@ -121,7 +121,7 @@ description: "拨测监控生命周期收归程序——功能实现任务列表
 - [X] T015 修复配置漂移导致的测试失败（两文件加 hermetic MINIMAL_CFG fixture，26 用例全绿）（来源 F002·MEDIUM）：`tests/unit/test_trex_catalog_mode.py`（TestCatalogCliArgs 5 例）与 `tests/unit/test_instruction.py::test_default_empty` 目前读取项目根 `experiment.json` 的默认值——服务器提交的配置（trex_live=true、instruction 非空、max_iters=5）使断言失效。改为 hermetic：monkeypatch `src.main.CONFIG_PATH` 指向临时最小配置（参照 `tests/integration/test_monitor_autostart.py` 的 `hermetic_cfg`）。
 - [X] T016 补齐 pytest-asyncio 依赖（入 optional-dependencies.dev，uv.lock 已同步，web 5 用例全绿；测试另加代理环境屏蔽）（来源 F002·MEDIUM）：`tests/integration/test_web_experiment.py` 的 2 例因缺插件无法运行（`async def functions are not natively supported`）。在 `pyproject.toml` 的 `[project.optional-dependencies] dev` 增加 `pytest-asyncio>=0.24`，同步 `uv.lock`，`uv sync --extra dev` 后两例可运行并通过。
 - [X] T017 调查修复 `tests/unit/test_llm_client.py` 8 个存量失败（根因：no_proxy 含 [::1] + 主检出 .env 经 load_dotenv 上溯污染 LLM_MODEL；fixture 屏蔽后 18 用例全绿）（来源 F002·MEDIUM）：httpx 0.28.1 解析测试 mock URL 报 `InvalidURL: Invalid port: ':1]'`。修正测试中 mock base_url 的写法或给 httpx 加版本约束；webui 分支存在同样失败，修复后建议同步两分支。
-- [ ] T018 真实环境端到端验证（来源 F003·LOW·SC-001/SC-003）：在具备 LLM API 与网络的环境按 `quickstart.md` 场景 1/3/5 各执行一次——CLI 干跑首轮 `rtt_during` 非空、Web 控制台启动后 `read_http_stats` 有数据、进程退出后 5 秒内无 fping/ping/curl 残留；把实测结果回填到本任务勾选说明。
+- [ ] T018 真实环境端到端验证（一键脚本：`bash specs/009-auto-start-monitors/quickstart.sh`）（来源 F003·LOW·SC-001/SC-003）：在具备 LLM API 与网络的环境按 `quickstart.md` 场景 1/3/5 各执行一次——CLI 干跑首轮 `rtt_during` 非空、Web 控制台启动后 `read_http_stats` 有数据、进程退出后 5 秒内无 fping/ping/curl 残留；把实测结果回填到本任务勾选说明。
 
 ## 依赖与执行顺序
 
