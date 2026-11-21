@@ -85,7 +85,7 @@ All modes use the same `build_graph()` → `CompiledStateGraph` with `MemorySave
 ```
 User Request → LangChain V1.0 Agent (LangGraph StateGraph)
                  ├─ System prompt (src/prompts/system_prompt.j2)
-                 ├─ 19 tools: 8 Scapy + 9 Pktgen-DPDK + 2 TRex
+                 ├─ 19 tools: 6 Scapy + 9 Pktgen-DPDK + 2 TRex + 2 HTTP
                  │    ├─ Scapy: traffic_send, mixed_traffic_send, ping_rtt, ...
                  │    ├─ Pktgen: pktgen_udp_flood → adapter.py → vendored
                  │    │         pktgen_agent/compiler/compile.py → Lua → TCP :22022
@@ -121,7 +121,7 @@ ExperimentManager (backend/experiment.py)
 | File | Role |
 |------|------|
 | `src/agent/graph.py` | Builds agent via `create_agent()`, model config, system prompt rendering with template variables, DeepSeek reasoning_content monkey-patch |
-| `src/agent/tools.py` | 19 `@tool`-decorated LangChain tools (8 Scapy + 9 Pktgen via `*PKTGEN_TOOLS` + 2 TRex via `*TREX_TOOLS`); HITL gates via `interrupt()` |
+| `src/agent/tools.py` | 19 `@tool`-decorated LangChain tools (6 Scapy + 9 Pktgen via `*PKTGEN_TOOLS*` + 2 TRex via `*TREX_TOOLS*` + 2 HTTP read tools); HITL gates via `interrupt()` |
 | `src/agent/state.py` | Agent state definition |
 | `src/pktgen/adapter.py` | Pktgen adapter — wraps vendored `pktgen_agent` execution functions as `@tool` functions; enforces allowlist, HITL, RTT sampling, synchronous wait (`_wait_for_attack`), and **auto-fills eth_dst_addr** in `pktgen_packet_sequence` from `topology.yaml` |
 | `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts |
@@ -132,6 +132,8 @@ ExperimentManager (backend/experiment.py)
 | `experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms), plus live/dry-run/auto_approve/instruction flags |
 | `allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
+| `src/tools/http_monitor.py` | Background HTTP business dial-testing via curl (singleton, same pattern as PingMonitor); auto-started by the entry points when `experiment.json`'s `http.url` is configured |
+| `src/tools/monitor_lifecycle.py` | Program-owned monitor lifecycle (spec 009) — `start_experiment_monitors()` / `stop_experiment_monitors()` called by both entry points; allowlist check, failure downgrade, idempotent restart |
 | `src/tools/rtt_window.py` | `build_rtt_observation()` — enriches tool results with `rtt_during`, `attack_window`, `observation_window` fields |
 | `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping |
 | `src/tools/mixed_traffic_tool.py` | Multi-protocol via JSON spec; `validate_traffic_spec()` auto-fills missing percentages |
@@ -151,9 +153,12 @@ ExperimentManager (backend/experiment.py)
 
 | Category | Count | Tools |
 |----------|:-----:|-------|
-| Scapy (original) | 8 | `pcap_profile`, `start_ping_monitor`, `read_ping_stats`, `stop_ping_monitor`, `traffic_send`, `mixed_traffic_send`, `ping_rtt`, `log_result` |
+| Scapy (original) | 6 | `pcap_profile`, `read_ping_stats`, `traffic_send`, `mixed_traffic_send`, `ping_rtt`, `log_result` |
 | Pktgen (added) | 9 | `pktgen_udp_flood`, `pktgen_tcp_flood`, `pktgen_icmp_flood`, `pktgen_arp_flood`, `pktgen_range_scan`, `pktgen_packet_sequence`, `pktgen_pcap_replay`, `pktgen_stats_monitor`, `pktgen_stop_and_reset` |
 | TRex (added) | 2 | `write_python_file`, `run_python_file` |
+| HTTP (added) | 2 | `http_probe`, `read_http_stats` |
+
+**Monitor lifecycle is program-owned (spec 009)**: the ping and HTTP monitors are auto-started by the experiment entry points (CLI `src/main.py` and web console `backend/experiment.py`) before the agent runs, and stopped on exit via `src/tools/monitor_lifecycle.py`. The agent has **no** start/stop monitor tools — only the read/probe tools listed above.
 
 HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution. `--trex-explore` is a dedicated catalog mode: the agent gets ONLY the 2 TRex tools (write + dry-run check), TRex dry-run is forced (mutually exclusive with `--trex-live`), so the whole loop runs with zero traffic and zero HITL; the final summary is persisted to `output/trex_attack_catalog_<timestamp>.md` (timestamp keeps each run's report from overwriting the previous one) and scripts land in `trex_scripts/cat_*.py`.
 
@@ -210,7 +215,7 @@ experiment.json  →  main.py sets env vars  →  tools.py reads at call time
 
 ## PingMonitor (Singleton with Dual Backend)
 
-`get_ping_monitor()` returns the singleton; never instantiate directly. `main.py`'s `finally` block ensures cleanup.
+`get_ping_monitor()` returns the singleton; never instantiate directly. The lifecycle is program-owned (spec 009): `start_experiment_monitors()` / `stop_experiment_monitors()` in `src/tools/monitor_lifecycle.py` auto-start both monitors when an experiment begins (CLI `src/main.py` and web console `backend/experiment.py`) and stop them at exit (`main.py`'s `finally` block calls the shared cleanup). The agent has no start/stop monitor tools — only read/probe tools.
 
 **fping -Q** (default on Linux/macOS when `fping` is on PATH):
 - Sends 10 probes/second (`-p 100`), emits a summary line every 1 second (`-Q 1`)

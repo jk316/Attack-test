@@ -117,10 +117,10 @@ description: "拨测监控生命周期收归程序——功能实现任务列表
 
 **目的**: 对照规格/宪法评估后追加的剩余工作（发现 ID 见各任务描述）。
 
-- [ ] T014 [US3] 修复文档真实性（来源 F001·HIGH·宪法「文档真实性」/FR-006/FR-009）：更新 `CLAUDE.md`——工具表（154 行）与架构图（88 行）改为 6 Scapy + 9 Pktgen + 2 TRex + 2 HTTP（`http_probe`/`read_http_stats`），删除 `start_ping_monitor`/`stop_ping_monitor` 描述；PingMonitor 章节与「main.py's finally block ensures cleanup」处补充：监控由程序在实验开始时自动启动（CLI 与 Web 控制台两入口）、结束时自动清理，Agent 只有读取工具。
-- [ ] T015 修复配置漂移导致的测试失败（来源 F002·MEDIUM）：`tests/unit/test_trex_catalog_mode.py`（TestCatalogCliArgs 5 例）与 `tests/unit/test_instruction.py::test_default_empty` 目前读取项目根 `experiment.json` 的默认值——服务器提交的配置（trex_live=true、instruction 非空、max_iters=5）使断言失效。改为 hermetic：monkeypatch `src.main.CONFIG_PATH` 指向临时最小配置（参照 `tests/integration/test_monitor_autostart.py` 的 `hermetic_cfg`）。
-- [ ] T016 补齐 pytest-asyncio 依赖（来源 F002·MEDIUM）：`tests/integration/test_web_experiment.py` 的 2 例因缺插件无法运行（`async def functions are not natively supported`）。在 `pyproject.toml` 的 `[project.optional-dependencies] dev` 增加 `pytest-asyncio>=0.24`，同步 `uv.lock`，`uv sync --extra dev` 后两例可运行并通过。
-- [ ] T017 调查修复 `tests/unit/test_llm_client.py` 8 个存量失败（来源 F002·MEDIUM）：httpx 0.28.1 解析测试 mock URL 报 `InvalidURL: Invalid port: ':1]'`。修正测试中 mock base_url 的写法或给 httpx 加版本约束；webui 分支存在同样失败，修复后建议同步两分支。
+- [X] T014 [US3] 修复文档真实性（CLAUDE.md 工具表/架构图/Key Files/PingMonitor 章节已同步 6+9+2+2 与程序接管生命周期）（来源 F001·HIGH·宪法「文档真实性」/FR-006/FR-009）：更新 `CLAUDE.md`——工具表（154 行）与架构图（88 行）改为 6 Scapy + 9 Pktgen + 2 TRex + 2 HTTP（`http_probe`/`read_http_stats`），删除 `start_ping_monitor`/`stop_ping_monitor` 描述；PingMonitor 章节与「main.py's finally block ensures cleanup」处补充：监控由程序在实验开始时自动启动（CLI 与 Web 控制台两入口）、结束时自动清理，Agent 只有读取工具。
+- [X] T015 修复配置漂移导致的测试失败（两文件加 hermetic MINIMAL_CFG fixture，26 用例全绿）（来源 F002·MEDIUM）：`tests/unit/test_trex_catalog_mode.py`（TestCatalogCliArgs 5 例）与 `tests/unit/test_instruction.py::test_default_empty` 目前读取项目根 `experiment.json` 的默认值——服务器提交的配置（trex_live=true、instruction 非空、max_iters=5）使断言失效。改为 hermetic：monkeypatch `src.main.CONFIG_PATH` 指向临时最小配置（参照 `tests/integration/test_monitor_autostart.py` 的 `hermetic_cfg`）。
+- [X] T016 补齐 pytest-asyncio 依赖（入 optional-dependencies.dev，uv.lock 已同步，web 5 用例全绿；测试另加代理环境屏蔽）（来源 F002·MEDIUM）：`tests/integration/test_web_experiment.py` 的 2 例因缺插件无法运行（`async def functions are not natively supported`）。在 `pyproject.toml` 的 `[project.optional-dependencies] dev` 增加 `pytest-asyncio>=0.24`，同步 `uv.lock`，`uv sync --extra dev` 后两例可运行并通过。
+- [X] T017 调查修复 `tests/unit/test_llm_client.py` 8 个存量失败（根因：no_proxy 含 [::1] + 主检出 .env 经 load_dotenv 上溯污染 LLM_MODEL；fixture 屏蔽后 18 用例全绿）（来源 F002·MEDIUM）：httpx 0.28.1 解析测试 mock URL 报 `InvalidURL: Invalid port: ':1]'`。修正测试中 mock base_url 的写法或给 httpx 加版本约束；webui 分支存在同样失败，修复后建议同步两分支。
 - [ ] T018 真实环境端到端验证（来源 F003·LOW·SC-001/SC-003）：在具备 LLM API 与网络的环境按 `quickstart.md` 场景 1/3/5 各执行一次——CLI 干跑首轮 `rtt_during` 非空、Web 控制台启动后 `read_http_stats` 有数据、进程退出后 5 秒内无 fping/ping/curl 残留；把实测结果回填到本任务勾选说明。
 
 ## 依赖与执行顺序
