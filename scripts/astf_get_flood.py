@@ -178,13 +178,22 @@ def main() -> None:
     print(f"▶ 开始 GET flood：{ip_a}~{ip_b} → {TARGET}:{DPORT}")
     t0 = time.time()
     try:
+        # 不依赖 block 语义：非阻塞启动 + 自己控制时长
         try:
-            c.start(pid_input=pid, mult=1, duration=args.duration, block=True)
+            c.start(pid_input=pid, mult=1, duration=args.duration, block=False)
         except Exception:
-            c.start(pid_input="_", mult=1, duration=args.duration, block=True)
+            c.start(pid_input="_", mult=1, duration=args.duration, block=False)
     except Exception as e:
         print("❌ start 失败:", e)
         sys.exit(1)
+
+    deadline = time.time() + args.duration
+    while time.time() < deadline:
+        time.sleep(min(10, deadline - time.time()))
+        s = c.get_stats().get(PORT, {})
+        print(f"  [t+{time.time() - t0:.0f}s] tx={s.get('opackets', 0)} 包, "
+              f"rx={s.get('ipackets', 0)} 包")
+    c.stop()
     elapsed = time.time() - t0
 
     stats = c.get_stats()
