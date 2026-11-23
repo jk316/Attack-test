@@ -10,6 +10,11 @@ pktgen:
 trex:
   host: "10.99.80.222"  
   port: 4501
+  # 已知 L2 事实（实测）：目标位于网关之后，TRex 端口 0 无法直接 ARP 解析目标；
+  # 生成脚本必须显式 Ether(dst=<网关 MAC>, src=<端口 MAC>)。
+  dst_mac: "f4:e9:75:ee:51:69"   # 网关下一跳 MAC（destination MAC）
+  src_mac: "58:a2:e1:6d:89:2c"   # TRex 端口 0 自身 MAC
+  start_force: true              # c.start(..., force=True) 绕过 dest-MAC 显式校验
 
 tx_port:
   portlist: "0"

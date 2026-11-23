@@ -88,3 +88,49 @@ def get_trex_timeout_s() -> float:
     if value <= 0 or value > 300:
         value = _DEFAULT_TIMEOUT_S
     return value
+
+
+# ── Known L2 facts (defaults measured from the lab, 2026-11-23 agent.log) ──
+_DEFAULT_DST_MAC = "f4:e9:75:ee:51:69"
+_DEFAULT_SRC_MAC = "58:a2:e1:6d:89:2c"
+
+
+def get_trex_dst_mac() -> str:
+    """Return the destination MAC for TRex port 0 — the gateway next-hop MAC.
+
+    The target lives behind a gateway: ARP-resolving the target IP from TRex
+    fails, so generated scripts must set `Ether(dst=<this MAC>)` explicitly.
+    Chain: env TREX_DST_MAC → topology.yaml trex.dst_mac → lab default.
+    """
+    return (
+        os.environ.get("TREX_DST_MAC")
+        or _load_trex_section().get("dst_mac")
+        or _DEFAULT_DST_MAC
+    )
+
+
+def get_trex_src_mac() -> str:
+    """Return TRex port 0's own MAC (used as Ether.src in generated scripts).
+
+    Chain: env TREX_SRC_MAC → topology.yaml trex.src_mac → lab default.
+    """
+    return (
+        os.environ.get("TREX_SRC_MAC")
+        or _load_trex_section().get("src_mac")
+        or _DEFAULT_SRC_MAC
+    )
+
+
+def get_trex_start_force() -> bool:
+    """Whether c.start(..., force=True) should be used to bypass TRex's
+    explicit-dest-MAC check ("Port 0 dest MAC is invalid ...").
+
+    Chain: env TREX_START_FORCE → topology.yaml trex.start_force → True.
+    Falsy strings: false/0/no/empty (case-insensitive).
+    """
+    value = os.environ.get("TREX_START_FORCE")
+    if value is None:
+        value = _load_trex_section().get("start_force")
+    if value is None:
+        return True
+    return str(value).strip().lower() not in {"false", "0", "no", ""}
