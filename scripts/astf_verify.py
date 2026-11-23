@@ -52,8 +52,6 @@ class ProfGetImage(ASTFProfile):
     """单个 HTTP GET 客户端流：握手 → GET → 收响应 → 关闭。"""
 
     def __init__(self):
-        super().__init__()
-
         # ── 客户端程序 ──
         prog_c = ASTFProgram()
         prog_c.connect()            # 与 ip_gen_s 指向的“服务器”建连
@@ -84,8 +82,13 @@ class ProfGetImage(ASTFProfile):
         temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
-        self.add_template(template)
-        self.set_ip_gen(ip_gen)
+        # ── 组装 profile（3.08 要求 default_ip_gen 必传）──
+        try:
+            super().__init__(default_ip_gen=ip_gen, templates=[template])
+        except TypeError:
+            # 旧式 API：ip_gen 位置传参 + add_template
+            super().__init__(ip_gen)
+            self.add_template(template)
 
 
 def main() -> None:
@@ -103,8 +106,12 @@ def main() -> None:
         pa = c.get_port_attr(PORT)
         print(f"✅ 端口 {PORT} 已 reset：link={pa.get('link')}, "
               f"speed={pa.get('speed')}G, src_ipv4={pa.get('src_ipv4')}")
+        print(f"   （端口完整属性供排查：{ {k: pa.get(k) for k in ('src_ipv4', 'dest', 'layer_mode', 'arp', 'src_mac', 'status')} }）")
         if pa.get("link") != "UP":
             print("⚠️  端口 link 不是 UP，流量可能发不出去")
+        if pa.get("src_ipv4") in (None, "-", ""):
+            print("⚠️  端口没有配置 IP（src_ipv4=-）。ASTF 握手需要端口有 IP 才能")
+            print("     ARP/路由到目标——请确认 ASTF 实例加载的 cfg 里配了端口 IP")
     except Exception as e:
         print("❌ acquire/reset 失败:", e)
         c.disconnect()
