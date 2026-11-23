@@ -18,6 +18,7 @@ src_ipv4）。本脚本让 ASTF 客户端以 100.1.11.200 为源、以真实服�
 """
 import inspect
 import sys
+import time
 
 from trex.astf.api import (
     ASTFClient,
@@ -40,6 +41,9 @@ print(f"[debug] ASTFTCPClientTemplate 参数: {sorted(_CLIENT_TPL_PARAMS)}")
 print(f"[debug] ASTFTCPServerTemplate 参数: {sorted(_SERVER_TPL_PARAMS)}")
 print(f"[debug] ASTFTemplate 参数: {sorted(_TPL_PARAMS)}")
 print(f"[debug] ASTFProfile 参数: {sorted(_PROFILE_PARAMS)}")
+_START_SIG = inspect.signature(ASTFClient.start)
+print(f"[debug] ASTFClient.start 签名: {_START_SIG}")
+_START_PARAMS = [p for p in _START_SIG.parameters if p != "self"]
 
 
 def _build_kwargs(cls, sig_params, program, ip_gen, port=None):
@@ -157,8 +161,22 @@ def main() -> None:
 
     print(f"▶ 发送 ASTF 流：{CLIENT_IP} → {TARGET}:{DPORT}  GET {IMAGE_PATH}")
     try:
-        c.start(profiles=[ProfGetImage()], mult=1.0, duration=15)
-        c.wait_on_traffic(ports=[PORT], timeout=25)
+        start_kw = {}
+        if "mult" in _START_PARAMS:
+            start_kw["mult"] = 1.0
+        if "duration" in _START_PARAMS:
+            start_kw["duration"] = 15
+        profile = ProfGetImage()
+        try:
+            # 位置传参（profile 是 start 的第一个参数）
+            c.start(profile, **start_kw)
+        except TypeError:
+            # 某些版本要传列表
+            c.start([profile], **start_kw)
+        try:
+            c.wait_on_traffic(ports=[PORT], timeout=25)
+        except Exception:
+            time.sleep(20)  # 兜底：等够 duration
         stats = c.get_stats()
     except Exception as e:
         print("❌ start/统计失败（API 或模式问题）:", e)
