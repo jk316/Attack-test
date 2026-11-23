@@ -3,21 +3,18 @@
 """
 ASTF 验证脚本（TRex 3.08）
 
-目标：验证 ASTF daemon 可用，并对真实服务器 100.1.11.3:8081 完成
-真实 TCP 三次握手 + 发送一个 HTTP GET（图片接口），打印是否收到响应。
+流程：连 ASTF daemon → 端口 L3 配置（set_l3_mode，ARP 不通则退回
+set_l2_mode 固定网关 MAC）→ 生成 profile 文件 → load_profile →
+start(pid_input) → 统计 rx 是否有回包。
 
 运行（客户端机器，conda trex311）：
-  cd ~/fzx/Attack-test/trex_scripts
+  cd ~/fzx/Attack-test/scripts
   PYTHONPATH=/root/fzx/Trex_Scripts/v3.08/automation/trex_control_plane/interactive \
     python3 astf_verify.py
-
-关键设计：TRex 端口 0 的 IP 是 100.1.11.200（与目标同网段，见 diag 日志
-src_ipv4）。本脚本让 ASTF 客户端以 100.1.11.200 为源、以真实服务器
-100.1.11.3 为目的，服务器的响应会回到 TRex 端口 0 的 RX，从而完成
-有状态握手。ip_offset 必须为 0.0.0.0，否则会把真实目标 IP 偏移掉。
 """
 import inspect
 import sys
+import tempfile
 import time
 
 from trex.astf.api import (
@@ -32,105 +29,113 @@ from trex.astf.api import (
     ASTFTemplate,
 )
 
-# ── 运行时探测本版本 ASTF API 的参数名（3.x 各小版本不一致）──
-_CLIENT_TPL_PARAMS = set(inspect.signature(ASTFTCPClientTemplate.__init__).parameters) - {"self"}
-_SERVER_TPL_PARAMS = set(inspect.signature(ASTFTCPServerTemplate.__init__).parameters) - {"self"}
-_TPL_PARAMS = set(inspect.signature(ASTFTemplate.__init__).parameters) - {"self"}
-_PROFILE_PARAMS = set(inspect.signature(ASTFProfile.__init__).parameters) - {"self"}
-print(f"[debug] ASTFTCPClientTemplate 参数: {sorted(_CLIENT_TPL_PARAMS)}")
-print(f"[debug] ASTFTCPServerTemplate 参数: {sorted(_SERVER_TPL_PARAMS)}")
-print(f"[debug] ASTFTemplate 参数: {sorted(_TPL_PARAMS)}")
-print(f"[debug] ASTFProfile 参数: {sorted(_PROFILE_PARAMS)}")
-_START_SIG = inspect.signature(ASTFClient.start)
-print(f"[debug] ASTFClient.start 签名: {_START_SIG}")
-_START_PARAMS = [p for p in _START_SIG.parameters if p != "self"]
-
-
-def _build_kwargs(cls, sig_params, program, ip_gen, port=None):
-    """按探测到的参数名组装 kwargs，并检查必传参数是否配齐。"""
-    kw = {}
-    if "program" in sig_params:
-        kw["program"] = program
-    if "ip_gen" in sig_params:
-        kw["ip_gen"] = ip_gen
-    if "port" in sig_params and port is not None:
-        kw["port"] = port
-    sig = inspect.signature(cls.__init__)
-    missing = [
-        n for n, p in sig.parameters.items()
-        if n != "self" and p.default is inspect.Parameter.empty and n not in kw
-    ]
-    if missing:
-        raise SystemExit(f"❌ {cls.__name__} 还缺必传参数: {missing}")
-    return kw
-
-SERVER = "10.99.80.222"   # TRex daemon 所在机器
-SYNC = 4501               # 单实例切换后仍是默认 RPC 端口
-ASYNC = 4502              # sync + 1
-PORT = 0                  # TRex 流量口（100G 那块）
-CLIENT_IP = "100.1.11.200"  # TRex 端口 IP
-TARGET = "100.1.11.3"     # 真实服务器
+SERVER = "10.99.80.222"     # TRex daemon 所在机器
+SYNC = 4501                 # 单实例 ASTF 默认 RPC 端口
+ASYNC = 4502
+PORT = 0                    # TRex 流量口（100G）
+CLIENT_IP = "100.1.11.200"  # TRex 端口 IP（STL 时代同款，网络可达）
+TARGET = "100.1.11.3"       # 真实服务器
 DPORT = 8081
+GATEWAY_MAC = "f4:e9:75:ee:51:69"  # 网关 MAC（STL 时证明可达目标）
+SRC_MAC = "58:a2:e1:6d:89:2c"      # 端口自身 MAC
 IMAGE_PATH = "/api/activities/00000000-0000-0000-0000-000000000001/image"
 
+# ── 运行时探测本版本 ASTF API 的参数名 ──
+print(f"[debug] ASTFClient.start 签名: {inspect.signature(ASTFClient.start)}")
+
+# ── ASTF profile 源码：load_profile 需要独立 .py 文件，末尾必须 register_profile ──
+PROFILE_SRC = '''\
+from trex.astf.api import *
+
+CLIENT_IP = "__CLIENT_IP__"
+TARGET = "__TARGET__"
+DPORT = __DPORT__
+
 HTTP_REQ = (
-    f"GET {IMAGE_PATH} HTTP/1.1\r\n"
-    f"Host: {TARGET}:{DPORT}\r\n"
-    "Connection: close\r\n"
-    "User-Agent: trex-astf-verify/1.0\r\n"
-    "\r\n"
+    "GET __IMAGE_PATH__ HTTP/1.1\\r\\n"
+    "Host: __TARGET__:__DPORT__\\r\\n"
+    "Connection: close\\r\\n"
+    "User-Agent: trex-astf-verify/1.0\\r\\n"
+    "\\r\\n"
 ).encode()
 
 
 class ProfGetImage(ASTFProfile):
-    """单个 HTTP GET 客户端流：握手 → GET → 收响应 → 关闭。"""
-
     def __init__(self):
-        # ── 客户端程序 ──
+        # ── 客户端程序：握手 → GET → 收响应 → 关闭 ──
         prog_c = ASTFProgram()
-        prog_c.connect()            # 与 ip_gen_s 指向的“服务器”建连
-        prog_c.send(HTTP_REQ)       # 发 GET
-        prog_c.recv(1, 10000)       # 等至少 1 字节响应（10 秒超时）
+        prog_c.connect()
+        prog_c.send(HTTP_REQ)
+        prog_c.recv(1, 10000)      # 至少收到 1 字节（10 秒超时）
         prog_c.delay(2000)
         prog_c.reset()
 
-        # ── 服务端程序（TRex 惯例必须定义；打真实服务器时不会被用到）──
+        # ── 服务端程序（惯例必须定义；打真实服务器时不会被用到）──
         prog_s = ASTFProgram()
         prog_s.accept()
         prog_s.recv(1)
-        prog_s.send(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        prog_s.send(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok")
         prog_s.delay(1000)
 
-        # ── IP 分配：客户端用 TRex 端口 IP，服务端指向真实服务器 ──
+        # ── IP 分配：客户端=TRex 端口 IP，服务端=真实服务器 ──
         ip_gen_c = ASTFIPGenDist(ip_range=[CLIENT_IP, CLIENT_IP], distribution="seq")
         ip_gen_s = ASTFIPGenDist(ip_range=[TARGET, TARGET], distribution="seq")
         ip_gen = ASTFIPGen(glob=ASTFIPGenGlobal(ip_offset="0.0.0.0"),
                            dist_client=ip_gen_c,
                            dist_server=ip_gen_s)
 
-        # ── 模板：按探测到的参数名组装。
-        # 注意：client 模板的 ip_gen 要求合并后的 ASTFIPGen 对象
-        # （内部同时携带 dist_client=源 IP 与 dist_server=真实目标 IP）。──
-        temp_c = ASTFTCPClientTemplate(
-            **_build_kwargs(ASTFTCPClientTemplate, _CLIENT_TPL_PARAMS,
-                           program=prog_c, ip_gen=ip_gen, port=DPORT)
-        )
-        temp_s = ASTFTCPServerTemplate(
-            **_build_kwargs(ASTFTCPServerTemplate, _SERVER_TPL_PARAMS,
-                           program=prog_s, ip_gen=None)
-        )
+        temp_c = ASTFTCPClientTemplate(ip_gen=ip_gen, port=DPORT, program=prog_c)
+        temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
-        # ── 组装 profile：按探测到的参数名 ──
-        if "default_ip_gen" in _PROFILE_PARAMS:
-            if "templates" in _PROFILE_PARAMS:
-                super().__init__(default_ip_gen=ip_gen, templates=[template])
-            else:
-                super().__init__(default_ip_gen=ip_gen)
-                self.add_template(template)
-        else:
-            super().__init__(ip_gen)
-            self.add_template(template)
+        super().__init__(default_ip_gen=ip_gen, templates=[template])
+
+
+register_profile(ProfGetImage())
+'''
+
+
+def build_profile_source() -> str:
+    return (PROFILE_SRC
+            .replace("__CLIENT_IP__", CLIENT_IP)
+            .replace("__TARGET__", TARGET)
+            .replace("__DPORT__", str(DPORT))
+            .replace("__IMAGE_PATH__", IMAGE_PATH))
+
+
+def configure_port(c) -> None:
+    """端口 L3 配置：cfg 无 IP，需运行时配置（同 reach3.py）。ARP 不通则退回 L2 固定网关 MAC。"""
+    try:
+        c.set_service_mode(ports=[PORT], enabled=True)
+        try:
+            c.set_l3_mode(PORT, CLIENT_IP, TARGET)
+            print(f"✅ set_l3_mode：src={CLIENT_IP} dst={TARGET}")
+        except Exception as e:
+            print("⚠️  set_l3_mode 异常（可能已生效但 ARP 未解）:", e)
+        resolved = False
+        try:
+            c.resolve(ports=[PORT], retries=3)
+            resolved = True
+            print("✅ resolve（ARP）成功")
+        except Exception as e:
+            print("⚠️  ARP 解析失败（与 STL 时代一致）:", e)
+        try:
+            c.set_service_mode(ports=[PORT], enabled=False)
+        except Exception:
+            pass
+
+        if not resolved and hasattr(c, "set_l2_mode"):
+            try:
+                c.set_l2_mode(PORT, dst_mac=GATEWAY_MAC, src_mac=SRC_MAC)
+                print(f"✅ 退回 L2 模式：出口 MAC 固定为网关 {GATEWAY_MAC}")
+            except Exception as e:
+                print("⚠️  set_l2_mode 失败:", e)
+    except Exception as e:
+        print("⚠️  set_service_mode 失败:", e)
+
+    pa = c.get_port_attr(PORT)
+    print(f"▶ 端口 {PORT}: link={pa.get('link')}, src_ipv4={pa.get('src_ipv4')}, "
+          f"layer_mode={pa.get('layer_mode')}, arp={pa.get('arp')}")
 
 
 def main() -> None:
@@ -138,68 +143,40 @@ def main() -> None:
     try:
         c.connect()
     except Exception as e:
-        print("❌ 连不上 ASTF daemon（模式/端口不对？）:", e)
+        print("❌ 连不上 ASTF daemon:", e)
         sys.exit(1)
-    print("✅ 已连接 ASTF daemon——模式握手通过（server 是 ASTF 模式）")
+    print("✅ 已连接 ASTF daemon——模式握手通过")
 
     try:
         c.acquire(force=True)
         c.reset()
-
-        # ── 端口 L3 配置：cfg 里没有 IP，需运行时配置（同 reach3.py 的做法）──
-        try:
-            c.set_service_mode(ports=[PORT], enabled=True)
-            try:
-                c.set_l3_mode(PORT, CLIENT_IP, TARGET)
-                print(f"✅ 已配置端口 L3：src={CLIENT_IP} dst={TARGET}")
-            except Exception as e:
-                print("⚠️  set_l3_mode 失败:", e)
-            try:
-                c.resolve(ports=[PORT], retries=3)
-                print("✅ resolve（ARP）完成")
-            except Exception as e:
-                print("⚠️  resolve 失败（继续尝试）:", e)
-            try:
-                c.set_service_mode(ports=[PORT], enabled=False)
-            except Exception:
-                pass
-        except Exception as e:
-            print("⚠️  set_service_mode 失败:", e)
-
-        pa = c.get_port_attr(PORT)
-        print(f"✅ 端口 {PORT} 状态：link={pa.get('link')}, "
-              f"speed={pa.get('speed')}G, src_ipv4={pa.get('src_ipv4')}")
-        print(f"   （端口完整属性供排查：{ {k: pa.get(k) for k in ('src_ipv4', 'dest', 'layer_mode', 'arp', 'src_mac', 'status')} }）")
-        if pa.get("link") != "UP":
-            print("⚠️  端口 link 不是 UP，流量可能发不出去")
-        if pa.get("src_ipv4") in (None, "-", ""):
-            print("⚠️  端口仍没有 IP——set_l3_mode 未生效，检查上面报错")
     except Exception as e:
         print("❌ acquire/reset 失败:", e)
         c.disconnect()
         sys.exit(1)
 
-    print(f"▶ 发送 ASTF 流：{CLIENT_IP} → {TARGET}:{DPORT}  GET {IMAGE_PATH}")
+    configure_port(c)
+
+    # ── 生成 profile 文件并加载 ──
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(build_profile_source())
+        prof_path = f.name
+    print(f"▶ profile 文件: {prof_path}")
     try:
-        start_kw = {}
-        if "mult" in _START_PARAMS:
-            start_kw["mult"] = 1.0
-        if "duration" in _START_PARAMS:
-            start_kw["duration"] = 15
-        profile = ProfGetImage()
-        try:
-            # 位置传参（profile 是 start 的第一个参数）
-            c.start(profile, **start_kw)
-        except TypeError:
-            # 某些版本要传列表
-            c.start([profile], **start_kw)
-        try:
-            c.wait_on_traffic(ports=[PORT], timeout=25)
-        except Exception:
-            time.sleep(20)  # 兜底：等够 duration
+        pid = c.load_profile(prof_path)
+        print(f"✅ load_profile 成功，pid={pid!r}")
+    except Exception as e:
+        print("❌ load_profile 失败:", e)
+        c.disconnect()
+        sys.exit(1)
+
+    print(f"▶ 启动 ASTF 流：{CLIENT_IP} → {TARGET}:{DPORT}  GET {IMAGE_PATH}")
+    try:
+        c.start(pid_input=pid, mult=1, duration=15, block=True)
+        time.sleep(1)
         stats = c.get_stats()
     except Exception as e:
-        print("❌ start/统计失败（API 或模式问题）:", e)
+        print("❌ start/统计失败:", e)
         c.disconnect()
         sys.exit(1)
 
@@ -209,9 +186,8 @@ def main() -> None:
     if rx > 0:
         print("🎉 真实服务器有回包——三次握手成功，HTTP 请求已送达")
     else:
-        print("⚠️  无回包，排查顺序：")
-        print("    1) 端口 link 是否 UP；2) 100.1.11.200 与 100.1.11.3 是否同网段可达")
-        print("    3) 服务器 8081 是否真的在听（curl --noproxy '*' 试试）")
+        print("⚠️  无回包。排查：1) arp/layer_mode 状态；2) 网关 MAC 是否正确；")
+        print("     3) 服务器 8081 是否在听：curl --noproxy '*' http://100.1.11.3:8081/...")
 
     c.stop()
     c.release()
