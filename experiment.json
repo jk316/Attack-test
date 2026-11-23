@@ -11,7 +11,7 @@
     "trex_explore": false,
     "catalog_target": 10,
     "explore_direction": "",
-    "instruction": "使用Trex来实现TCP 长连接攻击，去下载这个图片http://100.1.11.3:8081/api/activities/00000000-0000-0000-0000-000000000001/image",
+    "instruction": "使用Trex来实现http get flood 大文件下载攻击，去下载这个图片http://100.1.11.3:8081/api/activities/00000000-0000-0000-0000-000000000001/image",
     "attack": {
         "duration_s": 10,
         "pps": 100,
@@ -32,7 +32,7 @@
         "python": "/root/miniconda3/envs/trex311/bin/python"
     },
     "http": {
-        "url": "http://10.99.80.159:3000/login",
+        "url": "http://100.1.11.3:3000/login",
         "interval_s": 1.0,
         "timeout_s": 5,
         "method": "GET"
