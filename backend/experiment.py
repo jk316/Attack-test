@@ -42,6 +42,32 @@ def _load_http_cfg() -> dict | None:
         return None
 
 
+def _load_trex_cfg() -> dict | None:
+    """Read the ``trex`` section of the root experiment.json, or None on error."""
+    try:
+        cfg_path = Path(__file__).resolve().parent.parent / "experiment.json"
+        with open(cfg_path, encoding="utf-8") as fh:
+            return json.load(fh).get("trex") or None
+    except Exception:
+        logger.warning("Failed to read trex config from experiment.json", exc_info=True)
+        return None
+
+
+def _apply_trex_env(trex_cfg: dict | None) -> None:
+    """把 experiment.json 的 trex 键注入 env（含 L2 事实与 host）。
+
+    必须在 build_graph() 渲染提示词之前调用，否则提示词与生成脚本会读到
+    不同的 dst/src MAC（src/trex/config.py 与 trex_scripts/trex_common.py
+    都以 env 为最高优先级）。缺键不动，交由 config.py 回退 topology.yaml。
+    """
+    if not trex_cfg:
+        return
+    for key in ("host", "dst_mac", "src_mac", "start_force"):
+        value = trex_cfg.get(key)
+        if value is not None:
+            os.environ[f"TREX_{key.upper()}"] = str(value)
+
+
 # ── Message protocol helpers ────────────────────────────────────
 
 def _msg_to_dict(msg) -> dict:
@@ -66,6 +92,9 @@ class ExperimentManager:
     """
 
     def __init__(self):
+        # TRex L2 事实必须在 build_graph() 渲染提示词之前注入 env，
+        # 保证提示词里的 dst/src MAC 与生成脚本（读同一 env）一致。
+        _apply_trex_env(_load_trex_cfg())
         self._graph = build_graph()
         self._running = False
         self._stop_requested = False

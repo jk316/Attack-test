@@ -31,7 +31,7 @@ class TestConstants:
     def test_module_imports_without_trex_libs(self, trex_common):
         assert trex_common.DST_MAC == "f4:e9:75:ee:51:69"
         assert trex_common.SRC_MAC == "58:a2:e1:6d:89:2c"
-        assert trex_common.TREX_SERVER == "10.99.80.222"
+        assert trex_common.TREX_SERVER == "127.0.0.1"  # 与 config._DEFAULT_HOST 对齐
         assert trex_common.START_FORCE is True
 
     def test_env_overrides(self, monkeypatch):
@@ -71,6 +71,26 @@ class TestStartSafe:
         assert client.start_kwargs["ports"] == [0]
         assert client.start_kwargs["mult"] == "100%"
         assert client.start_kwargs["duration"] == 10
+
+    def test_start_safe_respects_start_force_env(self, monkeypatch):
+        if str(SCRIPTS_DIR) not in sys.path:
+            sys.path.insert(0, str(SCRIPTS_DIR))
+        monkeypatch.setenv("TREX_START_FORCE", "false")
+        mod = importlib.import_module("trex_common")
+        importlib.reload(mod)
+        client = _FakeClient()
+        mod.start_safe(client)
+        assert client.start_kwargs["force"] is False
+
+    def test_start_safe_explicit_force_overrides_env(self, monkeypatch):
+        if str(SCRIPTS_DIR) not in sys.path:
+            sys.path.insert(0, str(SCRIPTS_DIR))
+        monkeypatch.setenv("TREX_START_FORCE", "false")
+        mod = importlib.import_module("trex_common")
+        importlib.reload(mod)
+        client = _FakeClient()
+        mod.start_safe(client, force=True)
+        assert client.start_kwargs["force"] is True
 
 
 class TestMakeClient:
