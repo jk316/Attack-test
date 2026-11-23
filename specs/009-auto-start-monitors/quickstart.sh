@@ -32,7 +32,7 @@ TARGET_IP="${TARGET_IP:-$(python3 -c 'import json;print(json.load(open("experime
 TARGET_IP="${TARGET_IP:-10.99.80.160}"
 MAX_ITERS="${MAX_ITERS:-2}"
 PORT="${PORT:-8000}"
-LOG="data/agent.log"
+LOG="data/agent-$(date +%F).log"
 JSONL="data/experiment.jsonl"
 
 PASS=0; FAIL=0

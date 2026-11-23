@@ -11,7 +11,7 @@ from uuid import uuid4
 logger = logging.getLogger("agent")
 
 # Console preview length for message content in [LLM INPUT] lines.
-# Full untruncated content always goes to data/agent.log at DEBUG.
+# Full untruncated content always goes to data/agent-YYYY-MM-DD.log at DEBUG.
 MSG_PREVIEW_LEN = 500
 
 # Ensure the project root is on sys.path so `src` is importable
@@ -54,7 +54,7 @@ class VerboseCallback(BaseCallbackHandler):
             raw_content = str(getattr(msg, "content", ""))
             content_preview = raw_content[:MSG_PREVIEW_LEN].replace("\n", "\\n")
             if len(raw_content) > MSG_PREVIEW_LEN:
-                content_preview += f"… (+{len(raw_content) - MSG_PREVIEW_LEN} chars, see data/agent.log)"
+                content_preview += f"… (+{len(raw_content) - MSG_PREVIEW_LEN} chars, see data/agent-YYYY-MM-DD.log)"
             tc = self._flat_tool_calls(msg)
             extra_info = f" tool_calls={tc}" if tc else ""
             logger.info("  [%d] %s: %s %s", idx, role, content_preview, extra_info)
@@ -175,7 +175,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=cfg["verbose"],
         help="Show full untruncated message content on the console (console → DEBUG). "
-             "Full content is always written to data/agent.log regardless.",
+             "Full content is always written to data/agent-<日期>.log（按天分文件）regardless.",
     )
     # ── Attack parameter defaults ────────────────────────────────────
     attack_cfg = cfg.get("attack", {})
@@ -379,6 +379,11 @@ def _extract_hitl_payload(gs) -> dict | None:
     return None
 
 
+def _agent_log_path() -> str:
+    """Today's agent log path, daily-rotated: ``data/agent-YYYY-MM-DD.log``."""
+    return f"data/agent-{datetime.now().strftime('%Y-%m-%d')}.log"
+
+
 def main() -> None:
     args = parse_args()
 
@@ -453,7 +458,8 @@ def main() -> None:
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
-    log_fh = logging.FileHandler("data/agent.log", encoding="utf-8")
+    # Daily-rotated: data/agent-YYYY-MM-DD.log (new file per calendar day).
+    log_fh = logging.FileHandler(_agent_log_path(), encoding="utf-8")
     log_fh.setLevel(logging.DEBUG)
     log_fh.setFormatter(logging.Formatter("%(message)s"))
     log_ch = logging.StreamHandler()

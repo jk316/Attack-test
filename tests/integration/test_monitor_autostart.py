@@ -73,11 +73,11 @@ def hermetic_cfg(monkeypatch, tmp_path):
 
 @pytest.fixture
 def redirect_agent_log(monkeypatch, tmp_path):
-    """Keep main() from appending to the tracked data/agent.log during tests."""
+    """Keep main() from appending to tracked data/agent*.log during tests."""
     real_fh = logging.FileHandler
 
     def fake_fh(path, *args, **kwargs):
-        if str(path) == "data/agent.log":
+        if str(path).startswith("data/agent"):
             path = str(tmp_path / "agent.log")
         return real_fh(path, *args, **kwargs)
 

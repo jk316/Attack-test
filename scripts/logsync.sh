@@ -9,10 +9,11 @@
 #
 # 流程: add 两个日志文件 →（有变更才）commit → pull --rebase → push
 # 为什么先 commit 再 pull：git rebase 要求工作区干净，而实验跑完后
-# data/agent.log 必然有未提交改动，先提交才能执行 rebase。
+# data/agent*.log 必然有未提交改动，先提交才能执行 rebase。
 #
 # 说明:
-#   - 只暂存 data/agent.log 与 data/experiment.jsonl 两个日志文件，
+#   - 只暂存 data/agent*.log（历史 agent.log 与按天的 agent-YYYY-MM-DD.log）
+#     与 data/experiment.jsonl 两个日志类文件，
 #     不碰 data/ 下其他内容，也不碰 experiment.json 等配置；
 #   - 若工作区还有这两个文件之外的未提交改动，脚本会提醒；那些改动
 #     可能挡住 pull --rebase，请先自行处理；
@@ -25,19 +26,19 @@ cd "$(git rev-parse --show-toplevel)" || { echo "❌ 不在 git 仓库内"; exit
 DRY_RUN="${DRY_RUN:-0}"
 
 # ── 1. 检查其他未提交改动（两个日志文件之外）──────────────────────
-OTHER="$(git status --porcelain | grep -vE '^.. data/agent\.log$' | grep -vE '^.. data/experiment\.jsonl$' || true)"
+OTHER="$(git status --porcelain | grep -vE '^.. data/agent.*\.log$' | grep -vE '^.. data/experiment\.jsonl$' || true)"
 if [ -n "$OTHER" ]; then
   echo "⚠️  存在本次不会提交的改动（可能挡住后面的 pull --rebase）："
   echo "$OTHER"
-  echo "   （本脚本只提交 data/agent.log 与 data/experiment.jsonl）"
+  echo "   （本脚本只提交 data/agent*.log 与 data/experiment.jsonl）"
 fi
 
 # ── 2. 暂存两个日志文件 ───────────────────────────────────────────
 if [ "$DRY_RUN" = "1" ]; then
-  CHANGED="$(git diff -- data/agent.log data/experiment.jsonl | grep -c . || true)"
+  CHANGED="$(git diff -- 'data/agent*.log' data/experiment.jsonl | grep -c . || true)"
   [ "$CHANGED" != "0" ] && CHANGED=1
 else
-  git add data/agent.log data/experiment.jsonl
+  git add 'data/agent*.log' data/experiment.jsonl
   if git diff --cached --quiet; then CHANGED=0; else CHANGED=1; fi
 fi
 
@@ -52,7 +53,7 @@ fi
 if [ "$CHANGED" = "1" ]; then
   if [ "$DRY_RUN" = "1" ]; then
     echo "── 本次将提交的内容（dry-run 预览）──"
-    git diff --stat -- data/agent.log data/experiment.jsonl
+    git diff --stat -- 'data/agent*.log' data/experiment.jsonl
   else
     echo "── 本次将提交的内容 ──"
     git diff --cached --stat
