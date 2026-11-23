@@ -91,6 +91,11 @@ def _run_curl(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str
     cmd = [
         "curl", "-s", "-o", "/dev/null",
         "--max-time", str(int(timeout_s)),
+        # Dial-test targets are allowlisted internal hosts — never route
+        # them through the environment's http_proxy (proxy env vars would
+        # otherwise silently turn every probe into a proxy round-trip and
+        # time out even when the target is perfectly healthy).
+        "--noproxy", "*",
         "-X", method,
         "-w", _CURL_WRITE_FORMAT,
         url,

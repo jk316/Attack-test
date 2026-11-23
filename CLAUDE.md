@@ -136,7 +136,7 @@ ExperimentManager (backend/experiment.py)
 | `experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms), plus live/dry-run/auto_approve/instruction flags |
 | `allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
-| `src/tools/http_monitor.py` | Background HTTP business dial-testing via curl (singleton, same pattern as PingMonitor); auto-started by the entry points when `experiment.json`'s `http.url` is configured |
+| `src/tools/http_monitor.py` | Background HTTP business dial-testing via curl (singleton, same pattern as PingMonitor; probes force `--noproxy "*"` so internal targets bypass the environment's http_proxy); auto-started by the entry points when `experiment.json`'s `http.url` is configured |
 | `src/tools/monitor_lifecycle.py` | Program-owned monitor lifecycle (spec 009) — `start_experiment_monitors()` / `stop_experiment_monitors()` called by both entry points; allowlist check, failure downgrade, idempotent restart |
 | `src/tools/rtt_window.py` | `build_rtt_observation()` — enriches tool results with `rtt_during`, `attack_window`, `observation_window` fields |
 | `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping |

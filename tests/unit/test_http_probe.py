@@ -87,6 +87,17 @@ class TestRunCurl:
         assert result["success"] is False
         assert result["error_type"] == "curl_missing"
 
+    def test_command_forces_noproxy(self):
+        """Probes must bypass the environment's http_proxy (internal hosts)."""
+        with patch("src.tools.http_probe_tool.subprocess.run") as mock_run, \
+             patch("src.tools.http_probe_tool._curl_available", return_value=True):
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout="0.001|0.002|0|0|0|200|1|1.0", stderr="")
+            _run_curl("http://10.99.80.160/")
+
+        cmd = mock_run.call_args[0][0]
+        assert "--noproxy" in cmd
+        assert "*" in cmd
+
 
 # ── http_probe (validation gate) ──────────────────────────────────
 
