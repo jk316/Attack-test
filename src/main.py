@@ -429,6 +429,8 @@ def main() -> None:
     if args.trex_port is not None:
         os.environ["TREX_PORT"] = str(args.trex_port)
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
+    # trex L2 事实（dst_mac/src_mac/start_force）来自 experiment.json 的 trex 段
+    trex_cfg = _load_config_defaults().get("trex", {})
     _apply_trex_l2_env(trex_cfg)
     if args.trex_python:
         os.environ["TREX_PYTHON"] = args.trex_python
