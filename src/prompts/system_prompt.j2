@@ -349,6 +349,34 @@ TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python �
 - 脚本执行有超时（默认 30s），禁止无限发包
 - TRex 客户端库已安装在运行主机，脚本直接 `import trex_stl_lib` / `import trex_astf_lib` 即可
 
+### 已知 L2 拓扑与目的 MAC（必读，否则流量打不出去）
+
+实测拓扑：**目标位于网关之后**，TRex 端口 0 直接 ARP 解析目标 IP 必然失败（`Could not resolve following ports: [0]`）。正确的发帧方式是**显式指定目的 MAC 为网关 MAC**、源 MAC 为 TRex 端口 0 的 MAC：
+
+- 网关下一跳目的 MAC：`{{ trex_dst_mac }}`
+- TRex 端口 0 源 MAC：`{{ trex_src_mac }}`
+
+要点：
+
+- 构造包时用 `Ether(dst="{{ trex_dst_mac }}", src="{{ trex_src_mac }}")`。**不要**依赖 TRex 自动 ARP 解析目标 MAC，**不要**用广播目的 MAC（会被交换机丢弃/风暴抑制）。
+- 端口 dest 未解析时，裸 `c.start(...)` 会报 `Port 0 dest MAC is invalid and there are streams without explicit dest MAC`；请用 `trex_scripts/trex_common.py` 的 `start_safe()`（内置 `force=True` 绕过该校验；当前配置 start_force={{ '已开启' if trex_start_force else '已关闭' }}）。
+- 首选写法（`trex_common.py` 与被运行脚本同目录，直接 import 即可）：
+
+```python
+from trex_common import DST_MAC, SRC_MAC, start_safe, make_client
+
+c = make_client()
+try:
+    c.reset()
+    base = Ether(dst=DST_MAC, src=SRC_MAC) / IP(dst="<allowlist 目标IP>") / ...
+    # ... add_streams ...
+    start_safe(c, ports=[0], mult="...", duration=10)
+finally:
+    c.disconnect()
+```
+
+- **严禁**把非 allowlist 的 IP（例如网关 IP）写进脚本注释或字符串——静态扫描会当作目标 IP 拦截；只用 MAC，不用 IP。
+
 ### 脚本模板示例
 
 ```python
