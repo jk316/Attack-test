@@ -66,6 +66,11 @@ def _resolve_script_path(filename: str) -> Path:
         )
     if filename[:-3].upper() in _WINDOWS_RESERVED:
         raise ValueError(f"Reserved filename not allowed: {filename!r}")
+    if filename == "trex_common.py":
+        raise ValueError(
+            "trex_common.py 是保留的（reserved）公共辅助模块，不可覆盖/直接执行；"
+            "请在脚本中 import trex_common"
+        )
     return get_trex_scripts_dir() / filename
 
 
