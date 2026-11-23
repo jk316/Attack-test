@@ -236,3 +236,24 @@ class TestStaticIpGuard:
         with patch("src.trex.tools.get_trex_host", return_value="10.99.80.222"):
             code = f"x = '{NOT_ALLOWLISTED_IP}'\n"
             assert _static_ip_guard(code) == [NOT_ALLOWLISTED_IP]
+
+
+# ── reserved helper name ────────────────────────────────────────────
+
+class TestReservedHelperName:
+    def test_write_python_file_rejects_trex_common(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        result = write_python_file.invoke(
+            {"filename": "trex_common.py", "code": "x = 1\n"}
+        )
+        assert result["success"] is False
+        assert "reserved" in result["error"]
+
+    def test_script_importing_trex_common_is_syntax_ok(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        result = write_python_file.invoke(
+            {"filename": "cat_x.py",
+             "code": "from trex_common import DST_MAC, SRC_MAC, start_safe\n"}
+        )
+        assert result["success"] is True
+        assert result["syntax_ok"] is True
