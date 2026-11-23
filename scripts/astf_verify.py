@@ -145,15 +145,35 @@ def main() -> None:
     try:
         c.acquire(force=True)
         c.reset()
+
+        # ── 端口 L3 配置：cfg 里没有 IP，需运行时配置（同 reach3.py 的做法）──
+        try:
+            c.set_service_mode(ports=[PORT], enabled=True)
+            try:
+                c.set_l3_mode(PORT, CLIENT_IP, TARGET)
+                print(f"✅ 已配置端口 L3：src={CLIENT_IP} dst={TARGET}")
+            except Exception as e:
+                print("⚠️  set_l3_mode 失败:", e)
+            try:
+                c.resolve(ports=[PORT], retries=3)
+                print("✅ resolve（ARP）完成")
+            except Exception as e:
+                print("⚠️  resolve 失败（继续尝试）:", e)
+            try:
+                c.set_service_mode(ports=[PORT], enabled=False)
+            except Exception:
+                pass
+        except Exception as e:
+            print("⚠️  set_service_mode 失败:", e)
+
         pa = c.get_port_attr(PORT)
-        print(f"✅ 端口 {PORT} 已 reset：link={pa.get('link')}, "
+        print(f"✅ 端口 {PORT} 状态：link={pa.get('link')}, "
               f"speed={pa.get('speed')}G, src_ipv4={pa.get('src_ipv4')}")
         print(f"   （端口完整属性供排查：{ {k: pa.get(k) for k in ('src_ipv4', 'dest', 'layer_mode', 'arp', 'src_mac', 'status')} }）")
         if pa.get("link") != "UP":
             print("⚠️  端口 link 不是 UP，流量可能发不出去")
         if pa.get("src_ipv4") in (None, "-", ""):
-            print("⚠️  端口没有配置 IP（src_ipv4=-）。ASTF 握手需要端口有 IP 才能")
-            print("     ARP/路由到目标——请确认 ASTF 实例加载的 cfg 里配了端口 IP")
+            print("⚠️  端口仍没有 IP——set_l3_mode 未生效，检查上面报错")
     except Exception as e:
         print("❌ acquire/reset 失败:", e)
         c.disconnect()
