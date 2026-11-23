@@ -360,6 +360,14 @@ def _apply_mode_env(args: argparse.Namespace) -> None:
             os.environ["EXPLORE_DIRECTION"] = args.explore_direction
 
 
+def _apply_trex_l2_env(trex_cfg: dict) -> None:
+    """把 experiment.json 的 trex L2 事实注入 env（缺键不动，交由 config.py 回退）。"""
+    for key in ("dst_mac", "src_mac", "start_force"):
+        value = trex_cfg.get(key)
+        if value is not None:
+            os.environ[f"TREX_{key.upper()}"] = str(value)
+
+
 def _recursion_limit(max_iters: int) -> int:
     """Graph superstep budget — must cover the prompt-level max_iters."""
     return max(25, max_iters + 5)
@@ -420,6 +428,7 @@ def main() -> None:
     if args.trex_port is not None:
         os.environ["TREX_PORT"] = str(args.trex_port)
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
+    _apply_trex_l2_env(trex_cfg)
     if args.trex_python:
         os.environ["TREX_PYTHON"] = args.trex_python
 

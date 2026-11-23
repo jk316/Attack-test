@@ -128,8 +128,9 @@ ExperimentManager (backend/experiment.py)
 | `src/agent/tools.py` | 19 `@tool`-decorated LangChain tools (6 Scapy + 9 Pktgen via `*PKTGEN_TOOLS*` + 2 TRex via `*TREX_TOOLS*` + 2 HTTP read tools); HITL gates via `interrupt()` |
 | `src/agent/state.py` | Agent state definition |
 | `src/pktgen/adapter.py` | Pktgen adapter — wraps vendored `pktgen_agent` execution functions as `@tool` functions; enforces allowlist, HITL, RTT sampling, synchronous wait (`_wait_for_attack`), and **auto-fills eth_dst_addr** in `pktgen_packet_sequence` from `topology.yaml` |
-| `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts |
-| `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`, re-reading env each call |
+| `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts. `trex_common.py` is a reserved name: neither tool can write or run it (it is program-owned) |
+| `trex_scripts/trex_common.py` | Shared helper imported by generated TRex scripts (`from trex_common import DST_MAC, SRC_MAC, START_FORCE, start_safe, make_client`) — stdlib-only at import (trex libs lazy), ships the measured gateway dst MAC / port src MAC, and `start_safe()` wraps `c.start(..., force=True)` to bypass TRex's explicit-dest-MAC check. Tracked via a `.gitignore` exception |
+| `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`/`get_trex_dst_mac()`/`get_trex_src_mac()`/`get_trex_start_force()`, re-reading env each call. The L2 getters supply the measured gateway next-hop MAC (`dst_mac`, default `f4:e9:75:ee:51:69`) and TRex port 0 MAC (`src_mac`, default `58:a2:e1:6d:89:2c`) that generated scripts must set explicitly via `Ether(dst=..., src=...)` — the target sits behind the gateway, so ARP-resolving the target from TRex always fails |
 | `src/main.py` | CLI entry — reads `experiment.json`, sets env vars for tool defaults, parses CLI args, runs HITL polling loop with `VerboseCallback` for LLM I/O logging |
 | `src/prompts/system_prompt.j2` | Jinja2 system prompt — ReAct protocol, Pktgen tool tables, parameter semantics, optimization strategy table, concrete examples |
 | `src/prompts/trex_catalog_prompt.j2` | Jinja2 prompt for `--trex-explore` mode — plan→generate→summarize protocol, `cat_` filename rule, mandatory Chinese annotation block per script, catalog summary table format |
@@ -151,7 +152,7 @@ ExperimentManager (backend/experiment.py)
 | `pktgen_agent/tools/execute.py` | Vendored `execute_skill_dry_run()` / `execute_skill_live()` — compile→save→TCP |
 | `pktgen_agent/client.py` | Vendored `PktgenClient` — TCP socket to Pktgen (default `topology.yaml → 10.99.80.222:22022`) |
 | `dsl/skills/*.yaml` | 9 skill definitions (udp/tcp/icmp/arp flood, range_scan, packet_sequence, pcap_replay, stats_monitoring, safe_stop_and_reset) |
-| `topology.yaml` | Pktgen host/port, port mappings, and MAC address (`dst_mac: f0:c4:78:4c:a5:55`) |
+| `topology.yaml` | Pktgen host/port, port mappings, and MAC address (`dst_mac: f0:c4:78:4c:a5:55`); `trex` section carries host/port/python plus the measured L2 facts `dst_mac` (gateway next-hop) / `src_mac` (TRex port 0) / `start_force` |
 
 ### Agent Tools (19 total)
 

@@ -263,3 +263,33 @@ class TestBuildGraphCatalogMode:
 
         assert captured["tools"] == EXPERIMENT_TOOLS
         assert "闭环网络实验" in captured["system_prompt"]
+
+
+# ── TRex L2 env plumbing ───────────────────────────────────────────
+
+class TestTrexL2Env:
+    def test_apply_trex_l2_env_sets_all(self, monkeypatch):
+        import os
+
+        from src.main import _apply_trex_l2_env
+
+        for k in ("TREX_DST_MAC", "TREX_SRC_MAC", "TREX_START_FORCE"):
+            monkeypatch.delenv(k, raising=False)
+        _apply_trex_l2_env({"dst_mac": "aa:bb:cc:dd:ee:ff",
+                            "src_mac": "11:22:33:44:55:66",
+                            "start_force": False})
+        assert os.environ["TREX_DST_MAC"] == "aa:bb:cc:dd:ee:ff"
+        assert os.environ["TREX_SRC_MAC"] == "11:22:33:44:55:66"
+        assert os.environ["TREX_START_FORCE"] == "False"
+
+    def test_apply_trex_l2_env_missing_keys_noop(self, monkeypatch):
+        import os
+
+        from src.main import _apply_trex_l2_env
+
+        for k in ("TREX_DST_MAC", "TREX_SRC_MAC", "TREX_START_FORCE"):
+            monkeypatch.delenv(k, raising=False)
+        _apply_trex_l2_env({})
+        assert "TREX_DST_MAC" not in os.environ
+        assert "TREX_SRC_MAC" not in os.environ
+        assert "TREX_START_FORCE" not in os.environ
