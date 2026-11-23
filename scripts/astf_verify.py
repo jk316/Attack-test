@@ -43,7 +43,7 @@ IMAGE_PATH = "/api/activities/00000000-0000-0000-0000-000000000001/image"
 # ── 运行时探测本版本 ASTF API 的参数名 ──
 print(f"[debug] ASTFClient.start 签名: {inspect.signature(ASTFClient.start)}")
 
-# ── ASTF profile 源码：load_profile 需要独立 .py 文件，末尾必须 register_profile ──
+# ── ASTF profile 源码：load_profile 需要独立 .py 文件，末尾按惯例提供 def register() ──
 PROFILE_SRC = '''\
 from trex.astf.api import *
 
