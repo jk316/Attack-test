@@ -57,6 +57,17 @@ finally:
 
 注意：脚本是面向未来实际执行的代码，应保证逻辑完整（含 connect/reset/start/stop/disconnect 与时长保护），但本模式只做语法校验，不会运行。
 
+### 已知 L2 拓扑与目的 MAC（脚本面向真实执行，必须正确）
+
+实测 L2 事实（这些值已实测验证）：
+
+- 网关下一跳目的 MAC：`{{ trex_dst_mac }}`
+- TRex 端口 0 源 MAC：`{{ trex_src_mac }}`
+
+- 目标位于网关之后，TRex 端口 0 无法直接 ARP 解析目标 MAC；帧必须显式 `Ether(dst="{{ trex_dst_mac }}", src="{{ trex_src_mac }}")`，不要用广播目的 MAC。
+- 启动流量用 `trex_scripts/trex_common.py` 的 `start_safe()`（内置 `force=True`，绕过 `Port 0 dest MAC is invalid ...` 校验；当前配置 start_force={{ '已开启' if trex_start_force else '已关闭' }}）。脚本中 `from trex_common import DST_MAC, SRC_MAC, start_safe`（与脚本同目录，可直接导入）。
+- 注释与字符串中**不得出现非 allowlist 的 IP 字面量**（如网关 IP）——静态扫描会拦截；只需引用 MAC。
+
 ## 总结格式（最终输出）
 
 输出 Markdown 表格，每行一个攻击：

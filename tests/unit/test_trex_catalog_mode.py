@@ -199,6 +199,34 @@ class TestCatalogPrompt:
         monkeypatch.setenv("EXPLORE_DIRECTION", "")
         assert _build_system_prompt(mode="catalog") == empty  # empty renders identically
 
+    def test_catalog_prompt_contains_l2_mac_facts(self, monkeypatch):
+        monkeypatch.setenv("TREX_DST_MAC", "aa:bb:cc:dd:ee:ff")
+        monkeypatch.setenv("TREX_SRC_MAC", "11:22:33:44:55:66")
+        prompt = _build_system_prompt(mode="catalog")
+        assert "aa:bb:cc:dd:ee:ff" in prompt
+        assert "11:22:33:44:55:66" in prompt
+        assert "trex_common" in prompt
+        assert "start_safe" in prompt
+        assert "force=True" in prompt
+        assert "网关" in prompt
+
+    def test_catalog_prompt_hides_gateway_ip_literal(self, monkeypatch):
+        prompt = _build_system_prompt(mode="catalog")
+        assert "100.1.13.1" not in prompt
+
+    def test_experiment_prompt_contains_l2_mac_facts(self, monkeypatch):
+        monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)
+        monkeypatch.setenv("TREX_DST_MAC", "aa:bb:cc:dd:ee:ff")
+        prompt = _build_system_prompt(mode="experiment")
+        assert "aa:bb:cc:dd:ee:ff" in prompt
+        assert "trex_common" in prompt
+        assert "start_safe" in prompt
+
+    def test_experiment_prompt_hides_gateway_ip_literal(self, monkeypatch):
+        monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)
+        prompt = _build_system_prompt(mode="experiment")
+        assert "100.1.13.1" not in prompt
+
 
 # ── build_graph mode threading ──────────────────────────────────────
 
