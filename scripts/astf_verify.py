@@ -104,14 +104,16 @@ class ProfGetImage(ASTFProfile):
                            dist_client=ip_gen_c,
                            dist_server=ip_gen_s)
 
-        # ── 模板：按探测到的参数名组装（ip_gen 传在模板上）──
+        # ── 模板：按探测到的参数名组装。
+        # 注意：client 模板的 ip_gen 要求合并后的 ASTFIPGen 对象
+        # （内部同时携带 dist_client=源 IP 与 dist_server=真实目标 IP）。──
         temp_c = ASTFTCPClientTemplate(
             **_build_kwargs(ASTFTCPClientTemplate, _CLIENT_TPL_PARAMS,
-                           program=prog_c, ip_gen=ip_gen_c, port=DPORT)
+                           program=prog_c, ip_gen=ip_gen, port=DPORT)
         )
         temp_s = ASTFTCPServerTemplate(
             **_build_kwargs(ASTFTCPServerTemplate, _SERVER_TPL_PARAMS,
-                           program=prog_s, ip_gen=ip_gen_s)
+                           program=prog_s, ip_gen=None)
         )
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
