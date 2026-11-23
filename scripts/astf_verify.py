@@ -16,6 +16,7 @@ src_ipv4）。本脚本让 ASTF 客户端以 100.1.11.200 为源、以真实服�
 100.1.11.3 为目的，服务器的响应会回到 TRex 端口 0 的 RX，从而完成
 有状态握手。ip_offset 必须为 0.0.0.0，否则会把真实目标 IP 偏移掉。
 """
+import inspect
 import sys
 
 from trex.astf.api import (
@@ -29,6 +30,12 @@ from trex.astf.api import (
     ASTFTCPServerTemplate,
     ASTFTemplate,
 )
+
+# ── 运行时探测本版本 ASTF API 的参数名（3.x 各小版本不一致）──
+_CLIENT_TPL_PARAMS = set(inspect.signature(ASTFTCPClientTemplate.__init__).parameters) - {"self"}
+_PROFILE_PARAMS = set(inspect.signature(ASTFProfile.__init__).parameters) - {"self"}
+print(f"[debug] ASTFTCPClientTemplate 参数: {sorted(_CLIENT_TPL_PARAMS)}")
+print(f"[debug] ASTFProfile 参数: {sorted(_PROFILE_PARAMS)}")
 
 SERVER = "10.99.80.222"   # TRex daemon 所在机器
 SYNC = 4501               # 单实例切换后仍是默认 RPC 端口
@@ -74,19 +81,31 @@ class ProfGetImage(ASTFProfile):
                            dist_client=ip_gen_c,
                            dist_server=ip_gen_s)
 
-        # ── 模板（兼容不同小版本的参数名 port / dport）──
-        try:
-            temp_c = ASTFTCPClientTemplate(port=DPORT, program=prog_c)
-        except TypeError:
-            temp_c = ASTFTCPClientTemplate(dport=DPORT, program=prog_c)
+        # ── 模板：按探测到的参数名组装（不再靠猜）──
+        kw = {"program": prog_c}
+        if "port" in _CLIENT_TPL_PARAMS:
+            kw["port"] = DPORT
+        elif "dport" in _CLIENT_TPL_PARAMS:
+            kw["dport"] = DPORT
+            if "sport" in _CLIENT_TPL_PARAMS:
+                kw["sport"] = 1024
+        else:
+            raise SystemExit(
+                "❌ 无法识别 client template 的端口参数，"
+                f"实际参数为: {sorted(_CLIENT_TPL_PARAMS)}"
+            )
+        temp_c = ASTFTCPClientTemplate(**kw)
         temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
-        # ── 组装 profile（3.08 要求 default_ip_gen 必传）──
-        try:
-            super().__init__(default_ip_gen=ip_gen, templates=[template])
-        except TypeError:
-            # 旧式 API：ip_gen 位置传参 + add_template
+        # ── 组装 profile：按探测到的参数名 ──
+        if "default_ip_gen" in _PROFILE_PARAMS:
+            if "templates" in _PROFILE_PARAMS:
+                super().__init__(default_ip_gen=ip_gen, templates=[template])
+            else:
+                super().__init__(default_ip_gen=ip_gen)
+                self.add_template(template)
+        else:
             super().__init__(ip_gen)
             self.add_template(template)
 
