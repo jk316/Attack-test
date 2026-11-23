@@ -91,9 +91,9 @@ class ProfGetImage(ASTFProfile):
         super().__init__(default_ip_gen=ip_gen, templates=[template])
 
 
-register_profile(ProfGetImage())
+def register():
+    return ProfGetImage()
 '''
-
 
 def build_profile_source() -> str:
     return (PROFILE_SRC
@@ -126,7 +126,10 @@ def configure_port(c) -> None:
 
         if not resolved and hasattr(c, "set_l2_mode"):
             try:
-                c.set_l2_mode(PORT, dst_mac=GATEWAY_MAC, src_mac=SRC_MAC)
+                try:
+                    c.set_l2_mode(PORT, dst_mac=GATEWAY_MAC)
+                except TypeError:
+                    c.set_l2_mode(PORT, GATEWAY_MAC)
                 print(f"✅ 退回 L2 模式：出口 MAC 固定为网关 {GATEWAY_MAC}")
             except Exception as e:
                 print("⚠️  set_l2_mode 失败:", e)
