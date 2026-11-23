@@ -177,9 +177,15 @@ def main() -> None:
         c.disconnect()
         sys.exit(1)
 
+    # 3.08 的 load_profile 可能返回 None——此时按惯例用 pid_input=''，
+    # 不行再退回默认标记 '_'。
+    pid = pid or ""
     print(f"▶ 启动 ASTF 流：{CLIENT_IP} → {TARGET}:{DPORT}  GET {IMAGE_PATH}")
     try:
-        c.start(pid_input=pid, mult=1, duration=15, block=True)
+        try:
+            c.start(pid_input=pid, mult=1, duration=15, block=True)
+        except Exception:
+            c.start(pid_input="_", mult=1, duration=15, block=True)
         time.sleep(1)
         stats = c.get_stats()
     except Exception as e:
