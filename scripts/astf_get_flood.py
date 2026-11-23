@@ -77,7 +77,7 @@ class ProfGetFlood():
                            dist_server=ip_gen_s)
 
         temp_c = ASTFTCPClientTemplate(ip_gen=ip_gen, port=DPORT,
-                                       program=prog_c, cps=CPS)
+                                       program=prog_c, cps=CPS, cont=True)
         temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
