@@ -90,6 +90,10 @@ class ProfGetImage(ASTFProfile):
 
         super().__init__(default_ip_gen=ip_gen, templates=[template])
 
+    # 3.08 的 loader 会调 register().get_profile，必须提供
+    def get_profile(self):
+        return self
+
 
 def register():
     return ProfGetImage()
@@ -119,12 +123,8 @@ def configure_port(c) -> None:
             print("✅ resolve（ARP）成功")
         except Exception as e:
             print("⚠️  ARP 解析失败（与 STL 时代一致）:", e)
-        try:
-            c.set_service_mode(ports=[PORT], enabled=False)
-        except Exception:
-            pass
-
         if not resolved and hasattr(c, "set_l2_mode"):
+            # 注意：set_l2_mode 必须在 service mode 开启期间调用
             try:
                 try:
                     c.set_l2_mode(PORT, dst_mac=GATEWAY_MAC)
@@ -133,6 +133,10 @@ def configure_port(c) -> None:
                 print(f"✅ 退回 L2 模式：出口 MAC 固定为网关 {GATEWAY_MAC}")
             except Exception as e:
                 print("⚠️  set_l2_mode 失败:", e)
+        try:
+            c.set_service_mode(ports=[PORT], enabled=False)
+        except Exception:
+            pass
     except Exception as e:
         print("⚠️  set_service_mode 失败:", e)
 
