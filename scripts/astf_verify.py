@@ -43,7 +43,8 @@ IMAGE_PATH = "/api/activities/00000000-0000-0000-0000-000000000001/image"
 # ── 运行时探测本版本 ASTF API 的参数名 ──
 print(f"[debug] ASTFClient.start 签名: {inspect.signature(ASTFClient.start)}")
 
-# ── ASTF profile 源码：load_profile 需要独立 .py 文件，末尾按惯例提供 def register() ──
+# ── ASTF profile 源码：3.08 惯例——普通类 + get_profile() 返回 ASTFProfile 实例 ──
+# （对照官方 examples/astf/http_many.py 的写法）
 PROFILE_SRC = '''\
 from trex.astf.api import *
 
@@ -60,8 +61,11 @@ HTTP_REQ = (
 ).encode()
 
 
-class ProfGetImage(ASTFProfile):
+class ProfGetImage():
     def __init__(self):
+        pass
+
+    def get_profile(self, **kwargs):
         # ── 客户端程序：握手 → GET → 收响应 → 关闭 ──
         prog_c = ASTFProgram()
         prog_c.connect()
@@ -88,11 +92,7 @@ class ProfGetImage(ASTFProfile):
         temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
-        super().__init__(default_ip_gen=ip_gen, templates=[template])
-
-    # 3.08 的 loader 会调 register().get_profile，必须提供
-    def get_profile(self):
-        return self
+        return ASTFProfile(default_ip_gen=ip_gen, templates=[template])
 
 
 def register():
