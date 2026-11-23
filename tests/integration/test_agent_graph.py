@@ -159,6 +159,7 @@ class TestAgentToolCalling:
         mock_send.assert_called_once_with(
             dst_ip="10.99.80.160", dst_port=8080, duration_s=10,
             pps=50, packet_size=64, flow_count=1, iat_jitter_ms=0,
+            src_ip=None,
         )
         mock_ping.assert_called_once_with(ip="10.99.80.160", count=4, timeout=10)
         mock_log.assert_called_once()

@@ -251,7 +251,7 @@ Tools auto-collect `rtt_during` during attack via `get_samples_since(t0)` → `b
 
 ### Security Validation
 
-All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast, no src_ip forgery. Pktgen tools additionally enforce `dst_ip` must be non-empty for skills in `_SKILLS_WITH_DST_IP`. `pktgen_pcap_replay` is exempt (PCAP embeds its own dst_ip) — system prompt warns about this.
+All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast. `src_ip` spoofing is allowed/encouraged for stateless traffic (UDP/ICMP/TCP SYN). Pktgen tools additionally enforce `dst_ip` must be non-empty for skills in `_SKILLS_WITH_DST_IP`. `pktgen_pcap_replay` is exempt (PCAP embeds its own dst_ip) — system prompt warns about this.
 
 ### Test Organization
 

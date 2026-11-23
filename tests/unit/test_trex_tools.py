@@ -126,13 +126,20 @@ class TestRunPythonFile:
         assert result["mode"] == "dry_run"
         mock_run.assert_not_called()
 
-    def test_live_blocks_non_allowlisted_ip_in_code(self, tmp_path, monkeypatch):
+    def test_live_non_allowlisted_ip_shown_in_hitl(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
         monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
         self._write(tmp_path, code=f"target = '{NOT_ALLOWLISTED_IP}'\n")
-        result = run_python_file.invoke({"filename": "s.py"})
-        assert result["success"] is False
-        assert NOT_ALLOWLISTED_IP in result["error"]
+        with patch("src.trex.tools.interrupt", return_value=True) as mock_int, \
+             patch("src.trex.tools.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+            result = run_python_file.invoke({"filename": "s.py"})
+        # 不再硬拦截：进入 HITL，且 HITL 参数里提示非 allowlist IP
+        assert result["success"] is True
+        hitl_params = mock_int.call_args[0][0]["params"]
+        assert NOT_ALLOWLISTED_IP in hitl_params["non_allowlisted_ips"]
 
     def test_live_hitl_gate(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)

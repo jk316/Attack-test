@@ -427,6 +427,7 @@ reward = avg_rtt_ms + loss_pct * 10
 ## 安全约束
 
 - `traffic_send`、`mixed_traffic_send` 和 Pktgen 流量工具（`pktgen_*_flood`、`pktgen_range_scan`、`pktgen_packet_sequence`、`pktgen_pcap_replay`）只能向 allowlist 中的目标发送流量
+- 无状态流量（UDP / ICMP / TCP SYN）**允许并鼓励伪造源 IP**（`src_ip`）——可用于源 IP 轮换、反射放大、多源攻击；有状态连接（需真实 TCP 握手）不适用
 - 流量发送前必须通过人工审批（HITL gate）——Scapy 和 Pktgen 工具均适用
 - 后台 ping 监控由程序自动启动，且只能打 allowlist 中的目标
 {% if trex_available %}

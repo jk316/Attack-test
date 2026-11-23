@@ -135,15 +135,19 @@ class TestTrafficSendTool:
 
     # ── Security Hard Constraints ──────────────────────────────
 
-    def test_src_ip_forgery_rejected(self):
-        """不允许伪造 src_ip"""
+    def test_src_ip_allowed(self):
+        """无状态协议允许伪造 src_ip，结果应回显。"""
         from src.tools.traffic_send_tool import traffic_send_tool
 
-        with pytest.raises(ValueError, match="(?i)src_ip.*not allowed"):
-            traffic_send_tool(
+        with patch("src.tools.traffic_send_tool.send"), \
+             patch("src.tools.traffic_send_tool.HAS_SCAPY", True):
+            result = traffic_send_tool(
                 ALLOWLISTED_IP, dst_port=8080,
-                src_ip="1.2.3.4", pps=10
+                src_ip="1.2.3.4", pps=10, duration_s=1
             )
+
+        assert result["success"] is True
+        assert result["params"]["src_ip"] == "1.2.3.4"
 
     def test_invalid_dst_port_rejected(self):
         """无效端口应被拒绝"""
@@ -175,13 +179,13 @@ class TestTrafficSendTool:
         assert "errors" in result
 
     def test_output_structure_on_validation_failure(self):
-        """安全违规时（src_ip 伪造）应抛出 ValueError"""
+        """安全违规时（无效端口）应抛出 ValueError"""
         from src.tools.traffic_send_tool import traffic_send_tool
 
-        with pytest.raises(ValueError, match="(?i)src_ip.*not allowed"):
+        with pytest.raises(ValueError, match="(?i)port"):
             traffic_send_tool(
-                ALLOWLISTED_IP, dst_port=8080,
-                pps=10, src_ip="1.2.3.4"
+                ALLOWLISTED_IP, dst_port=99999,
+                pps=10
             )
 
     def test_params_echoed_in_output(self):

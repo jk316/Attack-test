@@ -20,7 +20,7 @@
 1. **allowlist 白名单**——所有流量工具在发包前校验目标 IP，不在白名单内直接拒绝；
 2. **参数上限强制**——pps / 时长 / 包长 / 流数等均有硬上限；
 3. **HITL 人工审批**——所有「产生流量」的工具都会在 `interrupt()` 处暂停，等待操作员显式批准；
-4. **禁止**广播 / 组播、禁止伪造 `src_ip`、禁止无限循环发送。
+4. **禁止**广播 / 组播、禁止无限循环发送；无状态协议（UDP / ICMP / TCP SYN）**允许并鼓励伪造 `src_ip`**（源 IP 轮换、反射放大）。
 
 使用本项目即表示你已获得目标环境的合法授权，并对自己的使用行为负责。
 
@@ -33,7 +33,7 @@
 - **闭环收敛**：ReAct 自主探索，连续 `no_improve_limit` 轮无 RTT 提升即早停；
 - **后台 ping 监控**：优先 `fping -Q`（10 探针/秒高分辨率），无 `fping` 时回退系统 `ping`（跨平台）；
 - **RTT 观测对齐**：每个流量工具结果附 `attack_window` / `observation_window` / `rtt_during`，LLM 校验观测是否真正覆盖攻击窗口；
-- **严格安全门控**：allowlist + 参数上限 + HITL + 伪造/广播防护。
+- **严格安全门控**：allowlist + 参数上限 + HITL + 广播防护（无状态协议允许伪造源 IP）。
 
 ---
 
@@ -276,7 +276,7 @@ uv run python src/main.py --target-ip 10.99.80.160 --trex-live --max-iters 5
 
 ### 其他安全约束
 
-- 所有流量工具禁止**广播 / 组播**、禁止**伪造 `src_ip`**；
+- 所有流量工具禁止**广播 / 组播**；无状态协议（UDP / ICMP / TCP SYN）**允许并鼓励伪造 `src_ip`**（源 IP 轮换、反射放大）；
 - `pktgen_packet_sequence` 会自动把 LLM 臆造的 MAC 地址替换为 `topology.yaml` 中真实的 `dst_mac`，防止 LLM 编造未知 MAC；
 - `mixed_traffic_send` 强制用 `dst_ip` 参数覆盖 JSON spec 中的 `IP.dst`；
 - `--trex-explore` 在结构上只注册 2 个 TRex 写/检查工具，根本不存在可调用的流量工具，因此零流量零 HITL。

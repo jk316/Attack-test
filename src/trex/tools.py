@@ -174,6 +174,7 @@ def _read_and_scan(path: Path) -> dict[str, Any]:
 
 def _execute_live(
     path: Path, code: str, target_ip: str | None, detected_ips: list[str],
+    suspicious_ips: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the script in live mode, after HITL approval."""
     approval = interrupt({
@@ -183,6 +184,7 @@ def _execute_live(
             "path": str(path),
             "target_ip": target_ip,
             "detected_ips": detected_ips,
+            "non_allowlisted_ips": suspicious_ips or [],
             "code_preview": code[:CODE_PREVIEW_CHARS],
             "warning": "此脚本将以本机当前用户完整权限执行任意 Python（无执行沙箱），请确认脚本内容。",
         },
@@ -304,19 +306,11 @@ def run_python_file(filename: str, target_ip: str | None = None) -> dict[str, An
             "error": f"script has a syntax error: {scan['syntax_error']}",
         }
 
-    if scan["suspicious"]:
-        return {
-            "success": False,
-            "mode": "live",
-            "error": (
-                f"script contains non-allowlisted IP(s) {scan['suspicious']}; "
-                "add them to the allowlist or fix the code."
-            ),
-            "detected_ips": scan["detected_ips"],
-            "non_allowlisted_ips": scan["suspicious"],
-        }
-
-    return _execute_live(path, scan["code"], target_ip, scan["detected_ips"])
+    # 源 IP 伪造已放开，静态扫描无法区分 src/dst，不再硬拦截。
+    # 非 allowlist IP 作为提示传给 _execute_live，在 HITL 里展示由操作员把关。
+    return _execute_live(
+        path, scan["code"], target_ip, scan["detected_ips"], scan["suspicious"],
+    )
 
 
 TREX_TOOLS = [write_python_file, run_python_file]

@@ -51,6 +51,7 @@ def traffic_send(
     packet_size: int | None = None,
     flow_count: int | None = None,
     iat_jitter_ms: int | None = None,
+    src_ip: str | None = None,
 ) -> dict[str, Any]:
     """Send controlled traffic to a target. REQUIRES HUMAN APPROVAL.
 
@@ -65,6 +66,7 @@ def traffic_send(
         packet_size: Payload size in bytes (max 512).
         flow_count: Number of concurrent flows with unique sport (max 50).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
+        src_ip: Optional spoofed source IP (stateless UDP — allowed/encouraged).
 
     Returns:
         Dict with success, params, packets_sent, elapsed_s, effective_pps.
@@ -84,6 +86,7 @@ def traffic_send(
         "packet_size": packet_size,
         "flow_count": flow_count,
         "iat_jitter_ms": iat_jitter_ms,
+        "src_ip": src_ip,
     }
     approval = interrupt({
         "message": "[HITL] Approve traffic send?",
@@ -102,6 +105,7 @@ def traffic_send(
         packet_size=packet_size,
         flow_count=flow_count,
         iat_jitter_ms=iat_jitter_ms,
+        src_ip=src_ip,
     )
 
     # Collect RTT samples during the attack window (if monitor is running).
