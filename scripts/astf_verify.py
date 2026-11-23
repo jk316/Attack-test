@@ -33,9 +33,32 @@ from trex.astf.api import (
 
 # ── 运行时探测本版本 ASTF API 的参数名（3.x 各小版本不一致）──
 _CLIENT_TPL_PARAMS = set(inspect.signature(ASTFTCPClientTemplate.__init__).parameters) - {"self"}
+_SERVER_TPL_PARAMS = set(inspect.signature(ASTFTCPServerTemplate.__init__).parameters) - {"self"}
+_TPL_PARAMS = set(inspect.signature(ASTFTemplate.__init__).parameters) - {"self"}
 _PROFILE_PARAMS = set(inspect.signature(ASTFProfile.__init__).parameters) - {"self"}
 print(f"[debug] ASTFTCPClientTemplate 参数: {sorted(_CLIENT_TPL_PARAMS)}")
+print(f"[debug] ASTFTCPServerTemplate 参数: {sorted(_SERVER_TPL_PARAMS)}")
+print(f"[debug] ASTFTemplate 参数: {sorted(_TPL_PARAMS)}")
 print(f"[debug] ASTFProfile 参数: {sorted(_PROFILE_PARAMS)}")
+
+
+def _build_kwargs(cls, sig_params, program, ip_gen, port=None):
+    """按探测到的参数名组装 kwargs，并检查必传参数是否配齐。"""
+    kw = {}
+    if "program" in sig_params:
+        kw["program"] = program
+    if "ip_gen" in sig_params:
+        kw["ip_gen"] = ip_gen
+    if "port" in sig_params and port is not None:
+        kw["port"] = port
+    sig = inspect.signature(cls.__init__)
+    missing = [
+        n for n, p in sig.parameters.items()
+        if n != "self" and p.default is inspect.Parameter.empty and n not in kw
+    ]
+    if missing:
+        raise SystemExit(f"❌ {cls.__name__} 还缺必传参数: {missing}")
+    return kw
 
 SERVER = "10.99.80.222"   # TRex daemon 所在机器
 SYNC = 4501               # 单实例切换后仍是默认 RPC 端口
@@ -81,21 +104,15 @@ class ProfGetImage(ASTFProfile):
                            dist_client=ip_gen_c,
                            dist_server=ip_gen_s)
 
-        # ── 模板：按探测到的参数名组装（不再靠猜）──
-        kw = {"program": prog_c}
-        if "port" in _CLIENT_TPL_PARAMS:
-            kw["port"] = DPORT
-        elif "dport" in _CLIENT_TPL_PARAMS:
-            kw["dport"] = DPORT
-            if "sport" in _CLIENT_TPL_PARAMS:
-                kw["sport"] = 1024
-        else:
-            raise SystemExit(
-                "❌ 无法识别 client template 的端口参数，"
-                f"实际参数为: {sorted(_CLIENT_TPL_PARAMS)}"
-            )
-        temp_c = ASTFTCPClientTemplate(**kw)
-        temp_s = ASTFTCPServerTemplate(program=prog_s)
+        # ── 模板：按探测到的参数名组装（ip_gen 传在模板上）──
+        temp_c = ASTFTCPClientTemplate(
+            **_build_kwargs(ASTFTCPClientTemplate, _CLIENT_TPL_PARAMS,
+                           program=prog_c, ip_gen=ip_gen_c, port=DPORT)
+        )
+        temp_s = ASTFTCPServerTemplate(
+            **_build_kwargs(ASTFTCPServerTemplate, _SERVER_TPL_PARAMS,
+                           program=prog_s, ip_gen=ip_gen_s)
+        )
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
 
         # ── 组装 profile：按探测到的参数名 ──
