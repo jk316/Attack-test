@@ -423,8 +423,9 @@ def main() -> None:
     _apply_mode_env(args)
     if args.trex_live:
         os.environ["TREX_DRY_RUN"] = "false"
-    if args.trex_host is not None:
-        os.environ["TREX_HOST"] = args.trex_host
+    # 无条件解析 host：生成脚本（trex_common.TREX_SERVER）也读 TREX_HOST，
+    # 否则 topology.yaml 提供的 host 不会传到子进程。
+    os.environ["TREX_HOST"] = str(args.trex_host or get_trex_host())
     if args.trex_port is not None:
         os.environ["TREX_PORT"] = str(args.trex_port)
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)

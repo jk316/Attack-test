@@ -15,14 +15,17 @@
 - 不要在脚本注释/字符串里写非 allowlist 的 IP 字面量（网关 IP 等），
   静态扫描会拦截；此处只提供 MAC。
 
-取值来自环境变量 TREX_DST_MAC / TREX_SRC_MAC / TREX_START_FORCE / TREX_HOST，
-未设置时使用机房实测默认值（见 topology.yaml 的 trex 段）。
+取值来自环境变量 TREX_DST_MAC / TREX_SRC_MAC / TREX_START_FORCE / TREX_HOST
+（CLI main.py 与 Web 控制台 backend/experiment.py 都会在启动时从
+experiment.json 注入这些变量）。未设置时使用下方的字面默认值——它们与
+src/trex/config.py 的默认值及 topology.yaml / experiment.json 保持一致，
+由 tests/unit/test_trex_l2_sync.py 防漂移。请勿只改其中一处。
 """
 import os
 
 DST_MAC = os.environ.get("TREX_DST_MAC", "f4:e9:75:ee:51:69")
 SRC_MAC = os.environ.get("TREX_SRC_MAC", "58:a2:e1:6d:89:2c")
-TREX_SERVER = os.environ.get("TREX_HOST", "10.99.80.222")
+TREX_SERVER = os.environ.get("TREX_HOST", "127.0.0.1")
 
 
 def _parse_bool(value):
@@ -45,8 +48,14 @@ def make_client(server=None):
     return client
 
 
-def start_safe(client, ports=None, mult="100%", duration=10):
-    """启动流量：force=True 绕过 TRex 的显式 dest MAC 校验。"""
+def start_safe(client, ports=None, mult="100%", duration=10, force=None):
+    """启动流量：默认按 START_FORCE 配置决定 force，显式传 force 则覆盖。
+
+    force=True 用于绕过 TRex 的显式 dest MAC 校验
+    （"Port 0 dest MAC is invalid ..."）。
+    """
     if ports is None:
         ports = [0]
-    return client.start(ports=ports, mult=mult, duration=duration, force=True)
+    if force is None:
+        force = START_FORCE
+    return client.start(ports=ports, mult=mult, duration=duration, force=force)
