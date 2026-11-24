@@ -24,8 +24,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 扫描范围（相对项目根）。日志(data/)、生成物(output/)、依赖/缓存不在其中。
-SCAN_DIRS = ["skills", "docs", "scripts", "src", "trex_scripts"]
-SCAN_ROOT_FILES = ["topology.yaml", "experiment.json"]
+# trex_scripts/ 是 agent 生成脚本的沙箱：只有 trex_common.py 是权威源（tracked），
+# 其余 *.py 是实验一次性产物，可能残留旧端口，不作为配置事实扫描。
+SCAN_DIRS = ["skills", "docs", "scripts", "src"]
+SCAN_EXTRA_FILES = ["topology.yaml", "experiment.json", "trex_scripts/trex_common.py"]
 SCAN_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".sh", ".j2", ".json"}
 
 # 端口错误模式：async 被写成 4502；或「async = sync + 1」约定。
@@ -55,7 +57,7 @@ def _iter_source_files():
             # 跳过本脚本自身：它的文档/注释里会写这些模式作为说明
             if p.is_file() and p.suffix in SCAN_SUFFIXES and p.resolve() != self_path:
                 yield p
-    for rel in SCAN_ROOT_FILES:
+    for rel in SCAN_EXTRA_FILES:
         p = PROJECT_ROOT / rel
         if p.is_file():
             yield p
