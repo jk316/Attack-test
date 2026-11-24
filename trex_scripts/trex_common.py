@@ -26,7 +26,7 @@ src/trex/config.py 的默认值及 topology.yaml / experiment.json 保持一致�
 """
 import os
 
-DST_MAC = os.environ.get("TREX_DST_MAC", "f4:e9:75:ee:51:69")
+DST_MAC = os.environ.get("TREX_DST_MAC", "f0:c4:78:4c:a5:55")
 SRC_MAC = os.environ.get("TREX_SRC_MAC", "58:a2:e1:6d:89:2c")
 TREX_SERVER = os.environ.get("TREX_HOST", "127.0.0.1")
 

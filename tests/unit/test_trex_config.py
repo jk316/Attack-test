@@ -22,7 +22,7 @@ class TestL2Getters:
     def test_dst_mac_default(self, monkeypatch):
         monkeypatch.delenv("TREX_DST_MAC", raising=False)
         _patch_section(monkeypatch, {})
-        assert trex_config.get_trex_dst_mac() == "f4:e9:75:ee:51:69"
+        assert trex_config.get_trex_dst_mac() == "f0:c4:78:4c:a5:55"
 
     def test_src_mac_env_and_default(self, monkeypatch):
         monkeypatch.delenv("TREX_SRC_MAC", raising=False)

@@ -36,7 +36,7 @@ PORT = 0                    # TRex 流量口（100G）
 CLIENT_IP = "100.1.11.200"  # TRex 端口 IP（STL 时代同款，网络可达）
 TARGET = "100.1.11.3"       # 真实服务器
 DPORT = 8081
-GATEWAY_MAC = "f4:e9:75:ee:51:69"  # 网关 MAC（STL 时证明可达目标）
+GATEWAY_MAC = "f0:c4:78:4c:a5:55"  # 网关 MAC（STL 时证明可达目标）
 SRC_MAC = "58:a2:e1:6d:89:2c"      # 端口自身 MAC
 IMAGE_PATH = "/api/activities/00000000-0000-0000-0000-000000000001/image"
 

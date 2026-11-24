@@ -30,7 +30,7 @@ def trex_common(monkeypatch):
 
 class TestConstants:
     def test_module_imports_without_trex_libs(self, trex_common):
-        assert trex_common.DST_MAC == "f4:e9:75:ee:51:69"
+        assert trex_common.DST_MAC == "f0:c4:78:4c:a5:55"
         assert trex_common.SRC_MAC == "58:a2:e1:6d:89:2c"
         assert trex_common.TREX_SERVER == "127.0.0.1"  # 与 config._DEFAULT_HOST 对齐
         assert trex_common.START_FORCE is True
@@ -139,7 +139,7 @@ class TestPreparePort:
         # 配了 L3 + 兜底 L2（默认网关 MAC）
         assert any(e[0] == "l3" for e in c.events)
         l2_macs = [e[1] for e in c.events if e[0] == "l2"]
-        assert l2_macs and l2_macs[0] == "f4:e9:75:ee:51:69"
+        assert l2_macs and l2_macs[0] == "f0:c4:78:4c:a5:55"
 
     def test_prepare_port_respects_dst_mac_arg(self, trex_common):
         c = _RecordingAstfClient()

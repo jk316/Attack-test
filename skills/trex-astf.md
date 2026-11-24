@@ -9,7 +9,7 @@
   必须用 `from trex.astf.api import *` + `ASTFClient`；用 `trex_stl_lib`/`STLClient` 会报
   `server RPC config 'ASTF' vs client 'STL'`。也可直接用 `trex_common.make_astf_client()`。
 - 目标：`100.1.11.3:8081`（图片接口 `/api/activities/00000000-0000-0000-0000-000000000001/image`）。
-- 网关下一跳 MAC：`f4:e9:75:ee:51:69`；TRex 端口 0 MAC：`58:a2:e1:6d:89:2c`，可用 IP `100.1.11.200`。
+- 网关下一跳 MAC：`f0:c4:78:4c:a5:55`；TRex 端口 0 MAC：`58:a2:e1:6d:89:2c`，可用 IP `100.1.11.200`。
 - 目标在网关之后：TRex 端口 0 直接 ARP 目标 IP 必然失败（`Could not resolve following ports: [0]`）。
 
 ## 端口准备仪式（每个脚本开头必做，cfg 无 IP、ARP 不通）

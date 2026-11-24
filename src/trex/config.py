@@ -107,7 +107,7 @@ def get_trex_timeout_s() -> float:
 
 
 # ── Known L2 facts (defaults measured from the lab, 2026-11-23 agent.log) ──
-_DEFAULT_DST_MAC = "f4:e9:75:ee:51:69"
+_DEFAULT_DST_MAC = "f0:c4:78:4c:a5:55"
 _DEFAULT_SRC_MAC = "58:a2:e1:6d:89:2c"
 
 

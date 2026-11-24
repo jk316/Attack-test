@@ -32,7 +32,7 @@ ASYNC = 4500
 PORT = 0
 TARGET = "100.1.11.3"
 DPORT = 8081
-GATEWAY_MAC = "f4:e9:75:ee:51:69"   # 网关 MAC（STL 时代验证可达目标）
+GATEWAY_MAC = "f0:c4:78:4c:a5:55"   # 网关 MAC（STL 时代验证可达目标）
 IMAGE_PATH = "/api/activities/00000000-0000-0000-0000-000000000001/image"
 
 PROFILE_SRC = '''\

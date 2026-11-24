@@ -29,7 +29,7 @@
 | 目标 | `100.1.11.3:8081`（图片接口 `/api/activities/00000000-0000-0000-0000-000000000001/image`） | 拨测端口 3000 是登录接口，同一系统 |
 | cfg | `/etc/trex_cfg.yaml` **只配了 MAC、没有 IP** | 端口 IP 必须运行时配置 |
 | TRex 端口 0 | 100G，MAC `58:a2:e1:6d:89:2c`，可用 IP `100.1.11.200`（与目标同网段） | 客户端源 IP 用它，回包才路由得回来 |
-| 网关 MAC | `f4:e9:75:ee:51:69` | **ARP 永远失败**（目标不回 ARP），出口 MAC 直接固定网关 MAC |
+| 网关 MAC | `f0:c4:78:4c:a5:55` | **ARP 永远失败**（目标不回 ARP），出口 MAC 直接固定网关 MAC |
 | 客户端库 | 客户端机器上 `from trex.astf.api import *`（3.08 包名，**不是** `trex_astf_lib`） | 版本必须与 daemon 一致 |
 
 ---
@@ -48,7 +48,7 @@ try:
     c.resolve(ports=[PORT], retries=3)            # 预期失败：目标不回 ARP
 except Exception:
     pass
-c.set_l2_mode(PORT, dst_mac="f4:e9:75:ee:51:69")  # 兜底：固定网关 MAC（注意：也要求 service mode 开启！）
+c.set_l2_mode(PORT, dst_mac="f0:c4:78:4c:a5:55")  # 兜底：固定网关 MAC（注意：也要求 service mode 开启！）
 c.set_service_mode(ports=[PORT], enabled=False)
 ```
 

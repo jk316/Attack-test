@@ -31,7 +31,7 @@
         "port": null,
         "python": "/root/miniconda3/envs/trex311/bin/python",
         "lib_dir": "/root/fzx/Trex_Scripts/v3.08/automation/trex_control_plane/interactive",
-        "dst_mac": "f4:e9:75:ee:51:69",
+        "dst_mac": "f0:c4:78:4c:a5:55",
         "src_mac": "58:a2:e1:6d:89:2c",
         "start_force": true
     },
