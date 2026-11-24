@@ -116,6 +116,10 @@ def _truncate(text: str | None) -> str:
 def write_python_file(filename: str, code: str) -> dict[str, Any]:
     """Write a Python script into the TRex scripts directory and syntax-check it.
 
+    IMPORTANT: call `load_skill("trex-astf")` first to load the measured v3.08
+    ASTF API signatures and pitfalls (correct import, port ritual, single-IP
+    DP-split limit). Don't write TRex code from memory.
+
     Use this to produce the Python client script that drives the TRex server
     (STL/ASTF traffic generation). The file is written even if it has a syntax
     error, so a human can inspect and fix it. Syntax checking is parse-only
@@ -258,6 +262,9 @@ def _execute_live(
 @tool
 def run_python_file(filename: str, target_ip: str | None = None) -> dict[str, Any]:
     """Run a Python script from the TRex scripts directory.
+
+    IMPORTANT: if not already loaded, call `load_skill("trex-astf")` first —
+    it has the correct v3.08 ASTF usage and pitfalls for the script being run.
 
     REQUIRES HUMAN APPROVAL in live mode. In dry-run mode the script is NOT
     executed (it only reports whether the file exists and parses cleanly).
