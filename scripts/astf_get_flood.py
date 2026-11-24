@@ -16,7 +16,7 @@ ASTF HTTP GET flood（大文件下载攻击）
   --cps        每秒新建连接数（默认 50）
   --duration   攻击时长秒（默认 30，TRex start 会阻塞到结束）
   --client-ips 客户端 IP 池 "起-止"（默认 100.1.11.200-100.1.11.209）
-  --dwell      每个连接保持/下载时长 ms（默认 15000）
+  --dwell      每个连接保持/下载时长 ms（默认 15000，内部 ×1000 转 usec）
   --server / --sync / --async   TRex daemon 地址与端口
 """
 import argparse
@@ -59,8 +59,8 @@ class ProfGetFlood():
         prog_c = ASTFProgram()
         prog_c.connect()
         prog_c.send(HTTP_REQ)
-        prog_c.recv(1, 10000)
-        prog_c.delay(DWELL)
+        prog_c.recv(1, 10000)       # 收首字节；第 2 参是 clear（bool）不是超时（truthy→True）
+        prog_c.delay(DWELL * 1000)  # DWELL 单位 ms；delay 单位 usec，×1000 转微秒
         prog_c.reset()
 
         # 服务端占位（打真实服务器时不使用）
