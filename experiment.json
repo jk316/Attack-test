@@ -2,7 +2,7 @@
     "target_ip": "100.1.11.3",
     "pcap_path": "",
     "log_path": "data/experiment.jsonl",
-    "max_iters": 5,
+    "max_iters": 35,
     "no_improve_limit": 5,
     "auto_approve": true,
     "verbose": false,
