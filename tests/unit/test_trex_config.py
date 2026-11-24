@@ -45,3 +45,20 @@ class TestL2Getters:
         monkeypatch.delenv("TREX_START_FORCE", raising=False)
         _patch_section(monkeypatch, {"start_force": False})
         assert trex_config.get_trex_start_force() is False
+
+
+class TestLibDir:
+    def test_env_wins(self, monkeypatch):
+        _patch_section(monkeypatch, {"lib_dir": "/topo"})
+        monkeypatch.setenv("TREX_LIB_DIR", "/env")
+        assert trex_config.get_trex_lib_dir() == "/env"
+
+    def test_topology_fallback(self, monkeypatch):
+        monkeypatch.delenv("TREX_LIB_DIR", raising=False)
+        _patch_section(monkeypatch, {"lib_dir": "/topo"})
+        assert trex_config.get_trex_lib_dir() == "/topo"
+
+    def test_unset_is_empty(self, monkeypatch):
+        monkeypatch.delenv("TREX_LIB_DIR", raising=False)
+        _patch_section(monkeypatch, {})
+        assert trex_config.get_trex_lib_dir() == ""

@@ -8,8 +8,10 @@ pktgen:
   port: 22022
 
 trex:
-  host: "10.99.80.222"  
+  host: "10.99.80.222"
   port: 4501
+  # TRex 客户端库源码根（服务器路径，操作员配置）；read_file/grep 只读范围
+  # lib_dir: "/root/miniconda3/envs/trex311/lib/python3.11/site-packages"
   # 已知 L2 事实（实测）：目标位于网关之后，TRex 端口 0 无法直接 ARP 解析目标；
   # 生成脚本必须显式 Ether(dst=<网关 MAC>, src=<端口 MAC>)。
   dst_mac: "f4:e9:75:ee:51:69"   # 网关下一跳 MAC（destination MAC）

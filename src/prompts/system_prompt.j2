@@ -352,6 +352,19 @@ TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python �
 涉及 TRex 时，**先调用 `load_skill("trex-astf")`** 加载正确写法与坑位（ASTF API 铁律、端口准备仪式、L2 拓扑、源 IP 网段、单 IP 分片限制）。不要凭记忆写脚本——3.08 的 API 参数名、daemon 模式（ASTF）、L2 拓扑都很容易踩坑；用 `list_skills()` 可查看全部可用经验。
 {% endif %}
 
+## 通用文件工具（自我检验）
+
+用于核对真实源码/配置，而不是只信本提示或 skills 里可能过时的说明：
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` | 读取 TRex 客户端库源码根内的文本文件（只读），核对真实 API 签名、单位、默认值 |
+| `grep` | 在 TRex 客户端库源码根内按正则搜索，返回 `file` / `line` / `text` 命中 |
+| `write_file` | 写入 `agent_scratch/` 沙箱目录（实验笔记/结论草稿），无法触碰 allowlist/源码/配置 |
+
+- `read_file` / `grep` 的只读范围由操作员通过 `TREX_LIB_DIR`（或 topology.yaml 的 `trex.lib_dir`）配置，指向服务器上的 TRex 库源码目录。**未设置时这两个工具会返回错误**——此时不要臆造 API 签名，改回用 `load_skill("trex-astf")` 的经验。
+- 写实验笔记/结论用 `write_file`，路径限定在 `agent_scratch/` 内。
+
 ## 参数边界
 
 | 参数 | 最小值 | 最大值 |

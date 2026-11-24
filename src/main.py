@@ -257,6 +257,11 @@ def parse_args() -> argparse.Namespace:
              "(default: current interpreter; set to a conda env with trex libs)",
     )
     parser.add_argument(
+        "--trex-lib-dir", default=trex_cfg.get("lib_dir"),
+        help="TRex client library source root (server path) that read_file/grep "
+             "are confined to for source self-inspection",
+    )
+    parser.add_argument(
         "--trex-explore",
         action="store_true",
         default=cfg["trex_explore"],
@@ -434,6 +439,8 @@ def main() -> None:
     _apply_trex_l2_env(trex_cfg)
     if args.trex_python:
         os.environ["TREX_PYTHON"] = args.trex_python
+    if args.trex_lib_dir:
+        os.environ["TREX_LIB_DIR"] = args.trex_lib_dir
 
     # ── HTTP dial-testing configuration ──
     if args.http_url:

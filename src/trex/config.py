@@ -64,6 +64,22 @@ def get_trex_python() -> str:
     )
 
 
+def get_trex_lib_dir() -> str:
+    """Return the TRex client library source root (operator-set server path).
+
+    This path lives on the experiment bed (e.g. /root/miniconda3/envs/trex311/
+    lib/python3.11/site-packages) and is not auto-detected: the agent's
+    read_file / grep tools are confined to it for source self-inspection.
+
+    Chain: env TREX_LIB_DIR → topology.yaml trex.lib_dir → "" (unset).
+    """
+    return (
+        os.environ.get("TREX_LIB_DIR")
+        or _load_trex_section().get("lib_dir")
+        or ""
+    )
+
+
 def is_trex_dry_run() -> bool:
     """Return True unless TREX_DRY_RUN is explicitly "false"."""
     return os.environ.get("TREX_DRY_RUN", "true").lower() != "false"

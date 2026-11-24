@@ -30,6 +30,7 @@
         "host": null,
         "port": null,
         "python": "/root/miniconda3/envs/trex311/bin/python",
+        "lib_dir": "",
         "dst_mac": "f4:e9:75:ee:51:69",
         "src_mac": "58:a2:e1:6d:89:2c",
         "start_force": true

@@ -40,6 +40,9 @@ trex_scripts/
 trex_scripts/*
 !trex_scripts/trex_common.py
 
+# Agent scratch (write_file sandbox)
+agent_scratch/
+
 # DSH worktrees
 .dsh/
 
