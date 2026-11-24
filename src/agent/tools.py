@@ -25,6 +25,7 @@ from src.tools.http_monitor import get_http_monitor
 from src.tools.http_window import build_http_observation
 from src.pktgen.adapter import PKTGEN_TOOLS
 from src.trex.tools import TREX_TOOLS
+from src.tools.skill_tool import SKILL_TOOLS
 
 
 @tool
@@ -323,4 +324,5 @@ EXPERIMENT_TOOLS = [
     log_result,
     *PKTGEN_TOOLS,  # Pktgen-DPDK hardware line-rate tools (9 skills)
     *TREX_TOOLS,    # TRex client tools (write_python_file, run_python_file)
+    *SKILL_TOOLS,   # on-demand knowledge base (load_skill, list_skills)
 ]

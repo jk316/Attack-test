@@ -206,21 +206,25 @@ class TestCatalogPrompt:
         assert "aa:bb:cc:dd:ee:ff" in prompt
         assert "11:22:33:44:55:66" in prompt
         assert "trex_common" in prompt
-        assert "start_safe" in prompt
-        assert "force=True" in prompt
+        assert "prepare_port" in prompt
+        assert "make_astf_client" in prompt
         assert "网关" in prompt
 
     def test_catalog_prompt_hides_gateway_ip_literal(self, monkeypatch):
         prompt = _build_system_prompt(mode="catalog")
         assert "100.1.13.1" not in prompt
 
-    def test_experiment_prompt_contains_l2_mac_facts(self, monkeypatch):
+    def test_experiment_prompt_points_to_trex_skill(self, monkeypatch):
+        """TRex 知识改为按需加载：实验 prompt 只留 load_skill 指针，不再内联 L2 事实。"""
         monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)
         monkeypatch.setenv("TREX_DST_MAC", "aa:bb:cc:dd:ee:ff")
         prompt = _build_system_prompt(mode="experiment")
-        assert "aa:bb:cc:dd:ee:ff" in prompt
-        assert "trex_common" in prompt
-        assert "start_safe" in prompt
+        assert "load_skill" in prompt
+        assert "trex-astf" in prompt
+        # L2 细节已移入 skill，不应再出现在实验 prompt 里
+        assert "aa:bb:cc:dd:ee:ff" not in prompt
+        assert "trex_common" not in prompt
+        assert "start_safe" not in prompt
 
     def test_experiment_prompt_hides_gateway_ip_literal(self, monkeypatch):
         monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)

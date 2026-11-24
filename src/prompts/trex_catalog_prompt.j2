@@ -41,21 +41,23 @@
 | `write_python_file` | 把 Python 源码写入 `trex_scripts/` 沙箱目录并做语法检查（只解析不执行）。filename 只能是 `cat_` 开头的裸文件名 |
 | `run_python_file` | 对已写入的脚本做存在性 + 语法校验。当前为 **dry-run 模式，不会真正执行脚本** |
 
-脚本通过 TRex 的 STL / ASTF Python API 驱动 Trexserver（{{ trex_host }}:{{ trex_port }}）：无状态用 `import trex_stl_lib`，有状态用 `import trex_astf_lib`。脚本模板：
+脚本通过 TRex 的 ASTF Python API 驱动 Trexserver（{{ trex_host }}:{{ trex_port }}，daemon 为 **ASTF 模式**）。有状态攻击用 `from trex.astf.api import *`（**不是** `import trex_astf_lib`）。脚本模板：
 
 ```python
-from trex_stl_lib.api import *
+from trex.astf.api import *
+from trex_common import make_astf_client, prepare_port
 
-c = STLClient(server="{{ trex_host }}")
-c.connect()
+c = make_astf_client()          # ASTFClient + connect
 try:
+    c.acquire(force=True)
     c.reset()
-    # ... 构造 streams / 启动流量 / 停止 ...
+    prepare_port(c)             # cfg 无 IP / ARP 不通：set_l3_mode + set_l2_mode 固定网关 MAC
+    # ... load_profile / start / stop ...
 finally:
     c.disconnect()
 ```
 
-注意：脚本是面向未来实际执行的代码，应保证逻辑完整（含 connect/reset/start/stop/disconnect 与时长保护），但本模式只做语法校验，不会运行。
+注意：脚本是面向未来实际执行的代码，应保证逻辑完整（含 connect/acquire/reset/prepare_port/start/stop/disconnect 与时长保护），但本模式只做语法校验，不会运行。
 
 ### 已知 L2 拓扑与目的 MAC（脚本面向真实执行，必须正确）
 
@@ -65,7 +67,7 @@ finally:
 - TRex 端口 0 源 MAC：`{{ trex_src_mac }}`
 
 - 目标位于网关之后，TRex 端口 0 无法直接 ARP 解析目标 MAC；帧必须显式 `Ether(dst="{{ trex_dst_mac }}", src="{{ trex_src_mac }}")`，不要用广播目的 MAC。
-- 启动流量用 `trex_scripts/trex_common.py` 的 `start_safe()`（内置 `force=True`，绕过 `Port 0 dest MAC is invalid ...` 校验；当前配置 start_force={{ '已开启' if trex_start_force else '已关闭' }}）。脚本中 `from trex_common import DST_MAC, SRC_MAC, start_safe`（与脚本同目录，可直接导入）。
+- 端口准备用 `trex_common.py` 的 `prepare_port()`（内部 set_l3_mode 配 IP + set_l2_mode 固定网关 MAC，已封装）；脚本中 `from trex_common import DST_MAC, SRC_MAC, make_astf_client, prepare_port`（与脚本同目录，可直接导入）。
 - 注释与字符串中**不得出现非 allowlist 的 IP 字面量**（如网关 IP）——静态扫描会拦截；只需引用 MAC。
 
 ## 总结格式（最终输出）
