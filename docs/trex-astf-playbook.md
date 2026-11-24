@@ -79,7 +79,7 @@ class ProfSingle():                 # 普通类，不继承 ASTFProfile
         prog_c = ASTFProgram()
         prog_c.connect()
         prog_c.send(b"GET ... HTTP/1.1\r\nHost: ...\r\n\r\n")
-        prog_c.recv(1, 10000)       # 收到至少 1 字节（超时 ms）
+        prog_c.recv(1, 10000)       # 等 rx 流计数 ≥1 字节；第 2 参是 clear 而非超时（truthy→True，达水位后清零计数）
         prog_c.delay(2000)          # 保持连接（下载攻击靠这个吊住服务器）
         prog_c.reset()
 

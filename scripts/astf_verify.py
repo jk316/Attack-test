@@ -70,7 +70,7 @@ class ProfGetImage():
         prog_c = ASTFProgram()
         prog_c.connect()
         prog_c.send(HTTP_REQ)
-        prog_c.recv(1, 10000)      # 至少收到 1 字节（10 秒超时）
+        prog_c.recv(1, 10000)      # 等 rx 流计数 ≥1 字节；第 2 参是 clear 而非超时（truthy→True，达水位后清零计数）
         prog_c.delay(2000)
         prog_c.reset()
 
