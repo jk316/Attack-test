@@ -23,7 +23,7 @@
 
 ## P0 环境事实（已实测确认，2026-11-24）
 
-- TRex daemon：`10.99.80.222`，RPC sync=4501 / async=4502，**当前 ASTF 模式，
+- TRex daemon：`10.99.80.222`，RPC sync=4501 / async=4500，**当前 ASTF 模式，
   version `v3.08`**（build 2025-11-05，探针 `--connect` 实测握手成功）。
 - 客户端机器：`10.99.80.149`（root，本机 id_rsa 可直连）。
 - 客户端库位置：`/root/fzx/Trex_Scripts/v3.08/automation/trex_control_plane/interactive/`

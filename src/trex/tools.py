@@ -209,12 +209,17 @@ def _execute_live(
             text=True,
             timeout=get_trex_timeout_s(),
         )
-    except subprocess.TimeoutExpired:
-        logger.warning("TRex script %s timed out after %ss", path.name, get_trex_timeout_s())
+    except subprocess.TimeoutExpired as e:
+        logger.warning(
+            "TRex script %s timed out after %ss\n--- stdout (partial) ---\n%s\n--- stderr (partial) ---\n%s",
+            path.name, get_trex_timeout_s(), e.stdout or "", e.stderr or "",
+        )
         return {
             "success": False,
             "mode": "live",
             "error": f"script timed out after {get_trex_timeout_s()}s",
+            "stdout": _truncate(e.stdout),
+            "stderr": _truncate(e.stderr),
             "elapsed_s": round(time.time() - t0, 3),
             "detected_ips": detected_ips,
         }
@@ -241,8 +246,8 @@ def _execute_live(
     else:
         result["error"] = f"script exited with code {proc.returncode}"
         logger.warning(
-            "TRex script %s failed (returncode=%s): %s",
-            path.name, proc.returncode, result["stderr"][:200],
+            "TRex script %s failed (returncode=%s)\n--- stdout ---\n%s\n--- stderr ---\n%s",
+            path.name, proc.returncode, proc.stdout or "", proc.stderr or "",
         )
 
     if target_ip:

@@ -24,7 +24,7 @@
 
 | 项 | 值 | 说明 |
 |----|-----|------|
-| TRex daemon | `10.99.80.222`，RPC sync=4501 / async=4502 | 端口对约定：async = sync + 1 |
+| TRex daemon | `10.99.80.222`，RPC sync=4501 / async=4500 | 实测端口：sync=4501 / async=4500（4502 已关闭） |
 | daemon 模式 | 由启动参数决定：`--stl`（无状态）/ `--astf`（有状态），一进程一模式 | 客户端必须用匹配的 client，否则报 `server RPC config 'STL' vs client 'ASTF'` |
 | 目标 | `100.1.11.3:8081`（图片接口 `/api/activities/00000000-0000-0000-0000-000000000001/image`） | 拨测端口 3000 是登录接口，同一系统 |
 | cfg | `/etc/trex_cfg.yaml` **只配了 MAC、没有 IP** | 端口 IP 必须运行时配置 |

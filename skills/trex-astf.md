@@ -5,7 +5,7 @@
 
 ## 环境事实（实验床固定值）
 
-- TRex daemon：`10.99.80.222`（RPC sync=4501 / async=4502），**ASTF 模式**。
+- TRex daemon：`10.99.80.222`（RPC sync=4501 / async=4500），**ASTF 模式**。
   必须用 `from trex.astf.api import *` + `ASTFClient`；用 `trex_stl_lib`/`STLClient` 会报
   `server RPC config 'ASTF' vs client 'STL'`。也可直接用 `trex_common.make_astf_client()`。
 - 目标：`100.1.11.3:8081`（图片接口 `/api/activities/00000000-0000-0000-0000-000000000001/image`）。

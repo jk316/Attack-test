@@ -31,7 +31,7 @@ from trex.astf.api import (
 
 SERVER = "10.99.80.222"     # TRex daemon 所在机器
 SYNC = 4501                 # 单实例 ASTF 默认 RPC 端口
-ASYNC = 4502
+ASYNC = 4500
 PORT = 0                    # TRex 流量口（100G）
 CLIENT_IP = "100.1.11.200"  # TRex 端口 IP（STL 时代同款，网络可达）
 TARGET = "100.1.11.3"       # 真实服务器

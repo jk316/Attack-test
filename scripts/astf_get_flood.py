@@ -28,7 +28,7 @@ from trex.astf.api import ASTFClient
 
 SERVER = "10.99.80.222"
 SYNC = 4501
-ASYNC = 4502
+ASYNC = 4500
 PORT = 0
 TARGET = "100.1.11.3"
 DPORT = 8081

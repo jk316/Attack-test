@@ -179,12 +179,16 @@ class TestRunPythonFile:
         self._write(tmp_path)
         with patch("src.trex.tools.interrupt", return_value=True), \
              patch("src.trex.tools.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd="python", timeout=30)
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd="python", timeout=30, output="connected\nacquired\n", stderr=""
+            )
             result = run_python_file.invoke(
                 {"filename": "s.py", "target_ip": ALLOWLISTED_IP}
             )
         assert result["success"] is False
         assert "timed out" in result["error"]
+        assert result["stdout"] == "connected\nacquired\n"
+        assert result["stderr"] == ""
 
     def test_live_hitl_reject(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
