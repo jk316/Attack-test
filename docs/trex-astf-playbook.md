@@ -1,5 +1,7 @@
 # TRex ASTF 有状态攻击避坑手册
 
+> 模型向蒸馏版（按需加载 skill）：`skills/trex-astf.md`；本文件是完整人类参考。
+
 **适用范围**: TRex v3.08 + 本实验床（TRex daemon `10.99.80.222`，目标 `100.1.11.3`）
 **更新时间**: 2026-11-24
 **状态**: 单发握手已全部验证通过（签名见下）；cps 并发项待最终确认（见 §8）
@@ -8,9 +10,13 @@
 
 ## 1. 一句话结论
 
-有状态攻击（真实三次握手 + HTTP GET flood）在本实验床**已打通**：
+有状态攻击在本实验床**单发已打通、并发未打通**：
 `ASTF daemon` + 端口 L2 固定网关 MAC + 3.08 profile 正确写法 + `load_profile → start(pid_input)`。
 单发验证的**成功签名**：`tx=5 包 / rx≥13 包`。
+
+> ⚠️ **根本限制**：ASTF 的 DP 分片要求每个 IP 池地址数 > DP 线程数（本机=2），而目标是**单一真实 IP**
+> `100.1.11.3`，天然无法满足「单池多 IP」。因此**无法干净地对单台真实主机做高 CPS 洪泛**——
+> 服务端池塞多 IP 会让非目标 IP 黑洞，仅 1/N 生效。并发建连至今未跑通（见 §8）。
 
 ---
 
@@ -54,12 +60,21 @@ c.set_service_mode(ports=[PORT], enabled=False)
 
 ## 4. 3.08 ASTF API 铁律（本次踩坑全集）
 
-### 4.1 profile 文件结构（照官方 `examples/astf/http_many.py`）
+### 4.1 profile 文件结构
+
+**两个场景必须区分，不要混用**：
+
+| 场景 | `dist_server` | 模板 `cps`/`cont` | 状态 |
+|------|--------------|------------------|------|
+| 单发（`astf_verify.py`） | 单 IP 即可 | 不设 | ✅ 已验证（tx=5 / rx≥13） |
+| 并发（`astf_get_flood.py`） | **必须 >2 IP** | `cps` + `cont=True` | ⚠️ 单 IP 触发 DP 分片错误，未跑通 |
+
+#### 单发（✅ 已验证，`astf_verify.py` 同款）
 
 ```python
 from trex.astf.api import *
 
-class ProfXxx():                    # 普通类，不继承 ASTFProfile
+class ProfSingle():                 # 普通类，不继承 ASTFProfile
     def get_profile(self, **kwargs):
         prog_c = ASTFProgram()
         prog_c.connect()
@@ -75,16 +90,28 @@ class ProfXxx():                    # 普通类，不继承 ASTFProfile
 
         ip_gen = ASTFIPGen(
             glob=ASTFIPGenGlobal(ip_offset="0.0.0.0"),   # 必须 0：否则真实目标 IP 会被偏移
-            dist_client=ASTFIPGenDist(ip_range=["100.1.11.200", "100.1.11.209"], distribution="seq"),
+            dist_client=ASTFIPGenDist(ip_range=["100.1.11.200", "100.1.11.200"], distribution="seq"),
             dist_server=ASTFIPGenDist(ip_range=["100.1.11.3", "100.1.11.3"], distribution="seq"),
         )
-        temp_c = ASTFTCPClientTemplate(ip_gen=ip_gen, port=8081, program=prog_c, cps=50, cont=True)
+        temp_c = ASTFTCPClientTemplate(ip_gen=ip_gen, port=8081, program=prog_c)   # 无 cps/cont（单发）
         temp_s = ASTFTCPServerTemplate(program=prog_s)
         template = ASTFTemplate(client_template=temp_c, server_template=temp_s)
         return ASTFProfile(default_ip_gen=ip_gen, templates=[template])
 
 def register():                     # 末尾必须是这个，不是 register_profile()
-    return ProfXxx()
+    return ProfSingle()
+```
+
+#### 并发（⚠️ 尚未跑通：服务端池须 >2 IP，否则 DP 分片错误）
+
+与「单发」唯一关键差异（其余代码相同）：
+
+```python
+        # 客户端池 >2 IP（原本就够）
+        dist_client=ASTFIPGenDist(ip_range=["100.1.11.200", "100.1.11.209"], distribution="seq"),
+        # 服务端池必须 >2 IP——但 .4/.5 非真实 IP，流量会黑洞，仅 1/N 打到目标
+        dist_server=ASTFIPGenDist(ip_range=["100.1.11.3", "100.1.11.5"], distribution="seq"),
+        temp_c = ASTFTCPClientTemplate(ip_gen=ip_gen, port=8081, program=prog_c, cps=50, cont=True)
 ```
 
 ### 4.2 运行流程（客户端）
@@ -107,16 +134,18 @@ c.start(pid_input=pid or "", mult=1, duration=30, block=False)  # 没有 profile
 | `c.start(profiles=[...])` | `unexpected keyword argument 'profiles'` | `load_profile` → `start(pid_input=...)` |
 | `start(pid_input=None)` | `'NoneType' object has no attribute 'split'` | `pid or ""`，再失败回退 `"_"` |
 | `block=True` 依赖 start 阻塞 | 0.0 秒返回、洪水被掐死 | `block=False` + 自己计时 + `stop()` |
-| 模板只给 `cps` 不给 `cont` | 30 秒只有 1 个连接（tx 恒定 5） | 加 `cont=True`（**待验证**，见 §8） |
+| 模板只给 `cps` 不给 `cont` | 30 秒只有 1 个连接（tx 恒定 5） | 加 `cont=True`（**必要不充分**：并发还需服务端池 >2 IP，见下条） |
 | `ip_offset="1.0.0.0"` | 目标 IP 被偏移、请求发错地方 | `"0.0.0.0"` |
 | 客户端 IP 用假网段 `16.0.0.x` | 服务器回包路由不回来 | 用端口网段真实 IP（`100.1.11.200~209`） |
+| `dist_server` 只给单 IP（`["100.1.11.3","100.1.11.3"]`）跑并发 cps | `Profile split to DP cores error: Pool:(100.1.11.3-100.1.11.3) has only 1 address. Number of IPs in each pool must exceed the number of Data path threads, which is 2` | 单发（单 DP 线程）可用单 IP；**并发 cps 时服务端池须 >2 地址**（如 `["100.1.11.3","100.1.11.5"]`，但 .4/.5 非真实 IP 会黑洞，仅 1/N 生效） |
+| 看到 `start()` 返回成功就当已发流 | `get_stats()['global']['tx_cps']` 实为 0、`total_clients`=0，流量根本没出去 | 以 `get_stats()` 的 `tx_cps`/`tx_pps` > 0 作为「真发流」唯一判据 |
 
 ---
 
 ## 5. 验证套路
 
 1. **先单发**：`python3 scripts/astf_verify.py` —— 成功签名 `tx=5 / rx≥13`；
-2. **再加压**：`python3 scripts/astf_get_flood.py --cps 50 --duration 30 [--client-ips ...] [--dwell ...]`；
+2. **再加压**：`python3 scripts/astf_get_flood.py --cps 50 --duration 30 [--client-ips ...] [--dwell ...]` —— ⚠️ 当前脚本服务端池仍是单 IP，并发会触发 DP 分片错误，加压前须先把 `dist_server` 改成多 IP 池（见 §4.1/§8）；
 3. 观测：ping 监控（RTT/丢包）+ HTTP 拨测（`http.url` 探针，`--noproxy` 修复后基线应 >0）。
 
 ---
@@ -148,8 +177,13 @@ c.start(pid_input=pid or "", mult=1, duration=30, block=False)  # 没有 profile
 
 ## 8. 待办（诚实标注）
 
-- [ ] `cont=True` + `cps=50` 的并发建连效果**尚未跑通验证**——若无效，官方姿势是 profile `cap_list=[ASTFCapInfo(cps=…)]`；
+- [ ] 并发建连跑通（`astf_get_flood.py` 待修，**未实施**）：根因是**服务端池单 IP 触发 DP 分片错误**（`Pool has only 1 address... must exceed 2`，需服务端池 ≥3 地址）。修复方案：
+  - 加 `--server-ips` CLI 参数（默认 `100.1.11.3-100.1.11.5`，≥3 地址）；
+  - `PROFILE_SRC` 加 `SERVER_RANGE`，`ip_gen_s` 改用 `ip_range=SERVER_RANGE`（`TARGET` 保留用于 `Host` 头）；
+  - `build_profile_source` 签名加 `srv_a`/`srv_b`；
+  - ⚠️ 本质是「1/N 强度降级」：`.4`/`.5` 是黑洞，仅 1/3 连接打到真实目标——单目标攻击无干净解法；
+  - 官方另有一种加 cps 的姿势 `cap_list=[ASTFCapInfo(cps=…)]`，仍待验证。
 - [ ] 抽 `trex_astf_helpers.py`：封装 `connect_and_prepare()`（§3 仪式 + 连接参数），模型生成脚本只 import 调用；
 - [ ] 提示词注入「模型 3 条铁律」（§6）；
 - [ ] 服务器上未入库的 `trex_stl_*` 自定义工具收进仓库；
-- [ ] daemon 双实例（STL 4501 + ASTF 4503）落地后，工具层做模式路由。
+- [ ] daemon 双实例（当前单实例 ASTF 4501；未来 STL 4501 + ASTF 4503）落地后，工具层做模式路由。
