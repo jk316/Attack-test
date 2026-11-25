@@ -514,7 +514,6 @@ def main() -> None:
     agent_logger.addHandler(log_ch)
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
-    agent_logger.info("[RUN START] %s", run_id)
 
     # ── Run boundary markers for the lessons pipeline (spec 010 FR-005) ──
     agent_logger.info("[RUN START] %s", run_id)
@@ -616,7 +615,6 @@ def main() -> None:
             stop_experiment_monitors()
         except Exception:
             logger.warning("Monitor cleanup failed", exc_info=True)
-        agent_logger.info("[RUN END] %s", run_id)
 
 
 if __name__ == "__main__":
