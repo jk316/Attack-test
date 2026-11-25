@@ -17,6 +17,7 @@ is NOT executed inside an OS-level sandbox. The real safety gates are:
   * a subprocess timeout
 """
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -54,6 +55,23 @@ _WINDOWS_RESERVED = {
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
+
+# 系统代理变量：手写脚本若继承这些变量，urllib/requests 会把请求路由到
+# 环境代理（如 http://10.99.80.152:8889），导致 allowlist 内网目标全部挂起超时。
+# 执行前剥离，使脚本默认直连目标（与 .dsh/run-tests.sh 及 http_probe 的 --noproxy 一致）。
+_PROXY_ENV_VARS = (
+    "http_proxy", "https_proxy", "all_proxy",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "no_proxy", "NO_PROXY",
+)
+
+
+def _sanitized_env() -> dict[str, str]:
+    """Return a copy of os.environ with proxy vars removed, for the subprocess."""
+    env = dict(os.environ)
+    for k in _PROXY_ENV_VARS:
+        env.pop(k, None)
+    return env
 
 
 def _resolve_script_path(filename: str) -> Path:
@@ -208,6 +226,7 @@ def _execute_live(
             capture_output=True,
             text=True,
             timeout=get_trex_timeout_s(),
+            env=_sanitized_env(),
         )
     except subprocess.TimeoutExpired as e:
         logger.warning(
