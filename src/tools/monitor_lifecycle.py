@@ -48,7 +48,7 @@ def start_experiment_monitors(
     if http_cfg and http_cfg.get("url"):
         try:
             kwargs: dict[str, Any] = {"url": http_cfg["url"]}
-            for key in ("interval_s", "timeout_s", "method", "body", "content_type"):
+            for key in ("interval_s", "timeout_s", "method", "body", "content_type", "bodies"):
                 if key in http_cfg:
                     kwargs[key] = http_cfg[key]
             get_http_monitor().start(**kwargs)

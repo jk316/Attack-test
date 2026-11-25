@@ -57,6 +57,8 @@ class HttpMonitor:
         self._timeout_s = 5.0
         self._interval_s = 1.0
         self._body: Optional[str] = None
+        self._bodies: list[str] = []
+        self._body_index = 0
         self._content_type: Optional[str] = None
         self._stop_event = threading.Event()
 
@@ -73,12 +75,15 @@ class HttpMonitor:
         self, url: str, interval_s: float = 1.0, method: str = "GET",
         timeout_s: float = 5.0, body: Optional[str] = None,
         content_type: Optional[str] = None,
+        bodies: Optional[list[str]] = None,
     ) -> None:
         """Start continuous HTTP probing of *url*.
 
         Stops any previous monitor first. *interval_s* is the pause between
         probes; *timeout_s* is the per-request curl timeout; *body* /
         *content_type* are the optional request body and Content-Type header.
+        *bodies*, when non-empty, is rotated one per probe (e.g. a pool of
+        login accounts) instead of reusing the fixed *body*.
         """
         validate_http_url(url)
 
@@ -90,6 +95,8 @@ class HttpMonitor:
         self._timeout_s = timeout_s
         self._interval_s = max(interval_s, 0.05)
         self._body = body
+        self._bodies = list(bodies) if bodies else []
+        self._body_index = 0
         self._content_type = content_type
         self._stop_event.clear()
         self._running = True
@@ -112,12 +119,20 @@ class HttpMonitor:
         self._thread = None
         self._url = None
 
+    def _next_body(self) -> Optional[str]:
+        """Return the body for the next probe, rotating the pool if set."""
+        if self._bodies:
+            body = self._bodies[self._body_index % len(self._bodies)]
+            self._body_index += 1
+            return body
+        return self._body
+
     def _loop(self) -> None:
         """Probe loop (runs in daemon thread) until stopped."""
         while self._running and not self._stop_event.is_set():
             result = _run_curl(
                 self._url, method=self._method, timeout_s=self._timeout_s,
-                body=self._body, content_type=self._content_type,
+                body=self._next_body(), content_type=self._content_type,
             )
             sample = HttpSample(
                 ts=time.time(),
