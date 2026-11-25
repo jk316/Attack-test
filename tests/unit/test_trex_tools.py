@@ -190,6 +190,26 @@ class TestRunPythonFile:
         assert result["stdout"] == "connected\nacquired\n"
         assert result["stderr"] == ""
 
+    def test_live_strips_proxy_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
+        self._write(tmp_path)
+        monkeypatch.setenv("http_proxy", "http://10.99.80.152:8889")
+        monkeypatch.setenv("https_proxy", "http://10.99.80.152:8889")
+        monkeypatch.setenv("SOME_KEEP", "kept")
+        with patch("src.trex.tools.interrupt", return_value=True), \
+             patch("src.trex.tools.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+            run_python_file.invoke({"filename": "s.py", "target_ip": ALLOWLISTED_IP})
+        env = mock_run.call_args.kwargs["env"]
+        assert "http_proxy" not in env
+        assert "https_proxy" not in env
+        assert "all_proxy" not in env
+        assert "HTTP_PROXY" not in env
+        assert env["SOME_KEEP"] == "kept"
+
     def test_live_hitl_reject(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
         monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
