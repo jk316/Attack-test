@@ -130,6 +130,29 @@ def _load_http_probe_config() -> dict:
         return {}
 
 
+def _build_http_bodies(cfg: dict) -> list[str]:
+    """Expand http_probe.json's accounts + body template into a rotated pool.
+
+    When *cfg* has an ``accounts`` section and ``body`` contains an ``{email}``
+    placeholder, generates ``start..end`` (default 1..100) request bodies by
+    substituting ``email_prefix{i}{email_suffix}`` and ``password``. Returns an
+    empty list otherwise (fixed single-account probing).
+    """
+    accounts = cfg.get("accounts")
+    body = cfg.get("body") or ""
+    if not accounts or "{email}" not in body:
+        return []
+    prefix = accounts.get("email_prefix", "user")
+    suffix = accounts.get("email_suffix", "@test.com")
+    start = int(accounts.get("start", 1))
+    end = int(accounts.get("end", 100))
+    password = accounts.get("password", "123456")
+    return [
+        body.replace("{email}", f"{prefix}{i}{suffix}").replace("{password}", password)
+        for i in range(start, end + 1)
+    ]
+
+
 def _load_config_defaults() -> dict:
     """Load experiment defaults from config, falling back to hardcoded DEFAULTS."""
     data = _read_config_file()
@@ -320,8 +343,8 @@ def parse_args() -> argparse.Namespace:
         help="HTTP method for dial-testing (default GET)",
     )
     parser.add_argument(
-        "--http-body", default=http_cfg.get("body"),
-        help="Request body for dial-testing (e.g. JSON for POST login)",
+        "--http-body", default=None,
+        help="Request body for dial-testing (default from http_probe.json; e.g. JSON for POST login)",
     )
     parser.add_argument(
         "--http-content-type", default=http_cfg.get("content_type"),
@@ -463,13 +486,20 @@ def main() -> None:
         os.environ["TREX_LIB_DIR"] = args.trex_lib_dir
 
     # ── HTTP dial-testing configuration ──
+    probe_cfg = _load_http_probe_config()
+    http_body = args.http_body if args.http_body is not None else probe_cfg.get("body")
+    # 账号池轮换：http_probe.json 配 accounts + body 模板时生成 bodies；
+    # CLI 显式 --http-body 覆盖则视为固定单账号（不轮换）。
+    http_bodies = _build_http_bodies(probe_cfg) if args.http_body is None else []
     if args.http_url:
         os.environ["HTTP_URL"] = args.http_url
     os.environ["HTTP_INTERVAL_S"] = str(args.http_interval)
     os.environ["HTTP_TIMEOUT_S"] = str(args.http_timeout)
     os.environ["HTTP_METHOD"] = args.http_method
-    if args.http_body:
-        os.environ["HTTP_BODY"] = args.http_body
+    if http_bodies:
+        os.environ["HTTP_BODY"] = http_bodies[0]
+    elif http_body:
+        os.environ["HTTP_BODY"] = http_body
     if args.http_content_type:
         os.environ["HTTP_CONTENT_TYPE"] = args.http_content_type
 
@@ -528,8 +558,9 @@ def main() -> None:
                 "interval_s": args.http_interval,
                 "timeout_s": args.http_timeout,
                 "method": args.http_method,
-                "body": args.http_body,
+                "body": http_body,
                 "content_type": args.http_content_type,
+                "bodies": http_bodies,
             }
         started = start_experiment_monitors(args.target_ip, http_cfg)
         agent_logger.info(

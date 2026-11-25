@@ -2,7 +2,14 @@
     "url": "http://10.99.80.159:8081/api/auth/login",
     "method": "POST",
     "content_type": "application/json",
-    "body": "{\"email\":\"admin@cleanbank.com\",\"password\":\"admin123\"}",
+    "body": "{\"email\":\"{email}\",\"password\":\"{password}\"}",
+    "accounts": {
+        "email_prefix": "user",
+        "email_suffix": "@test.com",
+        "start": 1,
+        "end": 100,
+        "password": "123456"
+    },
     "interval_s": 1.0,
-    "timeout_s": 5
+    "timeout_s": 1
 }

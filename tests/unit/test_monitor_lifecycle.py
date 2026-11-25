@@ -79,6 +79,18 @@ def test_starts_http_with_configured_params(fake_ping, fake_http):
     assert kwargs["method"] == "POST"
 
 
+def test_starts_http_passes_bodies(fake_ping, fake_http):
+    cfg = {
+        "url": "http://10.99.80.159:3000/login",
+        "body": '{"email":"{email}","password":"123456"}',
+        "bodies": ["b1", "b2"],
+    }
+    result = monitor_lifecycle.start_experiment_monitors(ALLOWED, cfg)
+    assert result["http"] is True
+    kwargs = fake_http.start_calls[0][1]
+    assert kwargs["bodies"] == ["b1", "b2"]
+
+
 def test_non_allowlisted_target_degrades(fake_ping, fake_http, monkeypatch):
     def boom(ip: str) -> None:
         raise ValueError("not allowlisted")
