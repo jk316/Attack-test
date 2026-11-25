@@ -56,6 +56,10 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 bash scripts/logsync.sh                    # commit+push data/agent*.log + data/experiment.jsonl
 bash scripts/logsync.sh "TRex SYN 测试"    # with a custom commit message
 
+# ── Sync generated lessons from the server ────────────────────────
+bash scripts/lessonsync.sh                  # commit+push lessons/*.md
+bash scripts/lessonsync.sh "TRex SYN 教训"  # with a custom commit message
+
 # ── Experience lessons from logs (spec 010) ──────────────────────
 # Incremental + idempotent: summarizes every run_id not yet in lessons/,
 # writing lessons/{run_id}.md (rule-based stats + optional DeepSeek narrative).
