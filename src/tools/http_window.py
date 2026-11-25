@@ -102,6 +102,7 @@ def build_http_observation(monitor: Any, t0: float, mode: str) -> dict[str, Any]
         "avg_total_ms": round(sum(total_values) / len(total_values), 3) if total_values else None,
         "status_codes": status_codes,
         "five_xx_rate": round(five_xx / total, 3),
+        "samples": samples,
     }
 
     duration_s = round(time.time() - t0, 3)

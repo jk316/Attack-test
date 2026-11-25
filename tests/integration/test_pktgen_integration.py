@@ -137,16 +137,12 @@ class TestAllNineSkillsHaveValidYaml:
 class TestGraphIncludesPktgenTools:
     """Verify build_graph() includes all Pktgen tools."""
 
-    def test_tool_count_is_21(self):
-        """EXPERIMENT_TOOLS should have 21 tools (6 Scapy + 9 Pktgen + 2 TRex + 2 HTTP + 2 skill).
-
-        spec 009: the 4 start/stop monitor tools were removed; skill tools
-        (load_skill/list_skills) added for on-demand knowledge loading.
-        """
+    def test_tool_count_is_24(self):
+        """EXPERIMENT_TOOLS should have 24 tools (8 core + 9 Pktgen + 2 TRex + 5 skill/file)."""
         from src.agent.tools import EXPERIMENT_TOOLS
 
-        assert len(EXPERIMENT_TOOLS) == 21, (
-            f"Expected 21 tools, got {len(EXPERIMENT_TOOLS)}: "
+        assert len(EXPERIMENT_TOOLS) == 24, (
+            f"Expected 24 tools, got {len(EXPERIMENT_TOOLS)}: "
             f"{[t.name for t in EXPERIMENT_TOOLS]}"
         )
 

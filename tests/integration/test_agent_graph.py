@@ -446,12 +446,13 @@ class TestPingMonitorTools:
 
         assert "not active" in result["messages"][-1].content.lower()
 
-    def test_graph_has_21_tools(self):
-        """Graph should have 21 tools (6 Scapy + 9 Pktgen + 2 TRex + 2 HTTP + 2 skill).
+    def test_graph_has_24_tools(self):
+        """Graph should have 24 tools (8 core + 9 Pktgen + 2 TRex + 5 skill/file).
 
         spec 009: monitor lifecycle is program-owned — start/stop monitor
-        tools are gone; only read/probe tools remain. The 2 skill tools
-        (load_skill/list_skills) provide on-demand knowledge loading.
+        tools are gone; only read/probe tools remain. Skill tools
+        (load_skill/list_skills) + file tools (read_file/grep/write_file)
+        provide on-demand knowledge loading and repo inspection.
         """
         from src.agent.graph import build_graph
         from src.agent.tools import EXPERIMENT_TOOLS
@@ -465,12 +466,15 @@ class TestPingMonitorTools:
         assert "write_python_file" in tool_names
         assert "load_skill" in tool_names
         assert "list_skills" in tool_names
+        assert "read_file" in tool_names
+        assert "grep" in tool_names
+        assert "write_file" in tool_names
         for banned in (
             "start_ping_monitor", "stop_ping_monitor",
             "start_http_monitor", "stop_http_monitor",
         ):
             assert banned not in tool_names
-        assert len(EXPERIMENT_TOOLS) == 21
+        assert len(EXPERIMENT_TOOLS) == 24
 
     def test_full_continuous_ping_workflow(self, mock_model, mock_monitor):
         """Agent executes read-only flow: read baseline → traffic → read after.

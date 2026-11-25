@@ -145,6 +145,7 @@ class TestBuildHttpObservation:
         assert d["timeout_count"] == 1
         assert d["avg_ttfb_ms"] == 20.0  # (10 + 30) / 2
         assert d["five_xx_rate"] == pytest.approx(1 / 3, abs=0.001)
+        assert d["samples"] == samples  # 每请求时间序列原样透出，供曲线展示
         assert d["status_codes"] == {200: 1, 503: 1}
 
     def test_empty_samples(self):
