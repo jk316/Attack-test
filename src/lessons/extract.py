@@ -8,9 +8,13 @@ from __future__ import annotations
 import logging
 import os
 
+from dotenv import load_dotenv
+
 from src.lessons.render import render_rule_lessons
 from src.lessons.stats import RunStats
 from src.llm.client import LLMClient, LLMClientError
+
+load_dotenv()
 
 logger = logging.getLogger("lessons")
 
@@ -20,7 +24,12 @@ _SEGMENT_MAX_CHARS = 8000
 
 def llm_client_from_env() -> LLMClient | None:
     """Build an :class:`LLMClient` from env; ``None`` when no key is set."""
-    if not os.environ.get("DEEPSEEK_API_KEY"):
+    api_key = (
+        os.environ.get("DEEPSEEK_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
         return None
     try:
         return LLMClient()

@@ -13,9 +13,9 @@ class LLMClientError(Exception):
 class LLMClient:
     """Lightweight wrapper around the DeepSeek API (OpenAI-compatible).
 
-    Reads ``DEEPSEEK_API_KEY`` from the environment; falls back to the
-    ``api_key`` constructor argument.  The model is controlled by the
-    ``LLM_MODEL`` env var (default ``deepseek-chat``).
+    Reads ``DEEPSEEK_API_KEY`` (falling back to ``OPENAI_API_KEY``) from the
+    environment, or the ``api_key`` constructor argument.  The model is
+    controlled by the ``LLM_MODEL`` env var (default ``deepseek-chat``).
     """
 
     def __init__(
@@ -23,10 +23,15 @@ class LLMClient:
         api_key: str | None = None,
         base_url: str = "https://api.deepseek.com",
     ) -> None:
-        api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        api_key = (
+            api_key
+            or os.environ.get("DEEPSEEK_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        ).strip()
         if not api_key:
             raise LLMClientError(
-                "DEEPSEEK_API_KEY not set in environment or constructor"
+                "DEEPSEEK_API_KEY or OPENAI_API_KEY not set in environment or constructor"
             )
         self._model: str = os.environ.get("LLM_MODEL", "deepseek-chat")
         self._client = openai.OpenAI(base_url=base_url, api_key=api_key)
