@@ -274,7 +274,10 @@ def read_ping_stats(window_s: float = 5.0) -> dict[str, Any]:
 # Note (spec 009): the HTTP monitor lifecycle is owned by the program.
 
 @tool
-def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str, Any]:
+def http_probe(
+    url: str, method: str = "GET", timeout_s: float = 5.0,
+    body: str | None = None, content_type: str | None = None,
+) -> dict[str, Any]:
     """Probe an HTTP endpoint (allowlist-gated) and return timing/status metrics.
 
     Measures per-phase timing (DNS/TCP/TLS), TTFB (time-to-first-byte), total
@@ -285,12 +288,17 @@ def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[st
         url: Full http/https URL to probe (host must be in allowlist).
         method: HTTP method (default "GET").
         timeout_s: Per-request timeout in seconds (default 5).
+        body: Optional request body (e.g. JSON for POST login; default from
+            http_probe.json via HTTP_BODY).
+        content_type: Optional Content-Type header (default from http_probe.json).
 
     Returns:
         Dict with success, status_code, dns_ms, tcp_connect_ms, tls_ms,
         ttfb_ms, total_ms, size_bytes, speed_bps, error_type.
     """
-    return _http_probe(url=url, method=method, timeout_s=timeout_s)
+    body = body if body is not None else (os.environ.get("HTTP_BODY") or None)
+    content_type = content_type if content_type is not None else (os.environ.get("HTTP_CONTENT_TYPE") or None)
+    return _http_probe(url=url, method=method, timeout_s=timeout_s, body=body, content_type=content_type)
 
 
 @tool

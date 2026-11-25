@@ -46,3 +46,23 @@ agent_scratch/
 # DSH worktrees
 .dsh/
 
+# Local agent scratch / personal tooling
+.agents/
+.obsidian/
+skills-lock.json
+
+# Pytest temp working dirs
+pytest-of-*/
+
+# Local analysis data (regenerable)
+data/analysis/
+
+# Generated architecture diagrams & visual-check artifacts
+docs/architecture*
+docs/archify-target.json
+
+# Generated report exports (keep the *.md source reports tracked)
+output/*.html
+output/*.json
+output/*.pptx
+

@@ -35,6 +35,7 @@ _DL_STATS_RE = re.compile(r"(?:DL STATS|SUMMARY): (\{.*?\})")
 # LLM's formal output (Chinese diagnosis/reflection) lives in the `  [N] ai:` line.
 _REASONING_RE = re.compile(r'"reasoning_content"\s*:\s*"((?:[^"\\]|\\.)*)"')
 _AI_RE = re.compile(r"^\s+\[\d+\]\s+ai:\s*(.*)$")
+_RUN_ID_RE = re.compile(r"^\[RUN START\] (\S+)")
 
 
 def _latest_daily_log() -> Path:
@@ -104,6 +105,13 @@ def _http_samples(d: dict) -> list:
     return h.get("samples") or []
 
 
+def _attack_time(d: dict) -> tuple[str | None, float | None]:
+    """攻击开始时间：返回 (iso 字符串, epoch 秒)。"""
+    aw = d.get("attack_window") or {}
+    start = aw.get("start") or {}
+    return start.get("iso"), start.get("ts")
+
+
 def _decode_reasoning(raw: str) -> str:
     """把 kwargs 里 JSON 转义的 reasoning_content 还原为可读文本。"""
     try:
@@ -126,6 +134,26 @@ def _summarize(text: str | None, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _assign_fallback_run_ids(attacks: list[dict]) -> None:
+    """对 run_id 为 None 的攻击，按时间间隔（>600s）切分批次，赋予 run-N。
+
+    有真实 run_id 的攻击跳过（保持真实值）；相邻基准在有真实 run_id
+    处重置（不同 run 之间时间不连续）。
+    """
+    run_no = 0
+    prev_ts: float | None = None
+    for a in attacks:
+        if a.get("run_id"):
+            prev_ts = None
+            continue
+        ts = a.get("ts")
+        if prev_ts is None or (ts is not None and ts - prev_ts > 600):
+            run_no += 1
+        a["run_id"] = f"run-{run_no}"
+        if ts is not None:
+            prev_ts = ts
+
+
 def parse_log(path: Path) -> dict:
     """Parse a daily agent log into baseline + per-attack records.
 
@@ -139,6 +167,7 @@ def parse_log(path: Path) -> dict:
     last_script: str | None = None
     current_reasoning: str | None = None
     pending_idx: int | None = None
+    current_run_id: str | None = None
 
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -155,6 +184,12 @@ def parse_log(path: Path) -> dict:
                 if pending_idx is not None and ai_text:
                     attacks[pending_idx]["reflection"] = ai_text
                     pending_idx = None
+                continue
+
+            # run id marker（"Run ID: xxx"）
+            m = _RUN_ID_RE.match(line)
+            if m:
+                current_run_id = m.group(1)
                 continue
 
             # script name marker
@@ -187,6 +222,7 @@ def parse_log(path: Path) -> dict:
                     "five_xx_rate": d.get("five_xx_rate"),
                 }
             elif kind == "attack":
+                iso, ts = _attack_time(d)
                 attacks.append({
                     "filename": last_script,
                     "elapsed_s": d.get("elapsed_s"),
@@ -199,8 +235,14 @@ def parse_log(path: Path) -> dict:
                     "reflection": None,
                     "rtt_samples": _rtt_samples(d),
                     "http_samples": _http_samples(d),
+                    "time": iso,
+                    "ts": ts,
+                    "run_id": current_run_id,
                 })
                 pending_idx = len(attacks) - 1
+
+    # 兜底：对无真实 run_id 的攻击，按时间间隔切分批次（run-N）
+    _assign_fallback_run_ids(attacks)
 
     return {
         "baseline_ping": baseline_ping,
@@ -379,7 +421,7 @@ def render_html(result: dict, source: Path) -> str:
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>#</th><th>脚本</th><th>时长</th><th>Ping avg / max / 丢包</th><th>HTTP 成功率 / TTFB / 5xx</th><th>规模</th>
+          <th>#</th><th>时间</th><th>脚本</th><th>时长</th><th>Ping avg / max / 丢包</th><th>HTTP 成功率 / TTFB / 5xx</th><th>规模</th><th>Run</th>
         </tr></thead>
         <tbody id="attackBody"></tbody>
       </table>
@@ -419,16 +461,19 @@ function sizeStr(s) {{
 // 总览：攻击列表
 function renderList() {{
   const tb = document.getElementById('attackBody');
-  tb.innerHTML = DATA.attacks.map((a, i) => {{
+  const indices = [...DATA.attacks.keys()].reverse();
+  tb.innerHTML = indices.map((i) => {{
+    const a = DATA.attacks[i];
     const p = a.ping || {{}}, h = a.http || {{}};
-    const diag = p.avg_ms == null;
     return `<tr class="clickable" onclick="showDetail(${{i}})">
       <td class="num">${{i + 1}}</td>
+      <td class="num">${{a.time || '—'}}</td>
       <td class="fn">${{a.filename || '—'}}</td>
       <td class="num">${{fmt(a.elapsed_s, 1)}}s</td>
       <td class="num">${{fmt(p.avg_ms)}} / ${{fmt(p.max_ms)}} / ${{pct(p.loss_pct)}}</td>
       <td class="num">${{pct(h.success_rate)}} / ${{fmt(h.ttfb_ms)}} / ${{pct(h.five_xx_rate)}}</td>
       <td>${{sizeStr(a.size || {{}})}}</td>
+      <td class="num">${{a.run_id || '—'}}</td>
     </tr>`;
   }}).join('');
 }}
@@ -443,7 +488,7 @@ function showDetail(i) {{
   const refl = (a.reflection || '').slice(0, 600);
   document.getElementById('detailHead').innerHTML = `
     <div class="section-head"><h2>#${{i + 1}} ${{a.filename || '—'}}</h2>
-      <span class="legend">${{fmt(a.elapsed_s, 1)}}s${{a.returncode ? ' · 退出码 ' + a.returncode : ''}}</span></div>
+      <span class="legend">${{a.time || '—'}} · ${{fmt(a.elapsed_s, 1)}}s${{a.returncode ? ' · 退出码 ' + a.returncode : ''}}${{a.run_id ? ' · ' + a.run_id : ''}}</span></div>
     <div class="think"><span class="tag">思考</span><span class="txt">${{think || '—'}}</span></div>
     <div class="reflect"><span class="tag">反思</span><span class="txt">${{refl || '—'}}</span></div>`;
 
@@ -468,9 +513,9 @@ function renderRtt(a) {{
       const s = samples[ps[0].dataIndex];
       return `RTT ${{fmt(s.rtt_ms)}} ms<br>sent ${{s.sent}} / recv ${{s.received}}`;
     }}}},
-    grid: {{left:50, right:20, top:20, bottom:40}},
-    xAxis: {{type:'value', name:'相对时间 (s)'}},
-    yAxis: {{type:'value', name:'RTT (ms)'}},
+    grid: {{left:72, right:24, top:30, bottom:48}},
+    xAxis: {{type:'value', name:'相对时间 (s)', nameLocation:'middle', nameGap:28, nameTextStyle:{{color:'#9aa6b8'}}}},
+    yAxis: {{type:'value', name:'RTT (ms)', nameLocation:'middle', nameGap:50, nameTextStyle:{{color:'#9aa6b8'}}}},
     series: [{{type:'line', data: samples.map(s => [s.ts - t0, s.rtt_ms]), smooth:true,
       lineStyle:{{color:'#4da3ff'}}, itemStyle:{{color:'#4da3ff'}}, areaStyle:{{color:'rgba(77,163,255,.12)'}}}}]
   }});
@@ -496,9 +541,9 @@ function renderHttp(a) {{
       const d = p.data;
       return `${{p.seriesName}} ${{fmt(d.value[1])}} ms<br>status ${{d.status_code ?? '—'}}${{d.error_type ? ' · ' + d.error_type : ''}}`;
     }}}},
-    grid: {{left:50, right:20, top:20, bottom:40}},
-    xAxis: {{type:'value', name:'相对时间 (s)'}},
-    yAxis: {{type:'value', name:'ms'}},
+    grid: {{left:72, right:24, top:30, bottom:48}},
+    xAxis: {{type:'value', name:'相对时间 (s)', nameLocation:'middle', nameGap:28, nameTextStyle:{{color:'#9aa6b8'}}}},
+    yAxis: {{type:'value', name:'延迟 (ms)', nameLocation:'middle', nameGap:50, nameTextStyle:{{color:'#9aa6b8'}}}},
     legend: {{textStyle:{{color:'#9aa6b8'}}}},
     series: [
       {{name:'TTFB', type:'line', data: make('ttfb_ms'), showSymbol:true}},
