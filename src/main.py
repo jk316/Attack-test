@@ -490,6 +490,7 @@ def main() -> None:
     agent_logger.addHandler(log_ch)
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
+    agent_logger.info("Run ID: %s", run_id)
 
     # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
     # Catalog mode sends no traffic and needs no observation (FR-004).
