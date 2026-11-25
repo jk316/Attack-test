@@ -81,6 +81,22 @@ class TestRunCurl:
         assert result["success"] is False
         assert result["error_type"] == "timeout"
 
+    def test_post_body_and_content_type(self):
+        """POST 带 body/content_type 时，curl 命令应含 -d 与 Content-Type。"""
+        stdout = "0|0|0|0.010|0.015|200|0|0"
+        with patch("src.tools.http_probe_tool.subprocess.run") as mock_run, \
+             patch("src.tools.http_probe_tool._curl_available", return_value=True):
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+            _run_curl(
+                "http://10.99.80.160/api/auth/login", method="POST",
+                body='{"email":"a","password":"b"}', content_type="application/json",
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert "-d" in cmd
+        assert '{"email":"a","password":"b"}' in cmd
+        assert "Content-Type: application/json" in cmd
+
     def test_curl_missing(self):
         with patch("src.tools.http_probe_tool._curl_available", return_value=False):
             result = _run_curl("http://10.99.80.160/")

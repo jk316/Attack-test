@@ -56,6 +56,8 @@ class HttpMonitor:
         self._method = "GET"
         self._timeout_s = 5.0
         self._interval_s = 1.0
+        self._body: Optional[str] = None
+        self._content_type: Optional[str] = None
         self._stop_event = threading.Event()
 
     @property
@@ -67,11 +69,16 @@ class HttpMonitor:
         """Return True if the background HTTP prober is active."""
         return self._running
 
-    def start(self, url: str, interval_s: float = 1.0, method: str = "GET", timeout_s: float = 5.0) -> None:
+    def start(
+        self, url: str, interval_s: float = 1.0, method: str = "GET",
+        timeout_s: float = 5.0, body: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> None:
         """Start continuous HTTP probing of *url*.
 
         Stops any previous monitor first. *interval_s* is the pause between
-        probes; *timeout_s* is the per-request curl timeout.
+        probes; *timeout_s* is the per-request curl timeout; *body* /
+        *content_type* are the optional request body and Content-Type header.
         """
         validate_http_url(url)
 
@@ -82,6 +89,8 @@ class HttpMonitor:
         self._method = method
         self._timeout_s = timeout_s
         self._interval_s = max(interval_s, 0.05)
+        self._body = body
+        self._content_type = content_type
         self._stop_event.clear()
         self._running = True
 
@@ -106,7 +115,10 @@ class HttpMonitor:
     def _loop(self) -> None:
         """Probe loop (runs in daemon thread) until stopped."""
         while self._running and not self._stop_event.is_set():
-            result = _run_curl(self._url, method=self._method, timeout_s=self._timeout_s)
+            result = _run_curl(
+                self._url, method=self._method, timeout_s=self._timeout_s,
+                body=self._body, content_type=self._content_type,
+            )
             sample = HttpSample(
                 ts=time.time(),
                 ttfb_ms=result.get("ttfb_ms"),

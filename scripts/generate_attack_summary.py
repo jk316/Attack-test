@@ -35,7 +35,7 @@ _DL_STATS_RE = re.compile(r"(?:DL STATS|SUMMARY): (\{.*?\})")
 # LLM's formal output (Chinese diagnosis/reflection) lives in the `  [N] ai:` line.
 _REASONING_RE = re.compile(r'"reasoning_content"\s*:\s*"((?:[^"\\]|\\.)*)"')
 _AI_RE = re.compile(r"^\s+\[\d+\]\s+ai:\s*(.*)$")
-_RUN_ID_RE = re.compile(r"^Run ID: (\S+)")
+_RUN_ID_RE = re.compile(r"^\[RUN START\] (\S+)")
 
 
 def _latest_daily_log() -> Path:
@@ -135,13 +135,17 @@ def _summarize(text: str | None, limit: int) -> str:
 
 
 def _assign_fallback_run_ids(attacks: list[dict]) -> None:
-    """无真实 run_id 时，按攻击时间间隔（>600s）切分批次，赋予 run-N。
+    """对 run_id 为 None 的攻击，按时间间隔（>600s）切分批次，赋予 run-N。
 
-    按原始（日志）顺序遍历；ts 缺失的攻击归入当前批次。
+    有真实 run_id 的攻击跳过（保持真实值）；相邻基准在有真实 run_id
+    处重置（不同 run 之间时间不连续）。
     """
     run_no = 0
     prev_ts: float | None = None
     for a in attacks:
+        if a.get("run_id"):
+            prev_ts = None
+            continue
         ts = a.get("ts")
         if prev_ts is None or (ts is not None and ts - prev_ts > 600):
             run_no += 1
@@ -237,9 +241,8 @@ def parse_log(path: Path) -> dict:
                 })
                 pending_idx = len(attacks) - 1
 
-    # 兜底：日志无真实 run_id 时，按攻击时间间隔切分批次
-    if not any(a.get("run_id") for a in attacks):
-        _assign_fallback_run_ids(attacks)
+    # 兜底：对无真实 run_id 的攻击，按时间间隔切分批次（run-N）
+    _assign_fallback_run_ids(attacks)
 
     return {
         "baseline_ping": baseline_ping,
@@ -458,9 +461,10 @@ function sizeStr(s) {{
 // 总览：攻击列表
 function renderList() {{
   const tb = document.getElementById('attackBody');
-  tb.innerHTML = DATA.attacks.map((a, i) => {{
+  const indices = [...DATA.attacks.keys()].reverse();
+  tb.innerHTML = indices.map((i) => {{
+    const a = DATA.attacks[i];
     const p = a.ping || {{}}, h = a.http || {{}};
-    const diag = p.avg_ms == null;
     return `<tr class="clickable" onclick="showDetail(${{i}})">
       <td class="num">${{i + 1}}</td>
       <td class="num">${{a.time || '—'}}</td>
@@ -509,9 +513,9 @@ function renderRtt(a) {{
       const s = samples[ps[0].dataIndex];
       return `RTT ${{fmt(s.rtt_ms)}} ms<br>sent ${{s.sent}} / recv ${{s.received}}`;
     }}}},
-    grid: {{left:50, right:20, top:20, bottom:40}},
-    xAxis: {{type:'value', name:'相对时间 (s)'}},
-    yAxis: {{type:'value', name:'RTT (ms)'}},
+    grid: {{left:72, right:24, top:30, bottom:48}},
+    xAxis: {{type:'value', name:'相对时间 (s)', nameLocation:'middle', nameGap:28, nameTextStyle:{{color:'#9aa6b8'}}}},
+    yAxis: {{type:'value', name:'RTT (ms)', nameLocation:'middle', nameGap:50, nameTextStyle:{{color:'#9aa6b8'}}}},
     series: [{{type:'line', data: samples.map(s => [s.ts - t0, s.rtt_ms]), smooth:true,
       lineStyle:{{color:'#4da3ff'}}, itemStyle:{{color:'#4da3ff'}}, areaStyle:{{color:'rgba(77,163,255,.12)'}}}}]
   }});
@@ -537,9 +541,9 @@ function renderHttp(a) {{
       const d = p.data;
       return `${{p.seriesName}} ${{fmt(d.value[1])}} ms<br>status ${{d.status_code ?? '—'}}${{d.error_type ? ' · ' + d.error_type : ''}}`;
     }}}},
-    grid: {{left:50, right:20, top:20, bottom:40}},
-    xAxis: {{type:'value', name:'相对时间 (s)'}},
-    yAxis: {{type:'value', name:'ms'}},
+    grid: {{left:72, right:24, top:30, bottom:48}},
+    xAxis: {{type:'value', name:'相对时间 (s)', nameLocation:'middle', nameGap:28, nameTextStyle:{{color:'#9aa6b8'}}}},
+    yAxis: {{type:'value', name:'延迟 (ms)', nameLocation:'middle', nameGap:50, nameTextStyle:{{color:'#9aa6b8'}}}},
     legend: {{textStyle:{{color:'#9aa6b8'}}}},
     series: [
       {{name:'TTFB', type:'line', data: make('ttfb_ms'), showSymbol:true}},

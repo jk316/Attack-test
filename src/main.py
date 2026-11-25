@@ -86,6 +86,7 @@ class VerboseCallback(BaseCallbackHandler):
 
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "experiment.json"
+HTTP_PROBE_PATH = Path(__file__).resolve().parent.parent / "http_probe.json"
 
 DEFAULTS: dict = {
     "target_ip": "10.99.80.160",
@@ -103,8 +104,8 @@ DEFAULTS: dict = {
     "instruction": "",
 }
 
-# Config sections read as nested dicts (attack/pktgen/trex/http).
-_SECTION_KEYS = ("attack", "pktgen", "trex", "http")
+# Config sections read as nested dicts (attack/pktgen/trex).
+_SECTION_KEYS = ("attack", "pktgen", "trex")
 
 
 def _read_config_file() -> dict:
@@ -113,6 +114,17 @@ def _read_config_file() -> dict:
         return {}
     try:
         with open(CONFIG_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _load_http_probe_config() -> dict:
+    """Read http_probe.json (dial-testing config), returning {} on any error."""
+    if not HTTP_PROBE_PATH.exists():
+        return {}
+    try:
+        with open(HTTP_PROBE_PATH, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -289,8 +301,8 @@ def parse_args() -> argparse.Namespace:
         default=cfg["instruction"],
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
     )
-    # ── HTTP dial-testing options ───────────────────────────────────
-    http_cfg = cfg.get("http", {})
+    # ── HTTP dial-testing options（来自独立 http_probe.json）────────
+    http_cfg = _load_http_probe_config()
     parser.add_argument(
         "--http-url", default=http_cfg.get("url"),
         help="HTTP business endpoint URL for dial-testing",
@@ -306,6 +318,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--http-method", default=http_cfg.get("method", "GET"),
         help="HTTP method for dial-testing (default GET)",
+    )
+    parser.add_argument(
+        "--http-body", default=http_cfg.get("body"),
+        help="Request body for dial-testing (e.g. JSON for POST login)",
+    )
+    parser.add_argument(
+        "--http-content-type", default=http_cfg.get("content_type"),
+        help="Content-Type header for dial-testing (e.g. application/json)",
     )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
@@ -448,6 +468,10 @@ def main() -> None:
     os.environ["HTTP_INTERVAL_S"] = str(args.http_interval)
     os.environ["HTTP_TIMEOUT_S"] = str(args.http_timeout)
     os.environ["HTTP_METHOD"] = args.http_method
+    if args.http_body:
+        os.environ["HTTP_BODY"] = args.http_body
+    if args.http_content_type:
+        os.environ["HTTP_CONTENT_TYPE"] = args.http_content_type
 
     pktgen_host = args.pktgen_host or get_pktgen_host()
     pktgen_port = args.pktgen_port or get_pktgen_port()
@@ -490,7 +514,7 @@ def main() -> None:
     agent_logger.addHandler(log_ch)
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
-    agent_logger.info("Run ID: %s", run_id)
+    agent_logger.info("[RUN START] %s", run_id)
 
     # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
     # Catalog mode sends no traffic and needs no observation (FR-004).
@@ -502,6 +526,8 @@ def main() -> None:
                 "interval_s": args.http_interval,
                 "timeout_s": args.http_timeout,
                 "method": args.http_method,
+                "body": args.http_body,
+                "content_type": args.http_content_type,
             }
         started = start_experiment_monitors(args.target_ip, http_cfg)
         agent_logger.info(
@@ -585,6 +611,7 @@ def main() -> None:
             stop_experiment_monitors()
         except Exception:
             logger.warning("Monitor cleanup failed", exc_info=True)
+        agent_logger.info("[RUN END] %s", run_id)
 
 
 if __name__ == "__main__":

@@ -34,11 +34,5 @@
         "dst_mac": "f0:c4:78:4c:a5:55",
         "src_mac": "58:a2:e1:6d:89:2c",
         "start_force": true
-    },
-    "http": {
-        "url": "http://100.1.11.3:3000/login",
-        "interval_s": 1.0,
-        "timeout_s": 5,
-        "method": "GET"
     }
 }

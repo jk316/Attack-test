@@ -69,6 +69,10 @@ def hermetic_cfg(monkeypatch, tmp_path):
     cfg_file = tmp_path / "experiment.json"
     cfg_file.write_text(json.dumps(MINIMAL_CFG), encoding="utf-8")
     monkeypatch.setattr(main_mod, "CONFIG_PATH", cfg_file)
+    # http 拨测配置也隔离（避免读真实 http_probe.json 的登录凭据）
+    probe_file = tmp_path / "http_probe.json"
+    probe_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(main_mod, "HTTP_PROBE_PATH", probe_file)
 
 
 @pytest.fixture

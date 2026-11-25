@@ -79,7 +79,10 @@ def _classify_error(returncode: int) -> Optional[str]:
     return mapping.get(returncode, "other")
 
 
-def _run_curl(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str, Any]:
+def _run_curl(
+    url: str, method: str = "GET", timeout_s: float = 5.0,
+    body: str | None = None, content_type: str | None = None,
+) -> dict[str, Any]:
     """Run a single curl request and parse timing / status / size metrics."""
     if not _curl_available():
         return {
@@ -97,9 +100,12 @@ def _run_curl(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str
         # time out even when the target is perfectly healthy).
         "--noproxy", "*",
         "-X", method,
-        "-w", _CURL_WRITE_FORMAT,
-        url,
     ]
+    if content_type:
+        cmd += ["-H", f"Content-Type: {content_type}"]
+    if body is not None:
+        cmd += ["-d", body]
+    cmd += ["-w", _CURL_WRITE_FORMAT, url]
 
     try:
         proc = subprocess.run(
@@ -147,13 +153,18 @@ def _run_curl(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str
     return result
 
 
-def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[str, Any]:
+def http_probe(
+    url: str, method: str = "GET", timeout_s: float = 5.0,
+    body: str | None = None, content_type: str | None = None,
+) -> dict[str, Any]:
     """Probe an HTTP endpoint (allowlist-gated) and return timing/status metrics.
 
     Args:
         url: Full http/https URL to probe (host must be allowlisted).
         method: HTTP method (default "GET").
         timeout_s: Per-request timeout in seconds (default 5).
+        body: Optional request body (e.g. JSON for POST login).
+        content_type: Optional Content-Type header (e.g. application/json).
 
     Returns:
         Dict with success, status_code, dns_ms, tcp_connect_ms, tls_ms,
@@ -164,7 +175,7 @@ def http_probe(url: str, method: str = "GET", timeout_s: float = 5.0) -> dict[st
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    return _run_curl(url, method=method, timeout_s=timeout_s)
+    return _run_curl(url, method=method, timeout_s=timeout_s, body=body, content_type=content_type)
 
 
 if __name__ == "__main__":
