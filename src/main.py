@@ -491,6 +491,9 @@ def main() -> None:
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
 
+    # ── Run boundary markers for the lessons pipeline (spec 010 FR-005) ──
+    agent_logger.info("[RUN START] %s", run_id)
+
     # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
     # Catalog mode sends no traffic and needs no observation (FR-004).
     if not args.trex_explore:
@@ -579,6 +582,8 @@ def main() -> None:
 
         print(f"\nResults logged to: {args.log_path}")
     finally:
+        # Close the run boundary marker even on exception (spec 010 FR-005).
+        agent_logger.info("[RUN END] %s", run_id)
         # Ensure both monitors are always cleaned up (spec 009 FR-007)
         try:
             stop_experiment_monitors()

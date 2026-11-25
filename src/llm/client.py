@@ -49,6 +49,25 @@ class LLMClient:
         content = response.choices[0].message.content or ""
         return self._parse_json_response(content)
 
+    def chat_text(self, messages: list[dict]) -> str:
+        """Send a chat completion request and return the raw text response.
+
+        Unlike :meth:`chat`, this does not require the response to be JSON —
+        it is used by the lessons narrative layer. Reuses the same key/model.
+
+        Raises:
+            LLMClientError: if the API call fails.
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+            )
+        except openai.OpenAIError as exc:
+            raise LLMClientError(f"DeepSeek API call failed: {exc}") from exc
+
+        return response.choices[0].message.content or ""
+
     @staticmethod
     def _parse_json_response(content: str) -> dict:
         """Extract and parse a JSON object from an LLM text response.

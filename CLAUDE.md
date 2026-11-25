@@ -55,6 +55,14 @@ uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # ── Sync experiment logs from the server ─────────────────────────
 bash scripts/logsync.sh                    # commit+push data/agent*.log + data/experiment.jsonl
 bash scripts/logsync.sh "TRex SYN 测试"    # with a custom commit message
+
+# ── Experience lessons from logs (spec 010) ──────────────────────
+# Incremental + idempotent: summarizes every run_id not yet in lessons/,
+# writing lessons/{run_id}.md (rule-based stats + optional DeepSeek narrative).
+uv run python scripts/generate_lessons.py --list       # print unsummarized run_ids
+uv run python scripts/generate_lessons.py --no-llm     # summarize all pending (rule-only)
+uv run python scripts/generate_lessons.py --latest     # only the newest run
+uv run python scripts/generate_lessons.py --force      # rewrite existing lessons
 ```
 
 ## Architecture
@@ -145,6 +153,8 @@ ExperimentManager (backend/experiment.py)
 | `src/tools/pcap_profile_tool.py` | PCAP/PCAPng analysis — extracts IPs, ports, packet size histograms, IAT stats |
 | `src/tools/ping_rtt_tool.py` | Single-shot ping RTT measurement + `validate_target()` allowlist enforcement |
 | `src/tools/log_tool.py` | JSONL experiment logging |
+| `src/lessons/` | Lessons pipeline (spec 010) — `records.py` (group by `run_id`), `stats.py` (deterministic rule stats), `render.py` (Markdown lesson), `extract.py` (DeepSeek narrative + fallback), `segment.py` (agent-log run-segment slicing) |
+| `scripts/generate_lessons.py` | CLI entry — incremental idempotent `lessons/{run_id}.md` generator (rule + optional LLM) |
 | `backend/server.py` | FastAPI app — WebSocket endpoint, REST API, static file serving, PCAP upload |
 | `backend/experiment.py` | `ExperimentManager` — async bridge between LangGraph agent and WebSocket frontend; manages experiment lifecycle, HITL queue, message streaming |
 | `frontend/index.html` + `app.js` + `style.css` | Web console UI — single-page app with dark theme, real-time message display, HITL approve/reject buttons |
