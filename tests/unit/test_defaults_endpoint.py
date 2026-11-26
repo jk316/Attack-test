@@ -16,7 +16,7 @@ from backend import server as server_mod
 
 TRANSPORT = httpx.ASGITransport(app=server_mod.app)
 
-_REAL_CONFIG = Path(__file__).resolve().parent.parent.parent / "src" / "config" / "experiment.json"
+_REAL_CONFIG = Path(__file__).resolve().parent.parent.parent / "experiment.json"
 
 
 @pytest.fixture

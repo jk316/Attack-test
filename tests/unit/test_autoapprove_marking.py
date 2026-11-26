@@ -30,14 +30,6 @@ class FakeSnapshot:
             self.tasks = []
 
 
-class FakeMonitor:
-    def is_running(self):
-        return False
-
-    def stop(self):
-        pass
-
-
 class FakeGraphOneHitl:
     """单轮 HITL 后完成。"""
 
@@ -68,7 +60,11 @@ class FakeGraphOneHitl:
 def env(monkeypatch):
     graph = FakeGraphOneHitl()
     monkeypatch.setattr(main_mod, "build_graph", lambda **kwargs: graph)
-    monkeypatch.setattr(main_mod, "get_ping_monitor", lambda: FakeMonitor())
+    monkeypatch.setattr(
+        main_mod, "start_experiment_monitors",
+        lambda target_ip, http_cfg=None: {"ping": True, "http": False},
+    )
+    monkeypatch.setattr(main_mod, "stop_experiment_monitors", lambda: None)
     return graph
 
 

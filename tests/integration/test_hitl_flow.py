@@ -75,7 +75,7 @@ class TestHitlClosedLoop:
             mock_build.assert_called()  # 真实 build_graph 经 backend 命名空间构建
 
             ws = FakeWS()
-            task = asyncio.create_task(manager.start("A", {
+            task = asyncio.create_task(manager.start({
                 "target_ip": "10.99.80.160", "max_iters": 3, "no_improve_limit": 2,
             }, ws))
 
@@ -89,7 +89,7 @@ class TestHitlClosedLoop:
             assert "10.99.80.160" in str(data["params"])
 
             # ② 队列回填后 resume 决定送达（拒绝）
-            assert await manager.approve("A", False) == "applied"
+            await manager.approve(False)
 
             await asyncio.wait_for(task, timeout=60)
 
@@ -136,12 +136,12 @@ class TestHitlClosedLoop:
             mock_send.return_value = {"success": True, "packets_sent": {"total": 250}}
 
             ws = FakeWS()
-            task = asyncio.create_task(manager.start("A", {
+            task = asyncio.create_task(manager.start({
                 "target_ip": "10.99.80.160", "max_iters": 3, "no_improve_limit": 2,
             }, ws))
 
             await asyncio.wait_for(ws.hitl_request_seen.wait(), timeout=30)
-            assert await manager.approve("A", True) == "applied"
+            await manager.approve(True)
 
             await asyncio.wait_for(task, timeout=60)
 

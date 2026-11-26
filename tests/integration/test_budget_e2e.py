@@ -101,8 +101,11 @@ class FakeGraph:
 def run_main(monkeypatch):
     def _run(graph, argv_extra=None):
         monkeypatch.setattr(main_mod, "build_graph", lambda **kwargs: graph)
-        monkeypatch.setattr(main_mod, "get_ping_monitor",
-                            lambda: SimpleNamespace(is_running=lambda: False))
+        monkeypatch.setattr(
+            main_mod, "start_experiment_monitors",
+            lambda target_ip, http_cfg=None: {"ping": True, "http": False},
+        )
+        monkeypatch.setattr(main_mod, "stop_experiment_monitors", lambda: None)
         argv = ["main.py", "--target-ip", "10.99.80.160",
                 "--max-iters", "6", "--no-improve-limit", "2",
                 "--auto-approve"] + (argv_extra or [])
@@ -178,8 +181,11 @@ class TestCatalogModeExempt:
         monkeypatch.chdir(tmp_path)  # catalog 摘要写到 tmp 下的 output/
         graph = NoInterruptGraph()
         monkeypatch.setattr(main_mod, "build_graph", lambda **kwargs: graph)
-        monkeypatch.setattr(main_mod, "get_ping_monitor",
-                            lambda: SimpleNamespace(is_running=lambda: False))
+        monkeypatch.setattr(
+            main_mod, "start_experiment_monitors",
+            lambda target_ip, http_cfg=None: {"ping": True, "http": False},
+        )
+        monkeypatch.setattr(main_mod, "stop_experiment_monitors", lambda: None)
         with patch.object(sys, "argv", [
             "main.py", "--target-ip", "10.99.80.160", "--trex-explore",
         ]):

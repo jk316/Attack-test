@@ -547,7 +547,11 @@ class TestConfigDrivenBuild:
                 PingMonitor().start("10.99.80.160")  # interval_s 缺省 → env
             except (AttributeError, RuntimeError):
                 pass  # fake Popen 返回 None 导致后续失败，命令已捕获
-        assert captured["cmd"][captured["cmd"].index("-i") + 1] == "2.5"
+        if sys.platform == "win32":
+            # Windows 用 ping -t -w <timeout_ms>（interval_s*1000）
+            assert captured["cmd"][captured["cmd"].index("-w") + 1] == "2500"
+        else:
+            assert captured["cmd"][captured["cmd"].index("-i") + 1] == "2.5"
 
     def test_deque_maxlen_from_env(self, monkeypatch):
         from src.tools.ping_monitor import PingMonitor

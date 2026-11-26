@@ -175,7 +175,7 @@ class TestFiveClassCoverage:
         ow = result["observation_window"]
         assert result["rtt_during"] is None
         assert ow["covers_attack_window"] is False
-        assert "先调用 start_ping_monitor" in ow["note"]
+        assert "ping monitor 未运行" in ow["note"]
         assert "不可用于规划" in ow["note"]
 
     def test_class_no_samples(self):

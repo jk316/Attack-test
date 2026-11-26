@@ -62,20 +62,11 @@ def catalog_env(monkeypatch, tmp_path):
         return real
 
     monkeypatch.setattr(main_mod, "build_graph", fake_build_graph)
-    monkeypatch.setattr(main_mod, "get_ping_monitor",
-                        lambda: _FakeMonitor())
+    monkeypatch.setattr(main_mod, "stop_experiment_monitors", lambda: None)
     monkeypatch.setattr("builtins.input",
                         lambda prompt: (_ for _ in ()).throw(
                             AssertionError("目录模式不得出现审批输入")))
     return captured
-
-
-class _FakeMonitor:
-    def is_running(self):
-        return False
-
-    def stop(self):
-        pass
 
 
 def _run_explore(extra_args: list[str] | None = None) -> int | None:

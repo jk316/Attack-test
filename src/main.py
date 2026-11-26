@@ -348,6 +348,32 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
     )
+    # ── HTTP dial-testing options（来自独立 http_probe.json）────────
+    http_cfg = _load_http_probe_config()
+    parser.add_argument(
+        "--http-url", default=http_cfg.get("url"),
+        help="HTTP business endpoint URL for dial-testing",
+    )
+    parser.add_argument(
+        "--http-interval", type=float, default=http_cfg.get("interval_s", 1.0),
+        help="Seconds between HTTP probes (default 1.0)",
+    )
+    parser.add_argument(
+        "--http-timeout", type=float, default=http_cfg.get("timeout_s", 5.0),
+        help="Per-request HTTP timeout in seconds (default 5)",
+    )
+    parser.add_argument(
+        "--http-method", default=http_cfg.get("method", "GET"),
+        help="HTTP method for dial-testing (default GET)",
+    )
+    parser.add_argument(
+        "--http-body", default=None,
+        help="Request body for dial-testing (default from http_probe.json; e.g. JSON for POST login)",
+    )
+    parser.add_argument(
+        "--http-content-type", default=http_cfg.get("content_type"),
+        help="Content-Type header for dial-testing (e.g. application/json)",
+    )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
         parser.error(
@@ -837,8 +863,28 @@ def main() -> int | None:
     # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
     # Catalog mode sends no traffic and needs no observation (FR-004).
     if not args.trex_explore:
-        started = start_experiment_monitors(args.target_ip)
-        agent_logger.info("Monitors auto-started: ping=%s", started["ping"])
+        http_cfg = None
+        if args.http_url:
+            probe_cfg = _load_http_probe_config()
+            http_body = (
+                args.http_body if args.http_body is not None
+                else probe_cfg.get("body")
+            )
+            http_bodies = _build_http_bodies(probe_cfg) if args.http_body is None else []
+            http_cfg = {
+                "url": args.http_url,
+                "interval_s": args.http_interval,
+                "timeout_s": args.http_timeout,
+                "method": args.http_method,
+                "body": http_body,
+                "content_type": args.http_content_type,
+                "bodies": http_bodies,
+            }
+        started = start_experiment_monitors(args.target_ip, http_cfg)
+        agent_logger.info(
+            "Monitors auto-started: ping=%s http=%s",
+            started["ping"], started["http"],
+        )
 
     try:
         # Start the agent — runs until first interrupt (HITL on traffic_send)

@@ -20,7 +20,7 @@ from langgraph.types import Command
 from src import main as main_mod
 
 SUMMARY = "=== 实验总结 ===\n最佳 RTT: 85.3ms，最佳 loss: 2.1%，实验完成。"
-AGENT_LOG = Path("data/agent.log")
+AGENT_LOG = Path(main_mod._agent_log_path())
 
 
 class FakeSnapshot:
@@ -111,7 +111,14 @@ def env(monkeypatch, tmp_path):
     graph = FakeGraph()
     monitor = FakeMonitor()
     monkeypatch.setattr(main_mod, "build_graph", lambda **kwargs: graph)
-    monkeypatch.setattr(main_mod, "get_ping_monitor", lambda: monitor)
+    monkeypatch.setattr(
+        main_mod, "start_experiment_monitors",
+        lambda target_ip, http_cfg=None: {"ping": True, "http": False},
+    )
+    # 单客户端 main() 的 finally 调用 stop_experiment_monitors() 清理监控；
+    # 这里让它驱动 FakeMonitor.stop() 以保持 SC-007 断言语义。
+    monkeypatch.setattr(main_mod, "stop_experiment_monitors",
+                        lambda: monitor.stop())
     # 隔离 agent.log：使用真实 data/agent.log（gitignored），先清空
     AGENT_LOG.parent.mkdir(parents=True, exist_ok=True)
     if AGENT_LOG.exists():

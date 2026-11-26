@@ -21,7 +21,7 @@ class TestProfilesPrecedence:
         args = _parse([])
         assert args.pps == 100          # experiment.json attack.pps
         assert args.duration == 10
-        assert args.max_iters == 20
+        assert args.max_iters == 5      # experiment.json max_iters
 
     def test_profile_overrides_base(self):
         args = _parse(["--profile", "high_pps"])

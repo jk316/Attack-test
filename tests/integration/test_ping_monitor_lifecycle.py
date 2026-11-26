@@ -41,11 +41,17 @@ class TestPingMonitorLifecycle:
         assert cmd == ["fping", "-l", "-Q", "1", "-p", "100", ALLOWLISTED_IP]
 
     def test_fallback_ping_command_construction(self):
+        import sys
+
         from src.tools.ping_monitor import PingMonitor
 
         cmd = PingMonitor._build_ping_cmd(ALLOWLISTED_IP, 1.0)
         assert cmd[0] == "ping"
-        assert "-i" in cmd and "1.0" in cmd
+        if sys.platform == "win32":
+            # Windows 用 ping -t -w <timeout_ms>（interval_s*1000）
+            assert "-t" in cmd and "-w" in cmd and "1000" in cmd
+        else:
+            assert "-i" in cmd and "1.0" in cmd
         assert ALLOWLISTED_IP == cmd[-1]
 
     def test_twenty_start_stop_no_orphan_processes(self, monkeypatch):
