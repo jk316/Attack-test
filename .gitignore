@@ -69,6 +69,7 @@ output/*.pptx
 
 # Node / frontend build artifacts
 node_modules/
+frontend-react/dist/
 
 # Skills CLI artifacts
 .agents/

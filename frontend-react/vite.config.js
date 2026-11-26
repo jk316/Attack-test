@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
+  // 生产构建的静态资源挂在 FastAPI 的 /static 下，与 backend/server.py 的
+  // app.mount("/static", StaticFiles(directory=frontend-react/dist)) 对齐。
+  base: '/static/',
   plugins: [react()],
   server: {
     port: 5173,
