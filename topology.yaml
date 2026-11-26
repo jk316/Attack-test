@@ -7,10 +7,6 @@ pktgen:
   host: "10.99.80.222"
   port: 22022
 
-trex:
-  host: "10.99.80.222"  
-  port: 4501
-
 tx_port:
   portlist: "0"
   description: "TX port — traffic egress"
@@ -39,3 +35,15 @@ dst_mac:
 #  all_test_ports:
 #    portlist: "0-3"
 #    description: "All test ports"
+
+# ── TRex（独立配置，与上方 Pktgen 配置分开）──────────────────────────
+trex:
+  host: "10.99.80.222"
+  port: 4501
+  # TRex 客户端库源码根（服务器路径）；read_file/grep 只读范围
+  lib_dir: "/root/fzx/Trex_Scripts/v3.08/automation/trex_control_plane/interactive"
+  # 已知 L2 事实（实测）：目标位于网关之后，TRex 端口 0 无法直接 ARP 解析目标；
+  # 生成脚本必须显式 Ether(dst=<网关 MAC>, src=<端口 MAC>)。
+  dst_mac: "f0:c4:78:4c:a5:55"   # 网关下一跳 MAC（destination MAC）
+  src_mac: "58:a2:e1:6d:89:2c"   # TRex 端口 0 自身 MAC
+  start_force: true              # c.start(..., force=True) 绕过 dest-MAC 显式校验

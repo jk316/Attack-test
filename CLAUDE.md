@@ -18,8 +18,9 @@ uv run pytest tests/ -v                             # All tests (unit + integrat
 uv run pytest --cov=src --cov-report=term-missing   # With coverage
 
 # ── CLI Agent ────────────────────────────────────────────────────
-# Dry-run (default) — compile Lua only, no traffic sent
-uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5
+# Bare run — all params come from experiment.json (default dry-run: Pktgen/TRex
+# compile-only, no traffic; Scapy tools still send on HITL approval)
+uv run python src/main.py
 
 # Auto-approve — skip HITL prompts
 uv run python src/main.py --target-ip 10.99.80.160 --max-iters 5 --auto-approve
@@ -43,10 +44,6 @@ uv run python src/main.py --trex-explore --catalog-target 15 --max-iters 60
 # prompt (no traffic, no HITL; omit for generic exploration)
 uv run python src/main.py --trex-explore --explore-direction "重点探索DNS放大攻击和TCP SYN洪水"
 
-# Named preset — switch a whole parameter group in one flag
-# (see experiment.json "profiles")
-uv run python src/main.py --profile high_pps
-
 # Free-form instruction for experiment mode — injected into user message
 # and system prompt (dry-run by default, no traffic without --pktgen-live)
 uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
@@ -54,6 +51,22 @@ uv run python src/main.py --instruction "重点探索UDP洪水对RTT的影响"
 # ── Web Console ──────────────────────────────────────────────────
 uv run uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
 # Open http://localhost:8000
+
+# ── Sync experiment logs from the server ─────────────────────────
+bash scripts/logsync.sh                    # commit+push data/agent*.log + data/experiment.jsonl
+bash scripts/logsync.sh "TRex SYN 测试"    # with a custom commit message
+
+# ── Sync generated lessons from the server ────────────────────────
+bash scripts/lessonsync.sh                  # commit+push lessons/*.md
+bash scripts/lessonsync.sh "TRex SYN 教训"  # with a custom commit message
+
+# ── Experience lessons from logs (spec 010) ──────────────────────
+# Incremental + idempotent: summarizes every run_id not yet in lessons/,
+# writing lessons/{run_id}.md (rule-based stats + optional DeepSeek narrative).
+uv run python scripts/generate_lessons.py --list       # print unsummarized run_ids
+uv run python scripts/generate_lessons.py --no-llm     # summarize all pending (rule-only)
+uv run python scripts/generate_lessons.py --latest     # only the newest run
+uv run python scripts/generate_lessons.py --force      # rewrite existing lessons
 ```
 
 ## Architecture
@@ -88,7 +101,7 @@ All modes use the same `build_graph()` → `CompiledStateGraph` with `MemorySave
 ```
 User Request → LangChain V1.0 Agent (LangGraph StateGraph)
                  ├─ System prompt (src/prompts/system_prompt.j2)
-                 ├─ 19 tools: 8 Scapy + 9 Pktgen-DPDK + 2 TRex
+                 ├─ 24 tools: 6 Scapy + 9 Pktgen-DPDK + 2 TRex + 2 HTTP + 2 skill + 3 file
                  │    ├─ Scapy: traffic_send, mixed_traffic_send, ping_rtt, ...
                  │    ├─ Pktgen: pktgen_udp_flood → adapter.py → vendored
                  │    │         pktgen_agent/compiler/compile.py → Lua → TCP :22022
@@ -124,23 +137,29 @@ ExperimentManager (backend/experiment.py)
 | File | Role |
 |------|------|
 | `src/agent/graph.py` | Builds agent via `create_agent()`, model config, system prompt rendering with template variables, DeepSeek reasoning_content monkey-patch |
-| `src/agent/tools.py` | 19 `@tool`-decorated LangChain tools (8 Scapy + 9 Pktgen via `*PKTGEN_TOOLS` + 2 TRex via `*TREX_TOOLS`); HITL gates via `interrupt()` |
+| `src/agent/tools.py` | 24 `@tool`-decorated LangChain tools (6 Scapy + 9 Pktgen via `*PKTGEN_TOOLS*` + 2 TRex via `*TREX_TOOLS*` + 2 HTTP + 2 skill via `*SKILL_TOOLS*` + 3 file via `*FILE_TOOLS*`); HITL gates via `interrupt()` |
 | `src/agent/state.py` | Agent state + unified reward functions used by the main-loop hard verdict: `compute_reward` (`avg_rtt_ms + loss_pct × 10`, inf → 0.0), `update_best` (`best_reward` + `consecutive_no_improve`), `check_stop_condition`, `apply_observation` (skips rounds with `covers_attack_window=false`) |
 | `src/pktgen/adapter.py` | Pktgen adapter — wraps vendored `pktgen_agent` execution functions as `@tool` functions; enforces allowlist, HITL, RTT sampling, synchronous wait (`_wait_for_attack`), and **auto-fills eth_dst_addr** in `pktgen_packet_sequence` from `topology.yaml` |
-| `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts |
-| `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`, re-reading env each call |
+| `src/trex/tools.py` | TRex client tools — `write_python_file` (write `.py` into `trex_scripts/` sandbox + parse-only syntax check) and `run_python_file` (subprocess execution + allowlist/HITL/timeout gates). Narrowed `write`+`bash` that lets the LLM generate arbitrary TRex client scripts. `trex_common.py` is a reserved name: neither tool can write or run it (it is program-owned) |
+| `trex_scripts/trex_common.py` | Shared helper imported by generated TRex scripts (`from trex_common import DST_MAC, SRC_MAC, START_FORCE, start_safe, make_client`) — stdlib-only at import (trex libs lazy), ships the measured gateway dst MAC / port src MAC, and `start_safe()` wraps `c.start(..., force=True)` to bypass TRex's explicit-dest-MAC check. Tracked via a `.gitignore` exception |
+| `src/trex/config.py` | TRex config getters — `get_trex_host()`/`get_trex_port()`/`is_trex_dry_run()`/`get_trex_scripts_dir()`/`get_trex_timeout_s()`/`get_trex_dst_mac()`/`get_trex_src_mac()`/`get_trex_start_force()`, re-reading env each call. The L2 getters supply the measured gateway next-hop MAC (`dst_mac`, default `f0:c4:78:4c:a5:55`) and TRex port 0 MAC (`src_mac`, default `58:a2:e1:6d:89:2c`) that generated scripts must set explicitly via `Ether(dst=..., src=...)` — the target sits behind the gateway, so ARP-resolving the target from TRex always fails |
 | `src/main.py` | CLI entry — reads `experiment.json`, sets env vars for tool defaults, parses CLI args, runs HITL polling loop with `VerboseCallback` for LLM I/O logging |
 | `src/prompts/system_prompt.j2` | Jinja2 system prompt — ReAct protocol, Pktgen tool tables, parameter semantics, optimization strategy table, concrete examples |
 | `src/prompts/trex_catalog_prompt.j2` | Jinja2 prompt for `--trex-explore` mode — plan→generate→summarize protocol, `cat_` filename rule, mandatory Chinese annotation block per script, catalog summary table format |
-| `src/config/experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms) |
-| `src/config/allowlist.json` | Allowlisted target IPs |
+| `experiment.json` | Single source of truth for defaults: target IP, max iters, attack params (duration=10s, pps, packet_size, flow_count), pktgen params (rate, duration_ms), plus live/dry-run/auto_approve/instruction flags |
+| `http_probe.json` | Independent HTTP dial-testing config (kept out of `experiment.json`): POST login URL, body template `{email}/{password}`, accounts pool (`user1..user100` / `123456`), `interval_s`, `timeout_s` = 1 |
+| `allowlist.json` | Allowlisted target IPs |
 | `src/tools/ping_monitor.py` | Background ping subprocess + reader thread, thread-safe deque, `get_stats()` / `get_samples_since()`. Dual backend: **fping -Q** (preferred, 10 probes/s with per-second summaries) or **system ping** (fallback) |
+| `src/tools/http_monitor.py` | Background HTTP business dial-testing via curl (singleton, same pattern as PingMonitor; probes force `--noproxy "*"` so internal targets bypass the environment's http_proxy). Configured from `http_probe.json`: POST login with a body template + accounts pool (`user1..user100` / `123456`), rotating one account per probe via `_next_body()` to avoid single-account JWT/session reuse; `timeout_s` = 1 |
+| `src/tools/monitor_lifecycle.py` | Program-owned monitor lifecycle (spec 009) — `start_experiment_monitors()` / `stop_experiment_monitors()` called by both entry points; allowlist check, failure downgrade, idempotent restart |
 | `src/tools/rtt_window.py` | `build_rtt_observation()` — enriches tool results with `rtt_during`, `attack_window`, `observation_window` fields |
 | `src/tools/traffic_send_tool.py` | Scapy UDP traffic generator with parameter clamping; returns `requested_params`/`clamped` (钳制标注) and `completed`/`interrupt_reason` (截断标注) per contracts/tool-result-json.md §1 |
 | `src/tools/mixed_traffic_tool.py` | Multi-protocol via JSON spec; `validate_traffic_spec()` auto-fills missing percentages; `iat_jitter_ms` 参数化（0–20，None 读 env `ATK_IAT_JITTER_MS`，默认 0）；返回同款钳制/截断标注 |
 | `src/tools/pcap_profile_tool.py` | PCAP/PCAPng analysis — extracts IPs, ports, packet size histograms, IAT stats |
 | `src/tools/ping_rtt_tool.py` | Single-shot ping RTT measurement + `validate_target()` allowlist enforcement |
 | `src/tools/log_tool.py` | JSONL experiment logging |
+| `src/lessons/` | Lessons pipeline (spec 010) — `records.py` (group by `run_id`), `stats.py` (deterministic rule stats), `render.py` (Markdown lesson), `extract.py` (DeepSeek narrative + fallback), `segment.py` (agent-log run-segment slicing) |
+| `scripts/generate_lessons.py` | CLI entry — incremental idempotent `lessons/{run_id}.md` generator (rule + optional LLM) |
 | `backend/server.py` | FastAPI app — WebSocket endpoint, REST API, static file serving, PCAP upload |
 | `backend/experiment.py` | `ExperimentManager` — async bridge between LangGraph agent and WebSocket frontend; manages experiment lifecycle, HITL queue, message streaming |
 | `frontend/index.html` + `app.js` + `style.css` | Web console UI — single-page app with dark theme, real-time message display, HITL approve/reject buttons |
@@ -148,15 +167,20 @@ ExperimentManager (backend/experiment.py)
 | `pktgen_agent/tools/execute.py` | Vendored `execute_skill_dry_run()` / `execute_skill_live()` — compile→save→TCP |
 | `pktgen_agent/client.py` | Vendored `PktgenClient` — TCP socket to Pktgen (default `topology.yaml → 10.99.80.222:22022`) |
 | `dsl/skills/*.yaml` | 9 skill definitions (udp/tcp/icmp/arp flood, range_scan, packet_sequence, pcap_replay, stats_monitoring, safe_stop_and_reset) |
-| `topology.yaml` | Pktgen host/port, port mappings, and MAC address (`dst_mac: f0:c4:78:4c:a5:55`) |
+| `topology.yaml` | Pktgen host/port, port mappings, and MAC address (`dst_mac: f0:c4:78:4c:a5:55`); `trex` section carries host/port/python plus the measured L2 facts `dst_mac` (gateway next-hop) / `src_mac` (TRex port 0) / `start_force` |
 
-### Agent Tools (19 total)
+### Agent Tools (24 total)
 
 | Category | Count | Tools |
 |----------|:-----:|-------|
-| Scapy (original) | 8 | `pcap_profile`, `start_ping_monitor`, `read_ping_stats`, `stop_ping_monitor`, `traffic_send`, `mixed_traffic_send`, `ping_rtt`, `log_result` |
+| Scapy (original) | 6 | `pcap_profile`, `read_ping_stats`, `traffic_send`, `mixed_traffic_send`, `ping_rtt`, `log_result` |
 | Pktgen (added) | 9 | `pktgen_udp_flood`, `pktgen_tcp_flood`, `pktgen_icmp_flood`, `pktgen_arp_flood`, `pktgen_range_scan`, `pktgen_packet_sequence`, `pktgen_pcap_replay`, `pktgen_stats_monitor`, `pktgen_stop_and_reset` |
 | TRex (added) | 2 | `write_python_file`, `run_python_file` |
+| HTTP (added) | 2 | `http_probe`, `read_http_stats` |
+| Skill (added) | 2 | `load_skill`, `list_skills` |
+| File (added) | 3 | `read_file`, `grep`, `write_file` |
+
+**Monitor lifecycle is program-owned (spec 009)**: the ping and HTTP monitors are auto-started by the experiment entry points (CLI `src/main.py` and web console `backend/experiment.py`) before the agent runs, and stopped on exit via `src/tools/monitor_lifecycle.py`. The agent has **no** start/stop monitor tools — only the read/probe tools listed above.
 
 HITL applies to traffic-generating tools (Scapy + Pktgen flood/scan/sequence/replay + TRex `run_python_file` in live mode). `pktgen_stats_monitor` and `pktgen_stop_and_reset` skip HITL. TRex tools default to dry-run (write + syntax-check only); `--trex-live` enables execution. `--trex-explore` is a dedicated catalog mode: the agent gets ONLY the 2 TRex tools (write + dry-run check), TRex dry-run is forced (mutually exclusive with `--trex-live`), so the whole loop runs with zero traffic and zero HITL; the final summary is persisted to `output/trex_attack_catalog_<timestamp>.md` (timestamp keeps each run's report from overwriting the previous one) and scripts land in `trex_scripts/cat_*.py`.
 
@@ -213,7 +237,7 @@ experiment.json  →  main.py sets env vars  →  tools.py reads at call time
 
 ## PingMonitor (Singleton with Dual Backend)
 
-`get_ping_monitor()` returns the singleton; never instantiate directly. `main.py`'s `finally` block ensures cleanup.
+`get_ping_monitor()` returns the singleton; never instantiate directly. The lifecycle is program-owned (spec 009): `start_experiment_monitors()` / `stop_experiment_monitors()` in `src/tools/monitor_lifecycle.py` auto-start both monitors when an experiment begins (CLI `src/main.py` and web console `backend/experiment.py`) and stop them at exit (`main.py`'s `finally` block calls the shared cleanup). The agent has no start/stop monitor tools — only read/probe tools.
 
 **fping -Q** (default on Linux/macOS when `fping` is on PATH):
 - Sends 10 probes/second (`-p 100`), emits a summary line every 1 second (`-Q 1`)
@@ -245,7 +269,7 @@ Tools auto-collect `rtt_during` during attack via `get_samples_since(t0)` → `b
 
 ### Security Validation
 
-All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast, no src_ip forgery. Pktgen tools additionally enforce `dst_ip` must be non-empty for skills in `_SKILLS_WITH_DST_IP`. `pktgen_pcap_replay` is exempt (PCAP embeds its own dst_ip) — system prompt warns about this.
+All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast. `src_ip` spoofing is allowed/encouraged for stateless traffic (UDP/ICMP/TCP SYN). Pktgen tools additionally enforce `dst_ip` must be non-empty for skills in `_SKILLS_WITH_DST_IP`. `pktgen_pcap_replay` is exempt (PCAP embeds its own dst_ip) — system prompt warns about this.
 
 ### Test Organization
 
@@ -272,3 +296,4 @@ All traffic tools enforce: allowlist (`validate_target`), no broadcast/multicast
 - **钳制/截断标注**: `traffic_send_tool` 与 `mixed_traffic_send_tool` 的结果含 `requested_params`（原请求值）与 `clamped`（被钳制字段名列表，空 = 未钳制）；发送被 Ctrl-C 中断时 `completed=false` + `interrupt_reason="keyboard_interrupt"`（已发统计保留），正常完成 `completed=true` 且无该键。
 - **混合流量抖动**: `mixed_traffic_send` 的 `iat_jitter_ms`（0–20，超限钳制、负数拒绝）默认读 env `ATK_IAT_JITTER_MS`；main.py 经配置链（experiment.json `attack.iat_jitter_ms` / profile）注入该 env，无对应 CLI 参数。
 - **RTT observation alignment**: `build_rtt_observation()` adds `attack_window` (start/end timestamps + mode), `observation_window` (first/last sample timestamps + `covers_attack_window` boolean), and `rtt_during` (per-sample RTT + aggregate stats). The LLM is instructed to check `covers_attack_window` before trusting any RTT measurement.
+- **TRex 有状态攻击（ASTF）**: 实验床坑位、3.08 API 铁律与正确姿势见 `docs/trex-astf-playbook.md`；验证脚本 `scripts/astf_verify.py`（单发，签名 tx=5/rx≥13）与 `scripts/astf_get_flood.py`（GET flood）。

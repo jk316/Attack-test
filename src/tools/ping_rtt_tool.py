@@ -11,7 +11,7 @@ DEFAULT_ALLOWLIST = [
     "10.99.80.160"
 ]
 
-ALLOWLIST_PATH = Path(__file__).parent.parent / "config" / "allowlist.json"
+ALLOWLIST_PATH = Path(__file__).resolve().parent.parent.parent / "allowlist.json"
 
 
 def load_allowlist() -> list[str]:

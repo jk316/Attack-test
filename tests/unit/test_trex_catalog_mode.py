@@ -5,14 +5,45 @@ CLI flags (mutual exclusion, defaults, env forcing), and the user message
 builder. No LLM, network, or file I/O — all external calls are mocked.
 """
 import argparse
+import json
 import sys
 from unittest.mock import patch
 
 import pytest
 
+import src.main as main_mod
 from src.agent.graph import _build_system_prompt, build_graph
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.trex.tools import TREX_TOOLS
+
+# Minimal runtime config so CLI defaults don't depend on the repo's
+# experiment.json (which the experiment server edits at will).
+MINIMAL_CFG = {
+    "target_ip": "10.99.80.160",
+    "pcap_path": "",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 20,
+    "no_improve_limit": 5,
+    "auto_approve": False,
+    "verbose": False,
+    "pktgen_live": False,
+    "trex_live": False,
+    "trex_explore": False,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "",
+    "attack": {"duration_s": 10, "pps": 100, "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 0},
+    "pktgen": {"rate": 50, "duration_ms": 10000},
+    "trex": {},
+    "http": {},
+}
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "experiment.json"
+    cfg_file.write_text(json.dumps(MINIMAL_CFG), encoding="utf-8")
+    monkeypatch.setattr(main_mod, "CONFIG_PATH", cfg_file)
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:
@@ -180,6 +211,38 @@ class TestCatalogPrompt:
         monkeypatch.setenv("EXPLORE_DIRECTION", "")
         assert _build_system_prompt(mode="catalog") == empty  # empty renders identically
 
+    def test_catalog_prompt_contains_l2_mac_facts(self, monkeypatch):
+        monkeypatch.setenv("TREX_DST_MAC", "aa:bb:cc:dd:ee:ff")
+        monkeypatch.setenv("TREX_SRC_MAC", "11:22:33:44:55:66")
+        prompt = _build_system_prompt(mode="catalog")
+        assert "aa:bb:cc:dd:ee:ff" in prompt
+        assert "11:22:33:44:55:66" in prompt
+        assert "trex_common" in prompt
+        assert "prepare_port" in prompt
+        assert "make_astf_client" in prompt
+        assert "网关" in prompt
+
+    def test_catalog_prompt_hides_gateway_ip_literal(self, monkeypatch):
+        prompt = _build_system_prompt(mode="catalog")
+        assert "100.1.13.1" not in prompt
+
+    def test_experiment_prompt_points_to_trex_skill(self, monkeypatch):
+        """TRex 知识改为按需加载：实验 prompt 只留 load_skill 指针，不再内联 L2 事实。"""
+        monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)
+        monkeypatch.setenv("TREX_DST_MAC", "aa:bb:cc:dd:ee:ff")
+        prompt = _build_system_prompt(mode="experiment")
+        assert "load_skill" in prompt
+        assert "trex-astf" in prompt
+        # L2 细节已移入 skill，不应再出现在实验 prompt 里
+        assert "aa:bb:cc:dd:ee:ff" not in prompt
+        assert "trex_common" not in prompt
+        assert "start_safe" not in prompt
+
+    def test_experiment_prompt_hides_gateway_ip_literal(self, monkeypatch):
+        monkeypatch.setattr("src.agent.graph._trex_available", lambda: True)
+        prompt = _build_system_prompt(mode="experiment")
+        assert "100.1.13.1" not in prompt
+
 
 # ── build_graph mode threading ──────────────────────────────────────
 
@@ -216,3 +279,33 @@ class TestBuildGraphCatalogMode:
 
         assert captured["tools"] == EXPERIMENT_TOOLS
         assert "闭环网络实验" in captured["system_prompt"]
+
+
+# ── TRex L2 env plumbing ───────────────────────────────────────────
+
+class TestTrexL2Env:
+    def test_apply_trex_l2_env_sets_all(self, monkeypatch):
+        import os
+
+        from src.main import _apply_trex_l2_env
+
+        for k in ("TREX_DST_MAC", "TREX_SRC_MAC", "TREX_START_FORCE"):
+            monkeypatch.delenv(k, raising=False)
+        _apply_trex_l2_env({"dst_mac": "aa:bb:cc:dd:ee:ff",
+                            "src_mac": "11:22:33:44:55:66",
+                            "start_force": False})
+        assert os.environ["TREX_DST_MAC"] == "aa:bb:cc:dd:ee:ff"
+        assert os.environ["TREX_SRC_MAC"] == "11:22:33:44:55:66"
+        assert os.environ["TREX_START_FORCE"] == "False"
+
+    def test_apply_trex_l2_env_missing_keys_noop(self, monkeypatch):
+        import os
+
+        from src.main import _apply_trex_l2_env
+
+        for k in ("TREX_DST_MAC", "TREX_SRC_MAC", "TREX_START_FORCE"):
+            monkeypatch.delenv(k, raising=False)
+        _apply_trex_l2_env({})
+        assert "TREX_DST_MAC" not in os.environ
+        assert "TREX_SRC_MAC" not in os.environ
+        assert "TREX_START_FORCE" not in os.environ

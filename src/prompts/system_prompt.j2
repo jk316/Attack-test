@@ -14,37 +14,97 @@
 
 ### 初始化阶段（实验开始前，仅一次）
 
-0. **启动持续 Ping 监控**: 调用 `start_ping_monitor` 启动后台持续 ping，参数 `ip` 为目标 IP，`interval_s` 建议 1.0 秒。
+0. **确认监控已自动就绪**: 后台 ping 监控与 HTTP 拨测已由实验程序在启动时自动开启，无需也无法手动启动。ping 监控打实验目标 IP；HTTP 拨测仅在配置了 `experiment.json` 的 `http.url` 时开启。直接调用 `read_ping_stats` / `read_http_stats` 读取基线即可。
    如果提供了 PCAP 文件路径，在此步骤之前先调用 `pcap_profile` 分析流量特征。
 
 ### 每轮迭代
 
 根据当前阶段自主选择合适工具，不必每次都执行全部步骤。核心循环：
 
-1. **读取攻击前基线 RTT**: `read_ping_stats`（window_s=5）
+1. **读取攻击前基线**: `read_ping_stats`（window_s=5）读 RTT 基线；若已配置 HTTP 业务（`http.url` 非空，程序已自动开启拨测），同时 `read_http_stats` 记录 HTTP 基线（`success_rate` / `avg_ttfb_ms`）。
 2. **选择并发送流量**:
    - Scapy 工具（低速率探索）→ `traffic_send` / `mixed_traffic_send`
    - Pktgen 工具（高吞吐/扫描/序列/回放）→ 见下方工具表
    - ⚠️ Pktgen flood 工具 `duration=0` 或 `count=0` 会**永久发送**，必须手动调用 `pktgen_stop_and_reset` 停止
 3. **测量效果**:
    - `read_ping_stats` → RTT 变化
+   - `read_http_stats` → HTTP 健康度变化（success_rate / TTFB / 5xx）
    - `pktgen_stats_monitor` → 端口级统计（Pktgen 工具时推荐）
 4. **记录日志**: `log_result`
 5. **清理（Pktgen 工具后必须）**: `pktgen_stop_and_reset` → 停止流量，重置端口，准备下一轮
 
 如果使用 Scapy 工具则跳过步骤 5（流量自动停止）。切换 Pktgen 协议类型前**必须**先调用 `pktgen_stop_and_reset`。
 
+### 日志记录规范（log_result，每次记录必须遵守）
+
+日志会被下游分析程序统一解析，因此 `log_result` 的字段命名必须规范：
+
+1. **params 只放输入参数**，统一字段名：
+   - `target_ip`（目标 IP，不要用 dst_ip/target/ip）
+   - `dst_port`（目标端口，不要用 dport/port）
+   - `duration_ms`（攻击时长，统一毫秒；不要用 duration_s/duration）
+   - `pkt_size`（包大小字节，不要用 packet_size/pktSize）
+   - `pps`（包速率 packets/s，Scapy/TRex 用）
+   - `rate_pct`（Pktgen 线速百分比，仅 Pktgen 工具用，不要写成 rate）
+   - `protocol`（udp/tcp/icmp/arp，不要用 proto）
+   - 工具特有参数（`tcp_flags`、`scan_field`、`arp_type`、`streams`、`flow_count`、`iat_jitter_ms` 等）放 `params.extras` 子对象里
+2. **实测结果放 `results` 参数**（不要混入 params）：`tx_gbps`、`pps_actual`、`port_util_pct`、`note` 等运行期指标
+3. **`tool` 参数必填**：填本迭代实际使用的攻击工具名（如 `pktgen_udp_flood`）；若省略，系统会自动记录最近一次工具调用名
+4. 示例：
+   ```json
+   {
+     "iteration": 3,
+     "tool": "pktgen_tcp_flood",
+     "params": {
+       "target_ip": "10.99.80.160",
+       "dst_port": 80,
+       "duration_ms": 5000,
+       "pkt_size": 64,
+       "rate_pct": 80,
+       "protocol": "tcp",
+       "extras": {"tcp_flags": "S"}
+     },
+     "results": {"pps_actual": 95000, "tx_gbps": 1.2, "note": "目标端口利用率升至 92%"},
+     "rtt": 0.98,
+     "loss": 0.0
+   }
+   ```
+
 ### 实验结束
 
-- 调用 `stop_ping_monitor` 停止后台 ping，然后输出实验总结。
+- 直接输出实验总结；后台监控的关闭由实验程序自动完成，无需调用任何停止工具。
 
 ## 持续 Ping 监控工具
 
+> 监控生命周期由实验程序管理：实验开始时自动启动、结束时自动停止；Agent 只能读取数据，没有启动/停止工具。
+
 | 工具 | 说明 |
 |------|------|
-| `start_ping_monitor` | 启动后台持续 ping（实验开始时调用一次） |
 | `read_ping_stats` | 读取最近 window_s 秒的 RTT 统计 |
-| `stop_ping_monitor` | 停止后台 ping（实验结束时调用） |
+| `ping_rtt` | 对指定 IP 做单次 ping 探测（即时测量） |
+
+## HTTP 业务拨测工具
+
+针对 HTTP 业务（而非 ICMP）的健康观测，攻击对业务的影响会体现在以下指标上：
+
+> 后台 HTTP 拨测由实验程序在配置了 `http.url` 时自动启动/停止；Agent 只能读取数据。
+
+| 工具 | 说明 |
+|------|------|
+| `http_probe` | 单次 HTTP 拨测，返回分阶段耗时（DNS/TCP/TLS）、TTFB、总耗时、状态码、下载大小/速率 |
+| `read_http_stats` | 读取最近 window_s 秒的 HTTP 健康统计 |
+
+`read_http_stats` 返回的关键字段与语义：
+
+| 字段 | 含义 | 攻击有效时的表现 |
+|------|------|------------------|
+| `success_rate` | 拿到 HTTP 响应（任意状态码）的比例 | 下降（连接层被阻断/超时） |
+| `avg_ttfb_ms` / `avg_total_ms` | 首字节 / 总响应时间 | 升高（业务延迟退化） |
+| `five_xx_rate` | 5xx 占总请求比例 | 上升（服务器过载） |
+| `timeout_count` / `connection_error_count` | 超时 / 连接拒绝次数 | 增多 |
+| `status_codes` | 状态码分布 | 出现 500/502/503/504 |
+
+流量工具（`traffic_send` / `mixed_traffic_send`）的返回值在 `rtt_during` 之外还附带 `http_during` 字段：若 HTTP monitor 在运行，`http_during` 给出攻击窗口内的上述聚合指标，可直接判断攻击对 HTTP 业务的影响。
 
 `read_ping_stats` 返回的字段：monitor_active, target_ip, latest_rtt_ms, avg_rtt_ms, min_rtt_ms, max_rtt_ms, sample_count（收到的探测数）, sent_count（窗口内发送的探测总数）, loss_pct（窗口内真实丢包率）, window_s, backend（fping 或 ping）。**`loss_pct` 现已准确反映窗口内丢包情况**——以前恒为 0，现在 fping 和增强版 ping fallback 都能给出真实值。
 
@@ -77,11 +137,11 @@
 ```
 - `attack_window` = 攻击的**起止时间点**（`start`/`end` 均为 epoch `ts` + 可读 `iso` 双格式），`duration_s` 为实际攻击时长，`mode` 为执行模式（scapy / live / dry_run）。
 - `observation_window` = RTT **观测的起止时间点与对齐诊断**：`covers_attack_window` 表示观测是否真正落在攻击窗口内；`note` 用自然语言说明对齐情况。
-- 当 `rtt_during` 为 null 时，说明 ping monitor 未运行（需先调用 `start_ping_monitor`）或观测窗口内无样本——此时 `observation_window.note` 会给出原因。
+- 当 `rtt_during` 为 null 时，说明监控不可用（目标缺失/启动失败）或观测窗口内无样本——此时 `observation_window.note` 会给出原因。
 
 ## RTT 分析策略
 
-- **先验证观测对齐**（最重要）: 每次拿到流量工具结果，先检查 `observation_window.covers_attack_window`。若为 `false`，或 `note` 提示"样本不足 / 攻击窗口过短 / monitor 未运行"，说明**本轮观测不可靠**——不要据此判断攻击效果或调整参数方向，应先修正（增大 duration、避免 duration=0、确认 monitor 已启动）再重跑本轮。
+- **先验证观测对齐**（最重要）: 每次拿到流量工具结果，先检查 `observation_window.covers_attack_window`。若为 `false`，或 `note` 提示"样本不足 / 攻击窗口过短 / monitor 未运行"，说明**本轮观测不可靠**——不要据此判断攻击效果或调整参数方向，应先修正（增大 duration、避免 duration=0）再重跑本轮。监控由程序管理、无法手动启动；若观测持续为空，按观测缺失处理，不作为调整参数依据。
 - **基线对比**: 攻击前基线 RTT vs 攻击期间 RTT vs 攻击后 RTT，判断攻击是否有显著效果
 - **趋势判断**: RTT 在攻击期间是否持续上升？攻击结束后是否回落？回落速度如何？
 - **丢包率也是攻击效果**（重要）: `loss_pct` 高本身就是有效攻击信号（DoS/DDoS 的典型效果就是丢包，而非 RTT 升高）。若 RTT 变化不大但 loss_pct 显著上升，说明攻击方向正确——继续加大或保持当前参数，切勿取消。
@@ -200,7 +260,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 
 调用 Pktgen 工具时遵循以下流程：
 
-1. **初始化**：`start_ping_monitor` → 启动后台 ping 监控（与 Scapy 流程相同）
+1. **初始化**：监控已由程序自动启动，直接用 `read_ping_stats` 读基线（与 Scapy 流程相同）
 2. **可选：基线统计**：`pktgen_stats_monitor` → 获取攻击前端口状态
 3. **发送流量**：选择 Pktgen 洪水/扫描/序列/回放工具 → 需人工审批（live 模式）
 4. **监控效果**：
@@ -232,7 +292,7 @@ Pktgen 工具的参数语义与 Scapy 工具有本质区别：
 ### 混合实验示例（Scapy → Pktgen 升级路径）
 
 ```
-第1轮: start_ping_monitor → read_ping_stats(baseline=12ms)
+第1轮: read_ping_stats(baseline=12ms, 监控已自动运行)
        → traffic_send(pps=100) → read_ping_stats(13ms, 无变化)
        → log_result → 分析: 低速率无效果, 升级到 Pktgen
 
@@ -291,22 +351,25 @@ TRex 采用 Client-Server 架构：你在客户端（本机）**生成 Python �
 - 脚本内不应出现非 allowlist 的目标 IP——live 模式下会对**明显的点分十进制 IP 字面量**做静态拦截（best-effort；通过字符串拼接/十六进制/域名等方式混淆的 IP 无法被静态发现，真正兜底是 HITL 人工审批）
 - **执行无 OS 沙箱**：live 模式下脚本以本机当前用户完整权限运行任意 Python（可读写文件、读环境变量、访问网络）。审批前请仔细阅读 HITL 弹窗展示的脚本内容
 - 脚本执行有超时（默认 30s），禁止无限发包
-- TRex 客户端库已安装在运行主机，脚本直接 `import trex_stl_lib` / `import trex_astf_lib` 即可
+- **代理已自动剥离**：脚本执行环境已移除系统代理变量（`http_proxy`/`https_proxy`/`all_proxy` 等），urllib/requests 默认直连目标，无需手动 `ProxyHandler({})` 或 `trust_env=False`。若仍遇连接超时，是目标/网络本身的问题，不是代理
+- 脚本内若涉及并发（`ThreadPoolExecutor` / 多线程 / 多连接 / asyncio 并发），**并发数从 1-2 起步**，禁止第一版就写死几十上百并发——先探基线再逐步加（见「强度爬升纪律」）
+### 使用 TRex 前必读经验
 
-### 脚本模板示例
-
-```python
-from trex_stl_lib.api import *
-
-c = STLClient(server="{{ trex_host }}")
-c.connect()
-try:
-    c.reset()
-    # ... 添加 streams / 启动流量 / 停止 ...
-finally:
-    c.disconnect()
-```
+涉及 TRex 时，**先调用 `load_skill("trex-astf")`** 加载正确写法与坑位（ASTF API 铁律、端口准备仪式、L2 拓扑、源 IP 网段、单 IP 分片限制）。不要凭记忆写脚本——3.08 的 API 参数名、daemon 模式（ASTF）、L2 拓扑都很容易踩坑；用 `list_skills()` 可查看全部可用经验。
 {% endif %}
+
+## 通用文件工具（自我检验）
+
+用于核对真实源码/配置，而不是只信本提示或 skills 里可能过时的说明：
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` | 读取 TRex 客户端库源码根内的文本文件（只读），核对真实 API 签名、单位、默认值 |
+| `grep` | 在 TRex 客户端库源码根内按正则搜索，返回 `file` / `line` / `text` 命中 |
+| `write_file` | 写入 `agent_scratch/` 沙箱目录（实验笔记/结论草稿），无法触碰 allowlist/源码/配置 |
+
+- `read_file` / `grep` 的只读范围由操作员通过 `TREX_LIB_DIR`（或 topology.yaml 的 `trex.lib_dir`）配置，指向服务器上的 TRex 库源码目录。**未设置时这两个工具会返回错误**——此时不要臆造 API 签名，改回用 `load_skill("trex-astf")` 的经验。
+- 写实验笔记/结论用 `write_file`，路径限定在 `agent_scratch/` 内。
 
 ## 参数边界
 
@@ -329,6 +392,17 @@ finally:
 
 **奖励公式**: `reward = avg_rtt_ms + loss_pct * 10` — 最大化 reward。
 
+**若配置了 HTTP 业务拨测**（`http.url` 非空），奖励扩展为：
+
+```
+reward = avg_rtt_ms + loss_pct * 10
+       + (1 - success_rate) * 100      # HTTP 可用性下降
+       + max(0, ttfb_ratio - 1) * 50   # TTFB 相对基线升高
+       + five_xx_rate * 50             # 服务器过载 5xx
+```
+
+其中 `ttfb_ratio` = 攻击期 `avg_ttfb_ms` / 攻击前基线 `avg_ttfb_ms`（基线来自攻击前 `read_http_stats`）。`success_rate` 下降、`five_xx_rate` 上升、TTFB 升高都意味着 HTTP 业务退化，是有效攻击信号。
+
 **分阶段策略**:
 
 | 阶段 | 条件 | 策略 |
@@ -340,6 +414,8 @@ finally:
 | 批量探索 | 需要大范围搜索 | 使用 `pktgen_range_scan` 硬件扫描替代 ReAct 逐轮调整（速度快几个数量级） |
 
 **通用原则**: 逐步调整避免极端值；每轮只改 1-3 个参数；RTT 上升继续同方向，下降则反向。
+
+**强度爬升纪律（务必遵守）**: 任何「并发/强度」类参数——结构化工具的 `pps`/`rate`/`streams`/`flow_count`，以及你**手写脚本里的线程数 / 并发连接数 / 协程数**——一律**从最低档起步**（线程/并发用 1–2，pps/rate 用最小档），先用低强度探测出**业务基线**，再按小步长逐步加大。**严禁第一轮就用极端高强度**（几十上百线程、rate=100、大 pps）：一次把业务打死会让后续所有轮次都退化成「业务已挂、永远超时」，无法展示强度递增的梯度效果，也无法定位拐点。
 
 ## 停止条件
 
@@ -358,13 +434,14 @@ finally:
 - flow_count: 用 flow_stats.approx_flow_count 的一半
 - iat_jitter_ms: 用 iat_ms_stats.p50
 
-然后调用 `start_ping_monitor` 启动持续 ping 监控。
+后台 ping 监控已由实验程序自动启动，直接调用 `read_ping_stats` 读取基线即可。
 
 ## 安全约束
 
 - `traffic_send`、`mixed_traffic_send` 和 Pktgen 流量工具（`pktgen_*_flood`、`pktgen_range_scan`、`pktgen_packet_sequence`、`pktgen_pcap_replay`）只能向 allowlist 中的目标发送流量
+- 无状态流量（UDP / ICMP / TCP SYN）**允许并鼓励伪造源 IP**（`src_ip`）——可用于源 IP 轮换、反射放大、多源攻击；有状态连接（需真实 TCP 握手）不适用
 - 流量发送前必须通过人工审批（HITL gate）——Scapy 和 Pktgen 工具均适用
-- `start_ping_monitor` 也只能 ping allowlist 中的目标
+- 后台 ping 监控由程序自动启动，且只能打 allowlist 中的目标
 {% if trex_available %}
 - TRex 的 `run_python_file` 在 live 模式下执行前需人工审批；其执行的是**任意 Python**（无 OS 沙箱），脚本内的目标 IP 仅做 best-effort 静态扫描，真正边界是人工审批
 {% endif %}

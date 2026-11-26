@@ -1,0 +1,38 @@
+{
+    "target_ip": "100.1.11.3",
+    "pcap_path": "",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 5,
+    "no_improve_limit": 5,
+    "auto_approve": true,
+    "verbose": false,
+    "pktgen_live": false,
+    "trex_live": true,
+    "trex_explore": false,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "手写脚本实现大文件下载，不要使用trex，它的astf是坏的，去下载这个图片http://100.1.11.3:8081/api/activities/00000000-0000-0000-0000-000000000001/image",
+    "attack": {
+        "duration_s": 10,
+        "pps": 100,
+        "packet_size": 64,
+        "flow_count": 1,
+        "iat_jitter_ms": 0
+    },
+    "pktgen": {
+        "rate": 50,
+        "duration_ms": 10000,
+        "host": null,
+        "port": null
+    },
+    "trex": {
+        "timeout_s": 30,
+        "host": null,
+        "port": null,
+        "python": "/root/miniconda3/envs/trex311/bin/python",
+        "lib_dir": "/root/fzx/Trex_Scripts/v3.08/automation/trex_control_plane/interactive",
+        "dst_mac": "f0:c4:78:4c:a5:55",
+        "src_mac": "58:a2:e1:6d:89:2c",
+        "start_force": true
+    }
+}

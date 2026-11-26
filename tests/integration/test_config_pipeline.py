@@ -157,7 +157,7 @@ class TestConfigToToolDefaults:
 
     def test_experiment_json_has_required_keys(self):
         """Verify experiment.json contains the expected config sections."""
-        config_path = Path("src/config/experiment.json")
+        config_path = Path("experiment.json")
         with open(config_path) as f:
             data = json.load(f)
 

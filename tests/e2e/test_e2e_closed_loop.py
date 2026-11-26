@@ -400,18 +400,16 @@ class TestContinuousPingWorkflow:
         assert "80ms" in result["messages"][-1].content
 
     def test_full_continuous_ping_experiment(self):
-        """Full experiment with start → baseline → attack → after → stop cycle."""
+        """Full experiment with read baseline → attack → read after cycle.
+
+        spec 009: the ping monitor is program-owned and already running, so
+        the agent starts by reading the baseline instead of starting it.
+        """
         from src.agent.graph import build_graph
 
         monitor = self._make_mock_monitor()
         model = _build_mock_model([
-            # Iteration 0: start monitor
-            _make_ai_with_tool_calls(
-                {"name": "start_ping_monitor",
-                 "args": {"ip": "10.99.80.160", "interval_s": 1.0},
-                 "id": "start"},
-            ),
-            # read baseline
+            # read baseline (monitor already running)
             _make_ai_with_tool_calls(
                 {"name": "read_ping_stats", "args": {"window_s": 5.0}, "id": "baseline"},
             ),
@@ -450,10 +448,7 @@ class TestContinuousPingWorkflow:
                     "params": {"pps": 100}, "rtt": 80.0, "loss": 5.0,
                 }, "id": "log_1"},
             ),
-            # stop monitor and finish
-            _make_ai_with_tool_calls(
-                {"name": "stop_ping_monitor", "args": {}, "id": "stop"},
-            ),
+            # finish (cleanup is the program's job, not a tool)
             _make_final(
                 "Experiment complete over 2 iterations with continuous ping monitoring. "
                 "Best RTT: 80ms at pps=100."
@@ -477,12 +472,10 @@ class TestContinuousPingWorkflow:
                 config,
             )
 
-        # Verify the full workflow was executed
-        monitor.start.assert_called_once_with("10.99.80.160", interval_s=1.0)
+        # Verify the read-only workflow was executed
         assert monitor.get_stats.call_count >= 1  # called for each read_ping_stats
         assert mock_send.call_count == 2
         assert mock_log.call_count == 2
-        monitor.stop.assert_called_once()
         assert "continuous ping" in result["messages"][-1].content.lower()
         assert "80ms" in result["messages"][-1].content
 

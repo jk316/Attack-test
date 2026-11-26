@@ -11,7 +11,7 @@ from uuid import uuid4
 logger = logging.getLogger("agent")
 
 # Console preview length for message content in [LLM INPUT] lines.
-# Full untruncated content always goes to data/agent.log at DEBUG.
+# Full untruncated content always goes to data/agent-YYYY-MM-DD.log at DEBUG.
 MSG_PREVIEW_LEN = 500
 
 # Ensure the project root is on sys.path so `src` is importable
@@ -24,8 +24,12 @@ from src.agent.state import (  # noqa: E402
 )
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port  # noqa: E402
 from src.trex.config import get_trex_host, get_trex_port, get_trex_scripts_dir  # noqa: E402
-from src.tools.ping_monitor import get_ping_monitor  # noqa: E402
 from src.tools.ping_rtt_tool import is_allowlisted  # noqa: E402
+from src.tools.log_tool import generate_run_id  # noqa: E402
+from src.tools.monitor_lifecycle import (  # noqa: E402
+    start_experiment_monitors,
+    stop_experiment_monitors,
+)
 from langgraph.types import Command  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
@@ -55,7 +59,7 @@ class VerboseCallback(BaseCallbackHandler):
             raw_content = str(getattr(msg, "content", ""))
             content_preview = raw_content[:MSG_PREVIEW_LEN].replace("\n", "\\n")
             if len(raw_content) > MSG_PREVIEW_LEN:
-                content_preview += f"… (+{len(raw_content) - MSG_PREVIEW_LEN} chars, see data/agent.log)"
+                content_preview += f"… (+{len(raw_content) - MSG_PREVIEW_LEN} chars, see data/agent-YYYY-MM-DD.log)"
             tc = self._flat_tool_calls(msg)
             extra_info = f" tool_calls={tc}" if tc else ""
             logger.info("  [%d] %s: %s %s", idx, role, content_preview, extra_info)
@@ -86,7 +90,8 @@ class VerboseCallback(BaseCallbackHandler):
     #     logger.info("[TOOL] done")
 
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config" / "experiment.json"
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "experiment.json"
+HTTP_PROBE_PATH = Path(__file__).resolve().parent.parent / "http_probe.json"
 
 DEFAULTS: dict = {
     "target_ip": "10.99.80.160",
@@ -94,10 +99,17 @@ DEFAULTS: dict = {
     "log_path": "data/experiment.jsonl",
     "max_iters": 20,
     "no_improve_limit": 5,
+    "auto_approve": False,
+    "verbose": False,
+    "pktgen_live": False,
+    "trex_live": False,
+    "trex_explore": False,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "",
 }
 
-
-# Config sections that a named profile may override (nested, deep-merged).
+# Config sections read as nested dicts (attack/pktgen/trex).
 _SECTION_KEYS = ("attack", "pktgen", "trex")
 
 
@@ -112,29 +124,42 @@ def _read_config_file() -> dict:
         return {}
 
 
-def _apply_profile(cfg: dict, data: dict, profile: str) -> dict:
-    """Overlay a named profile (data['profiles'][profile]) onto cfg immutably.
+def _load_http_probe_config() -> dict:
+    """Read http_probe.json (dial-testing config), returning {} on any error."""
+    if not HTTP_PROBE_PATH.exists():
+        return {}
+    try:
+        with open(HTTP_PROBE_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
 
-    Scalar keys are replaced; nested sections are shallow-merged so a profile
-    only needs to list the keys it changes.
+
+def _build_http_bodies(cfg: dict) -> list[str]:
+    """Expand http_probe.json's accounts + body template into a rotated pool.
+
+    When *cfg* has an ``accounts`` section and ``body`` contains an ``{email}``
+    placeholder, generates ``start..end`` (default 1..100) request bodies by
+    substituting ``email_prefix{i}{email_suffix}`` and ``password``. Returns an
+    empty list otherwise (fixed single-account probing).
     """
-    profiles = data.get("profiles", {})
-    if profile not in profiles:
-        available = ", ".join(sorted(profiles)) or "(none)"
-        raise SystemExit(f"未知 profile: {profile!r}，可用: {available}")
-    overrides = profiles[profile]
-    result = dict(cfg)
-    for key in DEFAULTS:
-        if key in overrides:
-            result[key] = overrides[key]
-    for key in _SECTION_KEYS:
-        if key in overrides:
-            result[key] = {**(result.get(key) or {}), **overrides[key]}
-    return result
+    accounts = cfg.get("accounts")
+    body = cfg.get("body") or ""
+    if not accounts or "{email}" not in body:
+        return []
+    prefix = accounts.get("email_prefix", "user")
+    suffix = accounts.get("email_suffix", "@test.com")
+    start = int(accounts.get("start", 1))
+    end = int(accounts.get("end", 100))
+    password = accounts.get("password", "123456")
+    return [
+        body.replace("{email}", f"{prefix}{i}{suffix}").replace("{password}", password)
+        for i in range(start, end + 1)
+    ]
 
 
-def _load_config_defaults(profile: str | None = None) -> dict:
-    """Load experiment defaults from config, optionally overlaid with a named profile."""
+def _load_config_defaults() -> dict:
+    """Load experiment defaults from config, falling back to hardcoded DEFAULTS."""
     data = _read_config_file()
     merged = dict(DEFAULTS)
     for key in DEFAULTS:
@@ -143,25 +168,13 @@ def _load_config_defaults(profile: str | None = None) -> dict:
     for key in _SECTION_KEYS:
         if key in data:
             merged[key] = dict(data[key])
-    if profile:
-        merged = _apply_profile(merged, data, profile)
     return merged
 
 
 def parse_args() -> argparse.Namespace:
-    # Pre-scan --profile so the profile's defaults feed the remaining args' defaults.
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--profile", default=None)
-    pre_args, _ = pre_parser.parse_known_args()
-
-    cfg = _load_config_defaults(profile=pre_args.profile)
+    cfg = _load_config_defaults()
     parser = argparse.ArgumentParser(
         description="Closed-Loop Network Experiment Agent"
-    )
-    parser.add_argument(
-        "--profile",
-        default=None,
-        help="命名预设：一键切换整组参数（定义于 experiment.json 的 profiles）",
     )
     parser.add_argument(
         "--target-ip",
@@ -193,16 +206,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--auto-approve",
         action="store_true",
-        default=False,
-        help="自动批准所有 HITL 请求（仅限 dry-run 零流量场景；"
-             "与 --pktgen-live/--trex-live 互斥——实发模式必须人工逐次审批）",
+        default=cfg["auto_approve"],
+        help="Auto-approve all HITL requests (traffic send + TRex script execution), "
+             "skipping interactive prompts",
     )
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        default=False,
+        default=cfg["verbose"],
         help="Show full untruncated message content on the console (console → DEBUG). "
-             "Full content is always written to data/agent.log regardless.",
+             "Full content is always written to data/agent-<日期>.log（按天分文件）regardless.",
     )
     # ── Attack parameter defaults ────────────────────────────────────
     attack_cfg = cfg.get("attack", {})
@@ -222,24 +235,28 @@ def parse_args() -> argparse.Namespace:
         "--flow-count", type=int, default=attack_cfg.get("flow_count", 1),
         help="Number of concurrent flows (default 1)",
     )
+    parser.add_argument(
+        "--iat-jitter", type=int, default=attack_cfg.get("iat_jitter_ms", 0),
+        help="Random jitter on inter-packet interval in ms (default 0)",
+    )
     # ── Pktgen-DPDK options ──────────────────────────────────────────
     pktgen_cfg = cfg.get("pktgen", {})
     parser.add_argument(
         "--pktgen-live",
         action="store_true",
-        default=False,
+        default=cfg["pktgen_live"],
         help="Run Pktgen tools in live mode (actually send traffic to Pktgen). "
              "Default is dry-run (compile Lua scripts only).",
     )
     parser.add_argument(
         "--pktgen-host",
-        default=None,
+        default=pktgen_cfg.get("host"),
         help="Pktgen-DPDK hostname or IP (default from topology.yaml)",
     )
     parser.add_argument(
         "--pktgen-port",
         type=int,
-        default=None,
+        default=pktgen_cfg.get("port"),
         help="Pktgen-DPDK TCP control port (default from topology.yaml)",
     )
     parser.add_argument(
@@ -255,19 +272,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trex-live",
         action="store_true",
-        default=False,
+        default=cfg["trex_live"],
         help="Run TRex scripts in live mode (actually execute generated Python). "
              "Default is dry-run (write + syntax-check only).",
     )
     parser.add_argument(
         "--trex-host",
-        default=None,
+        default=trex_cfg.get("host"),
         help="TRex server hostname or IP (default from topology.yaml)",
     )
     parser.add_argument(
         "--trex-port",
         type=int,
-        default=None,
+        default=trex_cfg.get("port"),
         help="TRex server RPC port (default from topology.yaml)",
     )
     parser.add_argument(
@@ -275,9 +292,19 @@ def parse_args() -> argparse.Namespace:
         help="Timeout in seconds for running a TRex script (default 30)",
     )
     parser.add_argument(
+        "--trex-python", default=trex_cfg.get("python"),
+        help="Python interpreter for running generated TRex scripts "
+             "(default: current interpreter; set to a conda env with trex libs)",
+    )
+    parser.add_argument(
+        "--trex-lib-dir", default=trex_cfg.get("lib_dir"),
+        help="TRex client library source root (server path) that read_file/grep "
+             "are confined to for source self-inspection",
+    )
+    parser.add_argument(
         "--trex-explore",
         action="store_true",
-        default=False,
+        default=cfg["trex_explore"],
         help="TRex attack catalog exploration mode: the agent only generates "
              "attack scripts with Chinese annotations (dry-run, no traffic, no "
              "HITL) and saves the catalog summary to "
@@ -286,13 +313,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--catalog-target",
         type=int,
-        default=10,
+        default=cfg["catalog_target"],
         help="Minimum number of attack scripts the agent must generate in "
              "--trex-explore mode (default 10)",
     )
     parser.add_argument(
         "--explore-direction",
-        default="",
+        default=cfg["explore_direction"],
         help="User-specified exploration direction for --trex-explore mode, "
              "injected into the catalog prompt (free-form text, e.g. "
              '"重点探索DNS放大攻击和TCP SYN洪水")',
@@ -306,8 +333,34 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--instruction",
-        default="",
+        default=cfg["instruction"],
         help="用户对本次实验的额外目标/指令（自由文本，注入 user message 和 system prompt）",
+    )
+    # ── HTTP dial-testing options（来自独立 http_probe.json）────────
+    http_cfg = _load_http_probe_config()
+    parser.add_argument(
+        "--http-url", default=http_cfg.get("url"),
+        help="HTTP business endpoint URL for dial-testing",
+    )
+    parser.add_argument(
+        "--http-interval", type=float, default=http_cfg.get("interval_s", 1.0),
+        help="Seconds between HTTP probes (default 1.0)",
+    )
+    parser.add_argument(
+        "--http-timeout", type=float, default=http_cfg.get("timeout_s", 5.0),
+        help="Per-request HTTP timeout in seconds (default 5)",
+    )
+    parser.add_argument(
+        "--http-method", default=http_cfg.get("method", "GET"),
+        help="HTTP method for dial-testing (default GET)",
+    )
+    parser.add_argument(
+        "--http-body", default=None,
+        help="Request body for dial-testing (default from http_probe.json; e.g. JSON for POST login)",
+    )
+    parser.add_argument(
+        "--http-content-type", default=http_cfg.get("content_type"),
+        help="Content-Type header for dial-testing (e.g. application/json)",
     )
     args = parser.parse_args()
     if args.trex_explore and args.trex_live:
@@ -319,12 +372,6 @@ def parse_args() -> argparse.Namespace:
         parser.error(
             f"--catalog-target 必须 ≥ 1（收到 {args.catalog_target}）："
             "目录探索目标脚本数至少为 1"
-        )
-    # 008-T014/008-1：自动批准不得与任何实发模式组合（禁止无人值守真实流量）
-    if args.auto_approve and (args.pktgen_live or args.trex_live):
-        parser.error(
-            "--auto-approve 与 --pktgen-live/--trex-live 互斥：自动批准仅限 "
-            "dry-run（零流量）场景，实发模式必须人工逐次审批"
         )
     if args.max_iters is None:
         args.max_iters = 40 if args.trex_explore else cfg["max_iters"]
@@ -446,6 +493,14 @@ def _apply_mode_env(args: argparse.Namespace) -> None:
         os.environ["CATALOG_TARGET"] = str(args.catalog_target)
         if args.explore_direction:
             os.environ["EXPLORE_DIRECTION"] = args.explore_direction
+
+
+def _apply_trex_l2_env(trex_cfg: dict) -> None:
+    """把 experiment.json 的 trex L2 事实注入 env（缺键不动，交由 config.py 回退）。"""
+    for key in ("dst_mac", "src_mac", "start_force"):
+        value = trex_cfg.get(key)
+        if value is not None:
+            os.environ[f"TREX_{key.upper()}"] = str(value)
 
 
 def _recursion_limit(max_iters: int) -> int:
@@ -577,101 +632,24 @@ def _extract_observation(messages) -> dict | None:
     return None
 
 
-def _inject_attack_env(args: argparse.Namespace) -> None:
-    """注入 Scapy 攻击默认值 env（工具在调用时读取；配置单一来源链）。
+def _agent_log_path() -> str:
+    """Today's agent log path, daily-rotated: ``data/agent-YYYY-MM-DD.log``."""
+    return f"data/agent-{datetime.now().strftime('%Y-%m-%d')}.log"
 
-    含 ATK_IAT_JITTER_MS（R4：mixed_traffic_send 抖动参数化读取该 env）。
-    """
+
+def main() -> None:
+    args = parse_args()
+
+    # ── Run identity: every log_result line in this run shares this id ──
+    run_id = generate_run_id()
+    os.environ["DSH_RUN_ID"] = run_id
+
+    # ── Inject defaults as env vars (tools read these at call time) ──
     os.environ["ATK_DURATION_S"] = str(args.duration)
     os.environ["ATK_PPS"] = str(args.pps)
     os.environ["ATK_PACKET_SIZE"] = str(args.packet_size)
     os.environ["ATK_FLOW_COUNT"] = str(args.flow_count)
-    os.environ["ATK_IAT_JITTER_MS"] = str(args.iat_jitter_ms)
-
-
-def _inject_ping_monitor_env(args: argparse.Namespace) -> None:
-    """注入 ping 监控默认值 env（003-G-001/G-002；工具调用时读取）。
-
-    来源：experiment.json 的 ping_monitor 节 → env PING_MONITOR_*。
-    """
-    pm = dict(getattr(args, "ping_monitor", {}) or {})
-    os.environ["PING_MONITOR_PROBES_PER_SEC"] = str(pm.get("probes_per_sec", 10))
-    os.environ["PING_MONITOR_SUMMARY_INTERVAL_S"] = str(pm.get("summary_interval_s", 1))
-    os.environ["PING_MONITOR_FALLBACK_INTERVAL_S"] = str(pm.get("fallback_interval_s", 1.0))
-    os.environ["PING_MONITOR_STATS_WINDOW_S"] = str(pm.get("stats_window_s", 5.0))
-    os.environ["PING_MONITOR_MAX_SAMPLES"] = str(pm.get("max_samples", 4000))
-
-
-def _apply_profile_seeds(args: argparse.Namespace) -> dict | None:
-    """004-T016：提供 --pcap-path 时画像映射注入未显式指定参数。
-
-    优先级（research 决策 1）：CLI 显式参数 > 映射值 > experiment.json 默认。
-    映射值仅作为「未显式指定时」的初始种子；画像失败回退配置默认并提示。
-    返回映射 dict（含 dst_port 种子）或 None（未应用）。
-    """
-    if not args.pcap_path or args.trex_explore:
-        return None
-    try:
-        from src.tools.pcap_profile_tool import pcap_profile_tool
-        from src.tools.profile_to_params import profile_to_params
-        profile = pcap_profile_tool(pcap_path=args.pcap_path)
-    except Exception as e:
-        print(f"[画像] 画像失败，使用配置默认参数: {e}", file=sys.stderr)
-        return None
-    mapped = profile_to_params(profile, defaults={
-        "dst_port": 8080,
-        "packet_size": args.packet_size,
-        "pps": args.pps,
-        "flow_count": args.flow_count,
-        "duration_s": args.duration,
-    })
-    explicit = getattr(args, "_explicit_flags", set())
-    if "pps" not in explicit:
-        args.pps = mapped["pps"]
-    if "packet_size" not in explicit:
-        args.packet_size = mapped["packet_size"]
-    if "flow_count" not in explicit:
-        args.flow_count = mapped["flow_count"]
-    if "duration" not in explicit:
-        args.duration = mapped["duration_s"]
-    args.profile_seeds = mapped
-    return mapped
-
-
-def _inject_pcap_profile_env(args: argparse.Namespace) -> None:
-    """注入 PCAP 画像默认值 env（004-T004；工具调用时读取）。
-
-    来源：experiment.json 的 pcap_profile 节 → env PCAP_PROFILE_*。
-    """
-    pp = dict(getattr(args, "pcap_profile", {}) or {})
-    os.environ["PCAP_PROFILE_MAX_PACKETS"] = str(pp.get("max_packets", 50000))
-    os.environ["PCAP_PROFILE_IDLE_TIMEOUT_S"] = str(pp.get("idle_timeout_s", 30))
-
-
-def main() -> int | None:
-    """CLI 入口：实验模式返回 None（退出码 0），探索模式返回达标退出码 0/1。"""
-    args = parse_args()
-    _run_preflight(args)
-    # 008-T011/008-2：配置默认值超限启动警告（load/apply_profile 之后、env 注入之前）
-    _warn_config_over_limits(args)
-
-    # G2（006-T013）：--clean-scripts 仅探索模式生效，启动时（env 注入前）
-    # 清空 trex_scripts/cat_*.py 旧脚本，绝不动非 cat_ 文件。
-    if args.trex_explore and args.clean_scripts:
-        removed = _clean_catalog_scripts(get_trex_scripts_dir())
-        if removed:
-            print(f"[clean-scripts] 已删除 {removed} 个旧 cat_*.py 脚本"
-                  "（仅 trex_scripts/cat_*.py）")
-        else:
-            print("[clean-scripts] trex_scripts/ 无旧 cat_*.py 脚本可清理")
-
-    # 画像映射种子（004-T016）：先于 env 注入，使映射值经 env 进入工具默认
-    _apply_profile_seeds(args)
-
-    # ── Inject defaults as env vars (tools read these at call time) ──
-    _inject_attack_env(args)
-    _inject_ping_monitor_env(args)
-    _inject_pcap_profile_env(args)
+    os.environ["ATK_IAT_JITTER_MS"] = str(args.iat_jitter)
     os.environ["PKTGEN_RATE"] = str(args.pktgen_rate)
     os.environ["PKTGEN_DURATION_MS"] = str(args.pktgen_duration)
     # 合法源地址（005-T004/D9）：适配器在编译前填入，覆盖 vendored 伪造默认
@@ -692,11 +670,37 @@ def main() -> int | None:
     _apply_mode_env(args)
     if args.trex_live:
         os.environ["TREX_DRY_RUN"] = "false"
-    if args.trex_host is not None:
-        os.environ["TREX_HOST"] = args.trex_host
+    # 无条件解析 host：生成脚本（trex_common.TREX_SERVER）也读 TREX_HOST，
+    # 否则 topology.yaml 提供的 host 不会传到子进程。
+    os.environ["TREX_HOST"] = str(args.trex_host or get_trex_host())
     if args.trex_port is not None:
         os.environ["TREX_PORT"] = str(args.trex_port)
     os.environ["TREX_TIMEOUT_S"] = str(args.trex_timeout)
+    # trex L2 事实（dst_mac/src_mac/start_force）来自 experiment.json 的 trex 段
+    trex_cfg = _load_config_defaults().get("trex", {})
+    _apply_trex_l2_env(trex_cfg)
+    if args.trex_python:
+        os.environ["TREX_PYTHON"] = args.trex_python
+    if args.trex_lib_dir:
+        os.environ["TREX_LIB_DIR"] = args.trex_lib_dir
+
+    # ── HTTP dial-testing configuration ──
+    probe_cfg = _load_http_probe_config()
+    http_body = args.http_body if args.http_body is not None else probe_cfg.get("body")
+    # 账号池轮换：http_probe.json 配 accounts + body 模板时生成 bodies；
+    # CLI 显式 --http-body 覆盖则视为固定单账号（不轮换）。
+    http_bodies = _build_http_bodies(probe_cfg) if args.http_body is None else []
+    if args.http_url:
+        os.environ["HTTP_URL"] = args.http_url
+    os.environ["HTTP_INTERVAL_S"] = str(args.http_interval)
+    os.environ["HTTP_TIMEOUT_S"] = str(args.http_timeout)
+    os.environ["HTTP_METHOD"] = args.http_method
+    if http_bodies:
+        os.environ["HTTP_BODY"] = http_bodies[0]
+    elif http_body:
+        os.environ["HTTP_BODY"] = http_body
+    if args.http_content_type:
+        os.environ["HTTP_CONTENT_TYPE"] = args.http_content_type
 
     pktgen_host = args.pktgen_host or get_pktgen_host()
     pktgen_port = args.pktgen_port or get_pktgen_port()
@@ -704,13 +708,12 @@ def main() -> int | None:
     trex_port = args.trex_port or get_trex_port()
 
     print(f"=== Closed-Loop Experiment ===")
+    print(f"Run ID:     {run_id}")
     print(f"Target:     {args.target_ip}")
     print(f"PCAP:       {args.pcap_path or '(none)'}")
     print(f"Log:        {args.log_path}")
     print(f"Max iters:  {args.max_iters}")
     print(f"Stop after: {args.no_improve_limit} rounds no improvement")
-    if args.profile:
-        print(f"Profile:    {args.profile}")
     if args.instruction:
         print(f"Instruction: {args.instruction}")
     pktgen_mode = "live" if args.pktgen_live else "dry-run"
@@ -728,10 +731,8 @@ def main() -> int | None:
     print()
 
     # ── Logging: info → console; debug → file (agent logger only) ──
-    # 确保日志目录存在（fresh checkout 下 data/ 可能不存在，T010 暴露的偏差）
-    log_file = Path("data/agent.log")
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_fh = logging.FileHandler(log_file, encoding="utf-8")
+    # Daily-rotated: data/agent-YYYY-MM-DD.log (new file per calendar day).
+    log_fh = logging.FileHandler(_agent_log_path(), encoding="utf-8")
     log_fh.setLevel(logging.DEBUG)
     log_fh.setFormatter(logging.Formatter("%(message)s"))
     log_ch = logging.StreamHandler()
@@ -743,6 +744,29 @@ def main() -> int | None:
     agent_logger.addHandler(log_ch)
     agent_logger.addHandler(log_fh)
     agent_logger.propagate = False  # don't bubble to root, keep other libs quiet
+
+    # ── Run boundary markers for the lessons pipeline (spec 010 FR-005) ──
+    agent_logger.info("[RUN START] %s", run_id)
+
+    # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
+    # Catalog mode sends no traffic and needs no observation (FR-004).
+    if not args.trex_explore:
+        http_cfg = None
+        if args.http_url:
+            http_cfg = {
+                "url": args.http_url,
+                "interval_s": args.http_interval,
+                "timeout_s": args.http_timeout,
+                "method": args.http_method,
+                "body": http_body,
+                "content_type": args.http_content_type,
+                "bodies": http_bodies,
+            }
+        started = start_experiment_monitors(args.target_ip, http_cfg)
+        agent_logger.info(
+            "Monitors auto-started: ping=%s http=%s",
+            started["ping"], started["http"],
+        )
 
     verbose = VerboseCallback()
     mode = "catalog" if args.trex_explore else "experiment"
@@ -768,6 +792,7 @@ def main() -> int | None:
     last_approved: bool | None = None
     seen_count = 0
     forced_stop_reason: str | None = None
+    catalog_exit: int | None = None
 
     try:
         # Start the agent — runs until first interrupt (HITL on traffic_send)
@@ -860,14 +885,13 @@ def main() -> int | None:
 
         print(f"\nResults logged to: {args.log_path}")
     finally:
-        # Ensure ping monitor is always cleaned up
+        # Close the run boundary marker even on exception (spec 010 FR-005).
+        agent_logger.info("[RUN END] %s", run_id)
+        # Ensure both monitors are always cleaned up (spec 009 FR-007)
         try:
-            monitor = get_ping_monitor()
-            if monitor.is_running():
-                logger.info("Cleaning up ping monitor...")
-                monitor.stop()
+            stop_experiment_monitors()
         except Exception:
-            pass
+            logger.warning("Monitor cleanup failed", exc_info=True)
     return catalog_exit
 
 

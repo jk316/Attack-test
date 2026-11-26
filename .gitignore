@@ -24,13 +24,47 @@ test.py
 
 .claude/
 
-data/
+# Track data/ logs (experiment.jsonl); PCAP uploads stay out of git
+data/uploads/
+
+# PCAP captures stay out of git
+data/*.pcap
+data/*.pcapng
 
 # Pktgen compiled Lua output
 lua_scripts/
 
-# TRex generated client scripts
+# TRex generated client scripts (keep the shared helper tracked)
 trex_scripts/
+!trex_scripts/
+trex_scripts/*
+!trex_scripts/trex_common.py
+
+# Agent scratch (write_file sandbox)
+agent_scratch/
+
+# DSH worktrees
+.dsh/
+
+# Local agent scratch / personal tooling
+.agents/
+.obsidian/
+skills-lock.json
+
+# Pytest temp working dirs
+pytest-of-*/
+
+# Local analysis data (regenerable)
+data/analysis/
+
+# Generated architecture diagrams & visual-check artifacts
+docs/architecture*
+docs/archify-target.json
+
+# Generated report exports (keep the *.md source reports tracked)
+output/*.html
+output/*.json
+output/*.pptx
 
 
 # Node / frontend build artifacts

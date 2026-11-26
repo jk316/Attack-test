@@ -128,13 +128,20 @@ class TestRunPythonFile:
         mock_run.assert_not_called()
         mock_interrupt.assert_not_called()  # dry-run 零审批（SC-001）
 
-    def test_live_blocks_non_allowlisted_ip_in_code(self, tmp_path, monkeypatch):
+    def test_live_non_allowlisted_ip_shown_in_hitl(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
         monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
         self._write(tmp_path, code=f"target = '{NOT_ALLOWLISTED_IP}'\n")
-        result = run_python_file.invoke({"filename": "s.py"})
-        assert result["success"] is False
-        assert NOT_ALLOWLISTED_IP in result["error"]
+        with patch("src.trex.tools.interrupt", return_value=True) as mock_int, \
+             patch("src.trex.tools.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+            result = run_python_file.invoke({"filename": "s.py"})
+        # 不再硬拦截：进入 HITL，且 HITL 参数里提示非 allowlist IP
+        assert result["success"] is True
+        hitl_params = mock_int.call_args[0][0]["params"]
+        assert NOT_ALLOWLISTED_IP in hitl_params["non_allowlisted_ips"]
 
     def test_live_hitl_gate(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
@@ -174,12 +181,36 @@ class TestRunPythonFile:
         self._write(tmp_path)
         with patch("src.trex.tools.interrupt", return_value=True), \
              patch("src.trex.tools.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd="python", timeout=30)
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd="python", timeout=30, output="connected\nacquired\n", stderr=""
+            )
             result = run_python_file.invoke(
                 {"filename": "s.py", "target_ip": ALLOWLISTED_IP}
             )
         assert result["success"] is False
         assert "timed out" in result["error"]
+        assert result["stdout"] == "connected\nacquired\n"
+        assert result["stderr"] == ""
+
+    def test_live_strips_proxy_env(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        monkeypatch.setattr("src.trex.tools.is_trex_dry_run", lambda: False)
+        self._write(tmp_path)
+        monkeypatch.setenv("http_proxy", "http://10.99.80.152:8889")
+        monkeypatch.setenv("https_proxy", "http://10.99.80.152:8889")
+        monkeypatch.setenv("SOME_KEEP", "kept")
+        with patch("src.trex.tools.interrupt", return_value=True), \
+             patch("src.trex.tools.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ok", stderr=""
+            )
+            run_python_file.invoke({"filename": "s.py", "target_ip": ALLOWLISTED_IP})
+        env = mock_run.call_args.kwargs["env"]
+        assert "http_proxy" not in env
+        assert "https_proxy" not in env
+        assert "all_proxy" not in env
+        assert "HTTP_PROXY" not in env
+        assert env["SOME_KEEP"] == "kept"
 
     def test_live_hitl_reject(self, tmp_path, monkeypatch):
         monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
@@ -261,3 +292,23 @@ class TestHitlPayloadWarningG3:
         # 既有「完整权限/无执行沙箱」警告并列保留
         assert "完整权限" in warning
         assert result["success"] is False  # 被拒绝，未执行
+
+# ── reserved helper name ────────────────────────────────────────────
+
+class TestReservedHelperName:
+    def test_write_python_file_rejects_trex_common(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        result = write_python_file.invoke(
+            {"filename": "trex_common.py", "code": "x = 1\n"}
+        )
+        assert result["success"] is False
+        assert "reserved" in result["error"]
+
+    def test_script_importing_trex_common_is_syntax_ok(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.trex.tools.get_trex_scripts_dir", lambda: tmp_path)
+        result = write_python_file.invoke(
+            {"filename": "cat_x.py",
+             "code": "from trex_common import DST_MAC, SRC_MAC, start_safe\n"}
+        )
+        assert result["success"] is True
+        assert result["syntax_ok"] is True

@@ -4,12 +4,43 @@ No LLM, network, or file I/O — CLI args and env vars are the only inputs.
 """
 
 import argparse
+import json
 import sys
 from unittest.mock import patch
 
 import pytest
 
+import src.main as main_mod
 from src.agent.graph import _build_system_prompt
+
+# Minimal runtime config so CLI defaults don't depend on the repo's
+# experiment.json (which the experiment server edits at will).
+MINIMAL_CFG = {
+    "target_ip": "10.99.80.160",
+    "pcap_path": "",
+    "log_path": "data/experiment.jsonl",
+    "max_iters": 20,
+    "no_improve_limit": 5,
+    "auto_approve": False,
+    "verbose": False,
+    "pktgen_live": False,
+    "trex_live": False,
+    "trex_explore": False,
+    "catalog_target": 10,
+    "explore_direction": "",
+    "instruction": "",
+    "attack": {"duration_s": 10, "pps": 100, "packet_size": 64, "flow_count": 1, "iat_jitter_ms": 0},
+    "pktgen": {"rate": 50, "duration_ms": 10000},
+    "trex": {},
+    "http": {},
+}
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "experiment.json"
+    cfg_file.write_text(json.dumps(MINIMAL_CFG), encoding="utf-8")
+    monkeypatch.setattr(main_mod, "CONFIG_PATH", cfg_file)
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:

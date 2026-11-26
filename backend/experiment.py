@@ -22,6 +22,7 @@ R8（004-T017 遗补）: 上传画像后走同一 ``profile_to_params`` 映射�
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -29,9 +30,56 @@ from langgraph.types import Command
 
 from src.agent.graph import build_graph
 from src.tools.ping_monitor import get_ping_monitor
+from src.tools.log_tool import generate_run_id
+from src.tools.monitor_lifecycle import (
+    start_experiment_monitors,
+    stop_experiment_monitors,
+)
 
 logger = logging.getLogger("experiment")
 logger.setLevel(logging.DEBUG)
+
+
+def _load_http_cfg() -> dict | None:
+    """Read the ``http`` section of the root experiment.json (config single source).
+
+    Returns ``None`` when the file is missing/unparseable or the section is
+    absent — the lifecycle helper then skips the HTTP monitor.
+    """
+    try:
+        cfg_path = Path(__file__).resolve().parent.parent / "experiment.json"
+        with open(cfg_path, encoding="utf-8") as fh:
+            return json.load(fh).get("http") or None
+    except Exception:
+        logger.warning("Failed to read http config from experiment.json", exc_info=True)
+        return None
+
+
+def _load_trex_cfg() -> dict | None:
+    """Read the ``trex`` section of the root experiment.json, or None on error."""
+    try:
+        cfg_path = Path(__file__).resolve().parent.parent / "experiment.json"
+        with open(cfg_path, encoding="utf-8") as fh:
+            return json.load(fh).get("trex") or None
+    except Exception:
+        logger.warning("Failed to read trex config from experiment.json", exc_info=True)
+        return None
+
+
+def _apply_trex_env(trex_cfg: dict | None) -> None:
+    """把 experiment.json 的 trex 键注入 env（含 L2 事实与 host）。
+
+    必须在 build_graph() 渲染提示词之前调用，否则提示词与生成脚本会读到
+    不同的 dst/src MAC（src/trex/config.py 与 trex_scripts/trex_common.py
+    都以 env 为最高优先级）。缺键不动，交由 config.py 回退 topology.yaml。
+    """
+    if not trex_cfg:
+        return
+    for key in ("host", "dst_mac", "src_mac", "start_force"):
+        value = trex_cfg.get(key)
+        if value is not None:
+            os.environ[f"TREX_{key.upper()}"] = str(value)
+
 
 # ── Message protocol helpers ────────────────────────────────────
 
@@ -149,6 +197,11 @@ class ExperimentSession:
         self._ws = websocket
         self._connected = True
 
+        # Run identity: every log_result line in this run shares this id.
+        # Only one experiment runs per process, so an env var is safe here.
+        run_id = generate_run_id()
+        os.environ["DSH_RUN_ID"] = run_id
+
         thread_id = str(uuid4())[:8]
         self._config = {"configurable": {"thread_id": thread_id}}
 
@@ -203,6 +256,16 @@ class ExperimentSession:
 
         logger.info("Starting experiment: thread=%s, target=%s", thread_id, target_ip)
 
+        # ── Monitor lifecycle: program-owned, auto-started (spec 009) ──
+        # HTTP config comes from the root experiment.json (same source as
+        # main.py); a missing file/parse error degrades to "no HTTP monitor".
+        http_cfg = _load_http_cfg()
+        started = start_experiment_monitors(target_ip, http_cfg)
+        logger.info(
+            "Monitors auto-started: ping=%s http=%s",
+            started["ping"], started["http"],
+        )
+
         try:
             await self._run_loop(initial_state)
         except Exception as e:
@@ -212,6 +275,8 @@ class ExperimentSession:
                 "data": {"message": str(e)},
             })
         finally:
+            # Monitors are program-owned; always cleaned up (spec 009 FR-007)
+            stop_experiment_monitors()
             self._running = False
             # 终态推送须先于通道解绑（否则 _safe_send 会静默丢弃）
             await self._safe_send({
@@ -359,6 +424,9 @@ class ExperimentManager:
     """
 
     def __init__(self):
+        # TRex L2 事实必须在 build_graph() 渲染提示词之前注入 env，
+        # 保证提示词里的 dst/src MAC 与生成脚本（读同一 env）一致。
+        _apply_trex_env(_load_trex_cfg())
         self._graph = build_graph()
         self._sessions: dict[str, ExperimentSession] = {}
 

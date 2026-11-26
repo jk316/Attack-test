@@ -29,6 +29,8 @@ from langgraph.types import interrupt
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.ping_rtt_tool import validate_target
 from src.tools.rtt_window import build_rtt_observation
+from src.tools.http_monitor import get_http_monitor
+from src.tools.http_window import build_http_observation
 
 logger = logging.getLogger(__name__)
 
@@ -265,11 +267,13 @@ def _hitl_gate(skill_name: str, params: dict[str, Any]) -> bool:
 
 
 def _sample_rtt(result: dict[str, Any], t0: float) -> dict[str, Any]:
-    """Attach RTT observation from the PingMonitor (same pattern as traffic_send).
+    """Attach RTT + HTTP observations (same pattern as traffic_send).
 
-    Adds ``rtt_during`` plus ``attack_window`` / ``observation_window`` so the
-    LLM can tell whether the RTT observation actually covered the attack window.
+    Adds ``rtt_during`` + ``http_during`` plus attack/observation windows so the
+    LLM can tell whether the observations actually covered the attack window.
     The mode reflects whether traffic was really sent (live) or not (dry_run).
+    HTTP observation is unconditional (its target comes from http.url); it
+    safely returns ``http_during=None`` when the monitor isn't running.
     """
     mode = "dry_run" if is_dry_run() else "live"
     try:
@@ -277,6 +281,7 @@ def _sample_rtt(result: dict[str, Any], t0: float) -> dict[str, Any]:
     except Exception:
         monitor = None
     result.update(build_rtt_observation(monitor, t0, mode=mode))
+    result.update(build_http_observation(get_http_monitor(), t0, mode=mode))
     return result
 
 
@@ -539,11 +544,8 @@ def pktgen_arp_flood(
     degradation patterns than L3/L4 floods.
 
     The optional *dst_ip* is NOT sent to Pktgen (ARP has no IP fields);
-    it is only used for RTT sampling via the PingMonitor against that target.
-    Provide the same IP used for ``start_ping_monitor`` to correlate RTT
-    impact.  When provided, *dst_ip* MUST pass the allowlist check
-    (non-allowlisted targets are rejected); leave it empty to skip RTT
-    sampling.
+    it is only used for RTT sampling via the program-owned PingMonitor
+    (auto-started at experiment begin) against that target.
 
     Args:
         rate: Packet rate as percentage of line-rate (0–100, default 50).

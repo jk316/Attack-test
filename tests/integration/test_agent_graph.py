@@ -159,6 +159,7 @@ class TestAgentToolCalling:
         mock_send.assert_called_once_with(
             dst_ip="10.99.80.160", dst_port=8080, duration_s=10,
             pps=50, packet_size=64, flow_count=1, iat_jitter_ms=0,
+            src_ip=None,
         )
         mock_ping.assert_called_once_with(ip="10.99.80.160", count=4, timeout=10)
         mock_log.assert_called_once()
@@ -338,30 +339,6 @@ class TestPingMonitorTools:
         ]
         return monitor
 
-    def test_agent_calls_start_ping_monitor(self, mock_model, mock_monitor):
-        """Agent should be able to call start_ping_monitor tool."""
-        from src.agent.graph import build_graph
-
-        mock_model.invoke.side_effect = [
-            _make_ai_with_tool_calls([{
-                "name": "start_ping_monitor",
-                "args": {"ip": "10.99.80.160", "interval_s": 1.0},
-                "id": "call_1",
-            }]),
-            _make_final_response("Ping monitor started successfully."),
-        ]
-
-        with patch("src.agent.graph._build_model", return_value=mock_model), \
-             patch("src.agent.tools.get_ping_monitor", return_value=mock_monitor):
-            graph = build_graph()
-            state = {"messages": [HumanMessage(content="Start monitoring RTT")]}
-            config = {"configurable": {"thread_id": "test-pm-start"}}
-
-            result = graph.invoke(state, config)
-
-        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=1.0)
-        assert "Ping monitor started" in result["messages"][-1].content
-
     def test_agent_calls_read_ping_stats(self, mock_model, mock_monitor):
         """Agent should be able to read ping stats mid-experiment."""
         from src.agent.graph import build_graph
@@ -385,30 +362,6 @@ class TestPingMonitorTools:
 
         mock_monitor.get_stats.assert_called_once_with(window_s=5.0)
         assert "12.3ms" in result["messages"][-1].content
-
-    def test_agent_calls_stop_ping_monitor(self, mock_model, mock_monitor):
-        """Agent should be able to stop the ping monitor."""
-        from src.agent.graph import build_graph
-
-        mock_model.invoke.side_effect = [
-            _make_ai_with_tool_calls([{
-                "name": "stop_ping_monitor",
-                "args": {},
-                "id": "call_1",
-            }]),
-            _make_final_response("Ping monitor stopped. Experiment complete."),
-        ]
-
-        with patch("src.agent.graph._build_model", return_value=mock_model), \
-             patch("src.agent.tools.get_ping_monitor", return_value=mock_monitor):
-            graph = build_graph()
-            state = {"messages": [HumanMessage(content="Stop monitoring")]}
-            config = {"configurable": {"thread_id": "test-pm-stop"}}
-
-            result = graph.invoke(state, config)
-
-        mock_monitor.stop.assert_called_once()
-        assert "stopped" in result["messages"][-1].content.lower()
 
     def test_traffic_send_includes_rtt_during_when_monitor_active(
         self, mock_model, mock_monitor,
@@ -493,61 +446,66 @@ class TestPingMonitorTools:
 
         assert "not active" in result["messages"][-1].content.lower()
 
-    def test_graph_has_19_tools(self):
-        """Graph should have 19 tools (8 Scapy + 9 Pktgen + 2 TRex).
+    def test_graph_has_24_tools(self):
+        """Graph should have 24 tools (8 core + 9 Pktgen + 2 TRex + 5 skill/file).
 
-        008-T001 基线修复：原断言 17 在 006 引入 TRex 两工具后过期；
-        正确值 19（CLAUDE.md 确认）。
+        spec 009: monitor lifecycle is program-owned — start/stop monitor
+        tools are gone; only read/probe tools remain. Skill tools
+        (load_skill/list_skills) + file tools (read_file/grep/write_file)
+        provide on-demand knowledge loading and repo inspection.
         """
         from src.agent.graph import build_graph
         from src.agent.tools import EXPERIMENT_TOOLS
 
         tool_names = [t.name for t in EXPERIMENT_TOOLS]
-        assert "start_ping_monitor" in tool_names
         assert "read_ping_stats" in tool_names
-        assert "stop_ping_monitor" in tool_names
+        assert "ping_rtt" in tool_names
         assert "pktgen_udp_flood" in tool_names
+        assert "http_probe" in tool_names
+        assert "read_http_stats" in tool_names
         assert "write_python_file" in tool_names
-        assert len(EXPERIMENT_TOOLS) == 19
+        assert "load_skill" in tool_names
+        assert "list_skills" in tool_names
+        assert "read_file" in tool_names
+        assert "grep" in tool_names
+        assert "write_file" in tool_names
+        for banned in (
+            "start_ping_monitor", "stop_ping_monitor",
+            "start_http_monitor", "stop_http_monitor",
+        ):
+            assert banned not in tool_names
+        assert len(EXPERIMENT_TOOLS) == 24
 
     def test_full_continuous_ping_workflow(self, mock_model, mock_monitor):
-        """Agent executes full flow: start → read → traffic → read → stop."""
+        """Agent executes read-only flow: read baseline → traffic → read after.
+
+        spec 009: the monitor is already running (program-owned), so the agent
+        starts by reading stats instead of starting the monitor.
+        """
         from src.agent.graph import build_graph
 
         mock_model.invoke.side_effect = [
-            # Step 0: start_ping_monitor
-            _make_ai_with_tool_calls([{
-                "name": "start_ping_monitor",
-                "args": {"ip": "10.99.80.160"},
-                "id": "call_0",
-            }]),
-            # Step 1: read_ping_stats (baseline)
+            # Step 0: read_ping_stats (baseline; monitor already running)
             _make_ai_with_tool_calls([{
                 "name": "read_ping_stats",
                 "args": {"window_s": 5.0},
                 "id": "call_1",
             }]),
-            # Step 2: traffic_send
+            # Step 1: traffic_send
             _make_ai_with_tool_calls([{
                 "name": "traffic_send",
                 "args": {"dst_ip": "10.99.80.160", "dst_port": 8080, "pps": 100},
                 "id": "call_2",
             }]),
-            # Step 3: read_ping_stats (after attack)
+            # Step 2: read_ping_stats (after attack)
             _make_ai_with_tool_calls([{
                 "name": "read_ping_stats",
                 "args": {"window_s": 5.0},
                 "id": "call_3",
             }]),
-            # Step 4: stop_ping_monitor
-            _make_ai_with_tool_calls([{
-                "name": "stop_ping_monitor",
-                "args": {},
-                "id": "call_4",
-            }]),
             _make_final_response(
                 "Experiment complete. Baseline RTT: 12ms, Attack max: 30ms, "
-                "After recovery: 15ms. Monitor stopped."
+                "After recovery: 15ms."
             ),
         ]
 
@@ -565,11 +523,8 @@ class TestPingMonitorTools:
 
             result = graph.invoke(state, config)
 
-        # All tools called in correct order
-        # 003-G-001：interval_s 缺省透传 None，由 PingMonitor 读配置回退间隔
-        mock_monitor.start.assert_called_once_with("10.99.80.160", interval_s=None)
+        # Read-only tools called in the right order (monitor is program-owned)
         assert mock_monitor.get_stats.call_count == 2  # baseline + after
         mock_send.assert_called_once()
-        mock_monitor.stop.assert_called_once()
         assert "Baseline RTT" in result["messages"][-1].content
         assert "30ms" in result["messages"][-1].content

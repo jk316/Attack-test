@@ -21,8 +21,13 @@ from src.tools.pcap_profile_tool import pcap_profile_tool, DEFAULT_COUNT_LIMIT
 from src.tools.log_tool import log_tool
 from src.tools.ping_monitor import get_ping_monitor
 from src.tools.rtt_window import build_rtt_observation
+from src.tools.http_probe_tool import http_probe as _http_probe
+from src.tools.http_monitor import get_http_monitor
+from src.tools.http_window import build_http_observation
 from src.pktgen.adapter import PKTGEN_TOOLS
 from src.trex.tools import TREX_TOOLS
+from src.tools.skill_tool import SKILL_TOOLS
+from src.tools.file_tools import FILE_TOOLS
 
 
 @tool
@@ -49,6 +54,7 @@ def traffic_send(
     packet_size: int | None = None,
     flow_count: int | None = None,
     iat_jitter_ms: int | None = None,
+    src_ip: str | None = None,
 ) -> dict[str, Any]:
     """Send controlled traffic to a target. REQUIRES HUMAN APPROVAL.
 
@@ -63,6 +69,7 @@ def traffic_send(
         packet_size: Payload size in bytes (max 1024).
         flow_count: Number of concurrent flows with unique sport (max 100).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
+        src_ip: Optional spoofed source IP (stateless UDP — allowed/encouraged).
 
     Returns:
         Dict with success, params, requested_params, clamped, packets_sent,
@@ -83,6 +90,7 @@ def traffic_send(
         "packet_size": packet_size,
         "flow_count": flow_count,
         "iat_jitter_ms": iat_jitter_ms,
+        "src_ip": src_ip,
     }
     approval = interrupt({
         "message": "[HITL] Approve traffic send?",
@@ -102,12 +110,14 @@ def traffic_send(
         packet_size=packet_size,
         flow_count=flow_count,
         iat_jitter_ms=iat_jitter_ms,
+        src_ip=src_ip,
     )
 
     # Collect RTT samples during the attack window (if monitor is running).
     # build_rtt_observation adds rtt_during + attack_window + observation_window
     # so the LLM can tell whether the observation actually covered the attack.
     result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
+    result.update(build_http_observation(get_http_monitor(), t0, mode="scapy"))
 
     return result
 
@@ -133,20 +143,49 @@ def pcap_profile(pcap_path: str, count: int | None = None) -> dict[str, Any]:
 
 
 @tool
-def log_result(log_path: str, iteration: int, params: dict, rtt: float, loss: float) -> dict[str, Any]:
-    """Append experiment result to a JSONL log file.
+def log_result(
+    log_path: str,
+    iteration: int,
+    params: dict,
+    rtt: float,
+    loss: float,
+    tool: str | None = None,
+    results: dict | None = None,
+) -> dict[str, Any]:
+    """Append experiment result to a JSONL log file (canonical schema).
+
+    记录规范（params 只放输入参数，统一字段名）:
+    - target_ip: 目标 IP
+    - dst_port: 目标端口
+    - duration_ms: 攻击时长（统一毫秒；不要用 duration_s/duration）
+    - pkt_size: 包大小字节（不要用 packet_size/pktSize）
+    - pps: 包速率 packets/s（Scapy/TRex）
+    - rate_pct: Pktgen 线速百分比（仅 Pktgen 工具）
+    - protocol: 协议（udp/tcp/icmp/arp；不要用 proto）
+    - 工具特有参数（tcp_flags/scan_field/arp_type/streams 等）放 params.extras
+
+    实测结果（tx_gbps、pps_actual、port_util_pct、note 等）放 results 参数，
+    不要混入 params。tool 填本次攻击工具名；省略时系统会自动记录。
 
     Args:
         log_path: Path to the JSONL log file.
         iteration: Current iteration number.
-        params: The traffic parameters used in this iteration.
+        params: The traffic input parameters used in this iteration.
         rtt: Average RTT in milliseconds measured this iteration.
         loss: Packet loss percentage this iteration.
+        tool: Name of the attack tool that produced this iteration
+            (auto-filled when omitted).
+        results: Measured outcomes of the iteration (throughput, actual pps,
+            notes, ...). Optional.
 
     Returns:
         Dict with success status.
     """
     entry = {"iteration": iteration, "params": params, "rtt": rtt, "loss": loss}
+    if tool:
+        entry["tool"] = tool
+    if results:
+        entry["results"] = results
     return log_tool(log_path=log_path, entry=entry)
 
 
@@ -228,40 +267,14 @@ def mixed_traffic_send(
 
     # Collect RTT samples during the attack window (if monitor is running).
     result.update(build_rtt_observation(get_ping_monitor(), t0, mode="scapy"))
+    result.update(build_http_observation(get_http_monitor(), t0, mode="scapy"))
 
     return result
 
 
 # ── Continuous ping monitor tools ──────────────────────────────────
-
-@tool
-def start_ping_monitor(ip: str, interval_s: float | None = None) -> dict[str, Any]:
-    """Start a continuous background ping to monitor RTT in real-time.
-
-    Call this ONCE at the beginning of the experiment. A background ping
-    subprocess will run continuously, collecting per-second RTT samples.
-    Use read_ping_stats to query the latest stats at any time.
-
-    Args:
-        ip: Target IP address (must be in allowlist).
-        interval_s: Interval between pings in seconds (default from config
-                    ping_monitor.fallback_interval_s, 1.0). Windows ignores
-                    this and pings as fast as possible.
-
-    Returns:
-        Dict with success, message, target_ip.
-    """
-    try:
-        monitor = get_ping_monitor()
-        monitor.start(ip, interval_s=interval_s)
-        return {
-            "success": True,
-            "message": f"Ping monitor started for {ip}",
-            "target_ip": ip,
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
+# Note (spec 009): the ping monitor lifecycle is owned by the program —
+# both entry points auto-start it, so there is no start/stop tool here.
 
 @tool
 def read_ping_stats(window_s: float | None = None) -> dict[str, Any]:
@@ -286,33 +299,69 @@ def read_ping_stats(window_s: float | None = None) -> dict[str, Any]:
         return {"monitor_active": False, "error": str(e)}
 
 
-@tool
-def stop_ping_monitor() -> dict[str, Any]:
-    """Stop the background ping monitor.
+# ── HTTP business dial-testing tools ───────────────────────────────
+# Note (spec 009): the HTTP monitor lifecycle is owned by the program.
 
-    Call this at the end of the experiment to clean up resources.
+@tool
+def http_probe(
+    url: str, method: str = "GET", timeout_s: float = 5.0,
+    body: str | None = None, content_type: str | None = None,
+) -> dict[str, Any]:
+    """Probe an HTTP endpoint (allowlist-gated) and return timing/status metrics.
+
+    Measures per-phase timing (DNS/TCP/TLS), TTFB (time-to-first-byte), total
+    response time, HTTP status code, download size/speed, and classifies errors
+    (timeout / connection_refused / dns_error / tls_error).
+
+    Args:
+        url: Full http/https URL to probe (host must be in allowlist).
+        method: HTTP method (default "GET").
+        timeout_s: Per-request timeout in seconds (default 5).
+        body: Optional request body (e.g. JSON for POST login; default from
+            http_probe.json via HTTP_BODY).
+        content_type: Optional Content-Type header (default from http_probe.json).
 
     Returns:
-        Dict with success, message.
+        Dict with success, status_code, dns_ms, tcp_connect_ms, tls_ms,
+        ttfb_ms, total_ms, size_bytes, speed_bps, error_type.
+    """
+    body = body if body is not None else (os.environ.get("HTTP_BODY") or None)
+    content_type = content_type if content_type is not None else (os.environ.get("HTTP_CONTENT_TYPE") or None)
+    return _http_probe(url=url, method=method, timeout_s=timeout_s, body=body, content_type=content_type)
+
+
+@tool
+def read_http_stats(window_s: float = 5.0) -> dict[str, Any]:
+    """Read latest HTTP business-health stats from the background monitor.
+
+    Call before and after traffic tools to observe HTTP degradation caused by
+    the attack (success_rate drop, TTFB rise, 5xx / connection errors).
+
+    Args:
+        window_s: Time window in seconds for stats (default 5.0).
+
+    Returns:
+        Dict with monitor_active, total_requests, success_rate, avg_ttfb_ms,
+        max_ttfb_ms, avg_total_ms, status_codes, five_xx_rate, error counts.
     """
     try:
-        monitor = get_ping_monitor()
-        monitor.stop()
-        return {"success": True, "message": "Ping monitor stopped"}
+        return get_http_monitor().get_stats(window_s=window_s)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"monitor_active": False, "error": str(e)}
 
 
 # Tool list for create_agent
 EXPERIMENT_TOOLS = [
     pcap_profile,
-    start_ping_monitor,
     read_ping_stats,
-    stop_ping_monitor,
+    http_probe,
+    read_http_stats,
     traffic_send,
     mixed_traffic_send,
     ping_rtt,
     log_result,
     *PKTGEN_TOOLS,  # Pktgen-DPDK hardware line-rate tools (9 skills)
     *TREX_TOOLS,    # TRex client tools (write_python_file, run_python_file)
+    *SKILL_TOOLS,   # on-demand knowledge base (load_skill, list_skills)
+    *FILE_TOOLS,    # generic read_file / grep / write_file (self-inspection)
 ]

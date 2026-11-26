@@ -4,6 +4,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_proxy_env(monkeypatch):
+    """ExperimentManager() constructs the real graph (real ChatOpenAI), which
+    reads proxy env vars via httpx. An ambient no_proxy entry like ``[::1]``
+    makes httpx 0.28 raise ``InvalidURL: Invalid port: ':1]'``. No real
+    requests happen in these tests, so clearing is safe."""
+    for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+                "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+
 def _make_state(next_nodes, msg_list, tasks=None):
     msgs = []
     for role, content, tc in msg_list:

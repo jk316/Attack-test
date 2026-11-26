@@ -13,9 +13,9 @@ class LLMClientError(Exception):
 class LLMClient:
     """Lightweight wrapper around the DeepSeek API (OpenAI-compatible).
 
-    Reads ``DEEPSEEK_API_KEY`` from the environment; falls back to the
-    ``api_key`` constructor argument.  The model is controlled by the
-    ``LLM_MODEL`` env var (default ``deepseek-chat``).
+    Reads ``DEEPSEEK_API_KEY`` (falling back to ``OPENAI_API_KEY``) from the
+    environment, or the ``api_key`` constructor argument.  The model is
+    controlled by the ``LLM_MODEL`` env var (default ``deepseek-chat``).
     """
 
     def __init__(
@@ -23,10 +23,15 @@ class LLMClient:
         api_key: str | None = None,
         base_url: str = "https://api.deepseek.com",
     ) -> None:
-        api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        api_key = (
+            api_key
+            or os.environ.get("DEEPSEEK_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        ).strip()
         if not api_key:
             raise LLMClientError(
-                "DEEPSEEK_API_KEY not set in environment or constructor"
+                "DEEPSEEK_API_KEY or OPENAI_API_KEY not set in environment or constructor"
             )
         self._model: str = os.environ.get("LLM_MODEL", "deepseek-chat")
         self._client = openai.OpenAI(base_url=base_url, api_key=api_key)
@@ -48,6 +53,25 @@ class LLMClient:
 
         content = response.choices[0].message.content or ""
         return self._parse_json_response(content)
+
+    def chat_text(self, messages: list[dict]) -> str:
+        """Send a chat completion request and return the raw text response.
+
+        Unlike :meth:`chat`, this does not require the response to be JSON —
+        it is used by the lessons narrative layer. Reuses the same key/model.
+
+        Raises:
+            LLMClientError: if the API call fails.
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+            )
+        except openai.OpenAIError as exc:
+            raise LLMClientError(f"DeepSeek API call failed: {exc}") from exc
+
+        return response.choices[0].message.content or ""
 
     @staticmethod
     def _parse_json_response(content: str) -> dict:

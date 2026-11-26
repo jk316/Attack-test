@@ -10,6 +10,25 @@ from src.llm.client import LLMClient, LLMClientError
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _clear_proxy_env(monkeypatch):
+    """Make client construction hermetic against ambient env vars.
+
+    - Proxy vars: httpx 0.28 parses no_proxy strictly — an entry like ``[::1]``
+      in the host environment makes ``openai.OpenAI(...)`` construction raise
+      ``InvalidURL: Invalid port: ':1]'``. These tests never perform real
+      requests, so clearing proxy vars is safe.
+    - LLM_MODEL: importing ``src.agent.graph`` (done by other test modules)
+      runs ``load_dotenv()``, which walks UP the filesystem and can load a
+      parent checkout's ``.env`` (e.g. ``LLM_MODEL=deepseek-flash``) into the
+      process env. Clear it so ``LLMClient()`` defaults are deterministic.
+    """
+    for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+                "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy",
+                "LLM_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def fake_api_key() -> str:
     return "sk-test-fake-key"

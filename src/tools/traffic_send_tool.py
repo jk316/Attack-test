@@ -65,7 +65,7 @@ def validate_params(
 ) -> tuple[int, int, int, int, int]:
     """Validate and clamp parameters to safe limits.
 
-    Security-critical violations (target, port, src_ip) raise ValueError.
+    Security-critical violations (target, port) raise ValueError.
     Numeric parameters are clamped to their allowed ranges.
     """
     # Target validation (reuses allowlist / broadcast / multicast checks)
@@ -93,9 +93,6 @@ def validate_params(
     if iat_jitter_ms < 0:
         raise ValueError(f"iat_jitter_ms must be >= 0, got {iat_jitter_ms}")
     clamped_iat_jitter_ms = min(iat_jitter_ms, MAX_IAT_JITTER_MS)
-
-    if src_ip is not None:
-        raise ValueError("src_ip forgery is not allowed")
 
     return (
         clamped_duration_s,
@@ -139,7 +136,7 @@ def traffic_send_tool(
         packet_size: Payload size in bytes (max 1024).
         flow_count: Number of concurrent flows, each with unique sport (max 100).
         iat_jitter_ms: Random jitter on inter-packet interval in ms (max 20).
-        src_ip: Must be None — source IP forgery is forbidden.
+        src_ip: Optional source IP for spoofing (stateless traffic only).
         iface: Optional network interface for send().
         verbose: Enable Scapy verbose output (default False).
 
@@ -174,6 +171,7 @@ def traffic_send_tool(
         "packet_size": packet_size,
         "flow_count": flow_count,
         "iat_jitter_ms": iat_jitter_ms,
+        "src_ip": src_ip,
     }
     clamped = _clamped_fields(requested_params, params)
 
@@ -185,7 +183,7 @@ def traffic_send_tool(
     prebuilt: list[bytes] = []
     for f in range(flow_count):
         sport = 1024 + f
-        pkt = IP(dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
+        pkt = IP(src=src_ip, dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
         prebuilt.append(bytes(pkt))
 
     # ── 3-tier send: raw socket → UDP sockets → Scapy ────────────
@@ -237,7 +235,7 @@ def traffic_send_tool(
                     )
                 else:
                     sport = 1024 + flow_id
-                    pkt = IP(dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
+                    pkt = IP(src=src_ip, dst=dst_ip) / UDP(dport=dst_port, sport=sport) / Raw(load=payload)
                     send(pkt, verbose=verbose, iface=iface)
 
                 # Schedule next packet with jitter

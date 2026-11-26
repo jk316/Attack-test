@@ -13,7 +13,15 @@ from dotenv import load_dotenv
 
 from src.agent.tools import EXPERIMENT_TOOLS
 from src.pktgen.adapter import get_pktgen_host, get_pktgen_port, is_dry_run
-from src.trex.config import get_trex_host, get_trex_port, is_trex_dry_run
+from src.tools.log_middleware import ToolTaggerMiddleware
+from src.trex.config import (
+    get_trex_dst_mac,
+    get_trex_host,
+    get_trex_port,
+    get_trex_src_mac,
+    get_trex_start_force,
+    is_trex_dry_run,
+)
 from src.trex.tools import TREX_TOOLS
 from src.tools.traffic_send_tool import (
     MAX_PPS, MAX_DURATION_S, MAX_PACKET_SIZE, MAX_FLOW_COUNT, MAX_IAT_JITTER_MS,
@@ -134,6 +142,10 @@ def _build_system_prompt(max_iters: int = 20, no_improve_limit: int = 5, mode: s
         trex_dry_run=True if mode == "catalog" else is_trex_dry_run(),
         trex_host=get_trex_host(),
         trex_port=str(get_trex_port()),
+        # TRex known L2 facts (gateway dst MAC / port src MAC / force start)
+        trex_dst_mac=get_trex_dst_mac(),
+        trex_src_mac=get_trex_src_mac(),
+        trex_start_force=get_trex_start_force(),
         # TRex attack catalog exploration (mode="catalog")
         catalog_target=int(os.environ.get("CATALOG_TARGET", "10")),
         explore_direction=os.environ.get("EXPLORE_DIRECTION", ""),
@@ -177,4 +189,5 @@ def build_graph(
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=MemorySaver(),
+        middleware=[ToolTaggerMiddleware()],
     )

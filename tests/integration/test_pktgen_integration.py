@@ -137,16 +137,12 @@ class TestAllNineSkillsHaveValidYaml:
 class TestGraphIncludesPktgenTools:
     """Verify build_graph() includes all Pktgen tools."""
 
-    def test_tool_count_is_19(self):
-        """EXPERIMENT_TOOLS should have 19 tools (8 Scapy + 9 Pktgen + 2 TRex).
-
-        005 修复（基线失败①）：原断言 17 在 006 引入 TRex 两工具后过期；
-        正确值 19（CLAUDE.md 确认）。
-        """
+    def test_tool_count_is_24(self):
+        """EXPERIMENT_TOOLS should have 24 tools (8 core + 9 Pktgen + 2 TRex + 5 skill/file)."""
         from src.agent.tools import EXPERIMENT_TOOLS
 
-        assert len(EXPERIMENT_TOOLS) == 19, (
-            f"Expected 19 tools, got {len(EXPERIMENT_TOOLS)}: "
+        assert len(EXPERIMENT_TOOLS) == 24, (
+            f"Expected 24 tools, got {len(EXPERIMENT_TOOLS)}: "
             f"{[t.name for t in EXPERIMENT_TOOLS]}"
         )
 
@@ -396,13 +392,7 @@ class TestAgentInvokesPktgenTools:
         from src.agent.graph import build_graph
 
         mock_model.invoke.side_effect = [
-            # Step 1: start ping monitor (Scapy)
-            _make_ai([{
-                "name": "start_ping_monitor",
-                "args": {"ip": ALLOWLISTED_IP},
-                "id": "call_1",
-            }]),
-            # Step 2: low-rate Scapy UDP test
+            # Step 1: low-rate Scapy UDP test (monitor already program-owned)
             _make_ai([{
                 "name": "traffic_send",
                 "args": {"dst_ip": ALLOWLISTED_IP, "dst_port": 8080, "pps": 100},

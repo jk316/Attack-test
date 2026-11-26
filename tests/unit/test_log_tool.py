@@ -32,7 +32,11 @@ class TestLogTool:
 
             parsed = json.loads(lines[0])
             assert "timestamp" in parsed
-            assert parsed["params"] == entry["params"]
+            # params are canonicalized (alias → canonical names, duration→ms)
+            assert parsed["params"]["pps"] == 100
+            assert parsed["params"]["duration_ms"] == 5000
+            assert parsed["tool"] == "unknown"
+            assert "run_id" in parsed
             assert parsed["rtt"] == 1.234
             assert parsed["loss"] == 0.0
         finally:
