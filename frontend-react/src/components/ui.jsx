@@ -13,6 +13,7 @@ const ICONS = {
   x: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
   switch: <><rect x="2" y="2" width="20" height="20" rx="5" /><path d="M7 9v6M12 6v12M17 9v6" /></>,
   health: <><circle cx="12" cy="12" r="10" /><path d="M8 12h8" /></>,
+  panel: <><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /></>,
 }
 
 export function Icon({ name, size = 17 }) {

@@ -1,16 +1,8 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Button, Icon, StatusBadge, AnimatedNumber } from '../components/ui'
-import { RttChart } from '../components/charts'
+import { Button, Icon, StatusBadge } from '../components/ui'
+import { RttChart, HttpChart, TrafficChart } from '../components/charts'
 import HitlModal from '../components/HitlModal'
-
-const KPIS = [
-  { cls: 'c-rtt', label: '最终 RTT', value: 142.6, unit: 'ms', trend: <>最佳 <b>4.8</b> · 平均 <b>63.2</b></> },
-  { cls: 'c-succ', label: '拨测成功率', value: 34, unit: '%', trend: <>窗口内 <b>28%</b></> },
-  { cls: 'c-loss', label: '丢包率', value: 66, unit: '%', trend: <>覆盖攻击窗口</> },
-  { cls: 'c-atk', label: '攻击次数', value: 3, trend: <>已批准 3 · 待批 <b style={{ color: 'var(--amber)' }}>1</b></> },
-  { label: '当前迭代', value: 7, unit: '/ 20', trend: <>连续无改进 1 轮</> },
-]
 
 const ATTACKS = [
   { tool: 'Pktgen UDP 泛洪', eng: 'pktgen_udp_flood', hitl: 'ok', params: [['rate', '80%'], ['dur', '10s'], ['窗口成功率', '12%', true], ['est', '1.2 Gbps']] },
@@ -50,6 +42,21 @@ function ReasoningItem({ ev }) {
   )
 }
 
+function ChartPanel({ title, children }) {
+  return (
+    <div className="panel chart-wrap">
+      <div className="chart-glow" />
+      <div className="panel-head" style={{ position: 'relative' }}>
+        <h2>{title}</h2>
+        <div className="range-chips">
+          <span className="chip">30s</span><span className="chip active">1m</span><span className="chip">5m</span><span className="chip">全部</span>
+        </div>
+      </div>
+      <div className="panel-body">{children}</div>
+    </div>
+  )
+}
+
 export default function ExperimentDetail() {
   const { id } = useParams()
   const [hitl, setHitl] = useState(false)
@@ -65,59 +72,53 @@ export default function ExperimentDetail() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <Link to="/" className="btn ghost"><Icon name="back" size={15} />返回列表</Link>
+          <Link to={`/experiments/${id}/summary`} className="btn ghost"><Icon name="health" size={15} />实验总结</Link>
           <Button variant="danger" icon="stop" onClick={() => alert('设计稿：停止实验')}>停止</Button>
         </div>
       </div>
 
-      <div className="kpis">
-        {KPIS.map(k => (
-          <div key={k.label} className={`kpi panel ${k.cls || ''}`}>
-            <div className="label">{k.label}</div>
-            <div className="value"><AnimatedNumber value={k.value} />{k.unit && <small>{k.unit}</small>}</div>
-            <div className="trend">{k.trend}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="detail-grid">
-        <div className="panel chart-wrap">
-          <div className="chart-glow" />
-          <div className="panel-head" style={{ position: 'relative' }}>
-            <h2>拨测曲线 · RTT / 成功率</h2>
-            <div className="range-chips">
-              <span className="chip">30s</span><span className="chip active">1m</span><span className="chip">5m</span><span className="chip">全部</span>
-            </div>
-          </div>
-          <div className="panel-body"><RttChart /></div>
+      <div className="detail-layout">
+        <div className="charts-col">
+          <ChartPanel title="攻击流量 · 清洗前 / 清洗后">
+            <TrafficChart height={150} />
+          </ChartPanel>
+          <ChartPanel title="RTT 拨测 · RTT / 丢包率">
+            <RttChart height={150} />
+          </ChartPanel>
+          <ChartPanel title="HTTP 拨测 · 成功率 / TTFB">
+            <HttpChart height={150} />
+          </ChartPanel>
         </div>
 
-        <div className="panel">
-          <div className="panel-head"><h2>攻击时间线</h2><span className="meta">3 次</span></div>
-          <div className="panel-body">
-            <div className="attacks">
-              {ATTACKS.map((a, i) => (
-                <div key={i} className={`atk-card${a.warn ? ' warn' : ''}`}>
-                  <div className="atk-top">
-                    <span className="atk-type">{a.tool} <span className="eng">{a.eng}</span></span>
-                    <span className={`hitl-tag ${a.hitl === 'ok' ? 'ok' : 'wait'}`}>{a.hitl === 'ok' ? '✓ 已批准' : '⏳ 待审批'}</span>
+        <div className="side-col">
+          <div className="panel">
+            <div className="panel-head"><h2>攻击时间线</h2><span className="meta">3 次</span></div>
+            <div className="panel-body">
+              <div className="attacks">
+                {ATTACKS.map((a, i) => (
+                  <div key={i} className={`atk-card${a.warn ? ' warn' : ''}`}>
+                    <div className="atk-top">
+                      <span className="atk-type">{a.tool} <span className="eng">{a.eng}</span></span>
+                      <span className={`hitl-tag ${a.hitl === 'ok' ? 'ok' : 'wait'}`}>{a.hitl === 'ok' ? '✓ 已批准' : '⏳ 待审批'}</span>
+                    </div>
+                    <div className="atk-meta">
+                      {a.params.map(([k, v, down], j) => <span key={j}>{k} <b className={down ? 'down' : ''}>{v}</b></span>)}
+                    </div>
+                    {a.warn && <div className="hint" style={{ marginTop: 7, color: 'var(--amber)' }}>⚠ covers_attack_window = false</div>}
+                    {a.hitl === 'pending' && <div style={{ marginTop: 9 }}><Button variant="primary" size="sm" onClick={() => setHitl(true)}>审批</Button></div>}
                   </div>
-                  <div className="atk-meta">
-                    {a.params.map(([k, v, down], j) => <span key={j}>{k} <b className={down ? 'down' : ''}>{v}</b></span>)}
-                  </div>
-                  {a.warn && <div className="hint" style={{ marginTop: 7, color: 'var(--amber)' }}>⚠ covers_attack_window = false</div>}
-                  {a.hitl === 'pending' && <div style={{ marginTop: 9 }}><Button variant="primary" size="sm" onClick={() => setHitl(true)}>审批</Button></div>}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="panel">
-        <div className="panel-head"><h2>智能体推理流</h2><span className="meta">按 seq 时序 · 思考链折叠</span></div>
-        <div className="panel-body">
-          <div className="stream">
-            {REASONING.map((ev, i) => <ReasoningItem key={i} ev={ev} />)}
+          <div className="panel">
+            <div className="panel-head"><h2>智能体推理流</h2><span className="meta">按 seq 时序 · 思考链折叠</span></div>
+            <div className="panel-body">
+              <div className="stream">
+                {REASONING.map((ev, i) => <ReasoningItem key={i} ev={ev} />)}
+              </div>
+            </div>
           </div>
         </div>
       </div>
